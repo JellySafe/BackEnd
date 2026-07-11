@@ -1,0 +1,76 @@
+import { Inject, Injectable, Logger, OnModuleInit } from '@nestjs/common';
+import { ConfigService } from '@nestjs/config';
+import { SchedulerRegistry } from '@nestjs/schedule';
+import { CronJob } from 'cron';
+import { AppConfig } from '@shared/config/app.config';
+import {
+  MapStationsUseCase,
+  MAP_STATIONS_USE_CASE,
+  SyncObservationsUseCase,
+  SYNC_OBSERVATIONS_USE_CASE,
+} from '../../../application/port/in/observation-use-cases';
+
+const JOB_NAME = 'observation-sync';
+
+/**
+ * 관측 데이터 수집 스케줄러 (adapter/in/schedule).
+ * OBSERVATION_SYNC_CRON 주기로 SyncObservations → MapStations 를 실행한다.
+ * SCHEDULER_ENABLED=false 면 잡을 등록하지 않는다.
+ *
+ * @Cron 데코레이터는 정적 표현식만 받으므로, config 의 동적 크론 문자열을 쓰기 위해
+ * SchedulerRegistry 에 CronJob 을 동적으로 등록한다.
+ */
+@Injectable()
+export class ObservationScheduler implements OnModuleInit {
+  private readonly logger = new Logger(ObservationScheduler.name);
+  private readonly config: AppConfig;
+  private running = false;
+
+  constructor(
+    configService: ConfigService,
+    private readonly registry: SchedulerRegistry,
+    @Inject(SYNC_OBSERVATIONS_USE_CASE) private readonly sync: SyncObservationsUseCase,
+    @Inject(MAP_STATIONS_USE_CASE) private readonly map: MapStationsUseCase,
+  ) {
+    this.config = new AppConfig(configService);
+  }
+
+  onModuleInit(): void {
+    if (!this.config.schedulerEnabled) {
+      this.logger.log('SCHEDULER_ENABLED=false → 관측 수집 스케줄러 비활성');
+      return;
+    }
+    const cronTime = this.config.observationSyncCron;
+    const job = CronJob.from({
+      cronTime,
+      onTick: () => {
+        void this.run();
+      },
+    });
+    this.registry.addCronJob(JOB_NAME, job as unknown as CronJob);
+    job.start();
+    this.logger.log(`관측 수집 스케줄러 등록됨 (cron="${cronTime}")`);
+  }
+
+  /** 수집(SYS-001) 후 매핑(SYS-002) 실행. 이전 실행이 겹치면 스킵한다. */
+  async run(): Promise<void> {
+    if (this.running) {
+      this.logger.warn('이전 수집 작업이 진행 중 → 이번 주기 스킵');
+      return;
+    }
+    this.running = true;
+    try {
+      const sync = await this.sync.syncAll();
+      const map = await this.map.mapAll();
+      this.logger.log(
+        `배치 완료: 소스 ${sync.sources}(성공 ${sync.succeeded}/실패 ${sync.failed}), ` +
+          `관측 +${sync.observationsInserted}, 출현 +${sync.occurrencesInserted}, ` +
+          `해변 ${map.beaches}, 매핑 ${map.mappings}`,
+      );
+    } catch (err) {
+      this.logger.error(`관측 수집 배치 실패: ${err instanceof Error ? err.message : String(err)}`);
+    } finally {
+      this.running = false;
+    }
+  }
+}
