@@ -1,0 +1,735 @@
+// =====================================================================================
+//  JellySafe - Prisma schema
+//  Source of truth : db/jellysafe_schema.sql  (MySQL 8)
+//
+//  방침
+//   - DB-first: 실제 스키마는 DDL 파일이 원본이다. 이 파일은 그 위에 매핑한다.
+//     운영 DB 가 준비되면 `prisma db pull` 로 이 파일을 재생성/대조할 수 있다.
+//   - 상태값 컬럼은 Prisma enum 이 아니라 String 으로 둔다.
+//     DDL 이 VARCHAR + CHECK + COLLATE utf8mb4_bin 으로 소문자 값 목록을 강제하므로,
+//     Prisma enum(=MySQL ENUM) 을 쓰면 migrate 시 DDL 과 충돌한다.
+//     값 계약(소문자)은 각 컨텍스트 domain 계층의 TS union 타입이 보증한다.
+//   - PK 는 DDL 대로 BIGINT → Prisma BigInt. 응답 직렬화는 main.ts 의 BigInt.toJSON 패치로 처리.
+// =====================================================================================
+
+generator client {
+  provider = "prisma-client-js"
+}
+
+// Kysely 테이블 타입을 Prisma 스키마에서 생성한다(prisma-kysely).
+// 복잡 조회 어댑터가 이 타입을 import 해 타입세이프 SQL 을 작성한다.
+generator kysely {
+  provider     = "prisma-kysely"
+  output       = "../src/shared/persistence/kysely"
+  fileName     = "database.types.ts"
+  enumFileName = "database.enums.ts"
+}
+
+datasource db {
+  provider = "mysql"
+  url      = env("DATABASE_URL")
+}
+
+// =====================================================================================
+// 1. 마스터 / 공통
+// =====================================================================================
+
+model User {
+  id            BigInt    @id @default(autoincrement())
+  role          String    @default("public") @db.VarChar(20) // public/operator/admin
+  email         String    @unique @db.VarChar(255)
+  passwordHash  String    @map("password_hash") @db.VarChar(255)
+  name          String    @db.VarChar(100)
+  organization  String?   @db.VarChar(150)
+  managedRegion String?   @map("managed_region") @db.VarChar(50)
+  isActive      Boolean   @default(true) @map("is_active")
+  lastLoginAt   DateTime? @map("last_login_at") @db.DateTime(0)
+  createdAt     DateTime  @default(now()) @map("created_at") @db.DateTime(0)
+  updatedAt     DateTime  @updatedAt @map("updated_at") @db.DateTime(0)
+
+  consentLogs         ConsentLog[]
+  reportedJellyfish   JellyfishReport[]     @relation("ReportReporter")
+  reportReviews       ReportReview[]
+  updatedRuleConfigs  RiskRuleConfig[]
+  triggeredCalcs      RiskCalculation[]
+  operationActions    OperationAction[]
+  operationStatusLogs OperationStatusLog[]
+  dailyReports        DailyReport[]
+  favoriteBeaches     FavoriteBeach[]
+  auditLogs           AuditLog[]
+  notifications       Notification[]
+  notificationConsent NotificationConsent[]
+  subscriptions       Subscription[]
+
+  @@map("users")
+}
+
+model Beach {
+  id                 BigInt   @id @default(autoincrement())
+  name               String   @unique @db.VarChar(100)
+  region             String   @db.VarChar(50)
+  lat                Decimal  @db.Decimal(10, 7)
+  lng                Decimal  @db.Decimal(10, 7)
+  facingDirection    Int?     @map("facing_direction") @db.SmallInt
+  priority           Int      @default(99) @db.SmallInt
+  vulnerabilityScore Int      @default(0) @map("vulnerability_score") @db.SmallInt
+  isActive           Boolean  @default(true) @map("is_active")
+  createdAt          DateTime @default(now()) @map("created_at") @db.DateTime(0)
+  updatedAt          DateTime @updatedAt @map("updated_at") @db.DateTime(0)
+
+  observationMappings ObservationMapping[]
+  jellyfishReports    JellyfishReport[]
+  riskScores          RiskScore[]
+  operationActions    OperationAction[]
+  operationStatusLogs OperationStatusLog[]
+  notifications       Notification[]
+  dailyReports        DailyReport[]
+  favoriteBeaches     FavoriteBeach[]
+  subscriptionAreas   SubscriptionArea[]
+
+  @@map("beaches")
+}
+
+model StaticGuide {
+  id           BigInt   @id @default(autoincrement())
+  guideCode    String   @unique @map("guide_code") @db.VarChar(50)
+  targetType   String   @map("target_type") @db.VarChar(20) // public/operator/admin/common
+  riskLevel    String?  @map("risk_level") @db.VarChar(20) // safe/caution/danger/severe
+  title        String?  @db.VarChar(200)
+  body         String   @db.Text
+  displayOrder Int      @default(0) @map("display_order") @db.SmallInt
+  active       Boolean  @default(true)
+  createdAt    DateTime @default(now()) @map("created_at") @db.DateTime(0)
+  updatedAt    DateTime @updatedAt @map("updated_at") @db.DateTime(0)
+
+  @@map("static_guides")
+}
+
+model RiskRecommendation {
+  id           BigInt   @id @default(autoincrement())
+  actionCode   String   @unique @map("action_code") @db.VarChar(50)
+  riskLevel    String   @map("risk_level") @db.VarChar(20) // caution/danger/severe
+  title        String   @db.VarChar(200)
+  description  String?  @db.Text
+  displayOrder Int      @default(0) @map("display_order") @db.SmallInt
+  active       Boolean  @default(true)
+  createdAt    DateTime @default(now()) @map("created_at") @db.DateTime(0)
+  updatedAt    DateTime @updatedAt @map("updated_at") @db.DateTime(0)
+
+  operationActions OperationAction[]
+
+  @@map("risk_recommendations")
+}
+
+// =====================================================================================
+// 2. 데이터 수집 (SYS-001 / SYS-002)
+// =====================================================================================
+
+model DataSource {
+  id                  BigInt    @id @default(autoincrement())
+  sourceCode          String    @unique @map("source_code") @db.VarChar(50)
+  name                String    @db.VarChar(150)
+  provider            String?   @db.VarChar(100)
+  sourceType          String    @map("source_type") @db.VarChar(20) // jellyfish/marine/weather/beach
+  endpointUrl         String?   @map("endpoint_url") @db.VarChar(500)
+  isSample            Boolean   @default(false) @map("is_sample")
+  syncIntervalMinutes Int?      @map("sync_interval_minutes")
+  lastSyncedAt        DateTime? @map("last_synced_at") @db.DateTime(0)
+  lastSyncStatus      String?   @map("last_sync_status") @db.VarChar(20) // success/partial/failed
+  lastSyncMessage     String?   @map("last_sync_message") @db.VarChar(500)
+  isActive            Boolean   @default(true) @map("is_active")
+  createdAt           DateTime  @default(now()) @map("created_at") @db.DateTime(0)
+  updatedAt           DateTime  @updatedAt @map("updated_at") @db.DateTime(0)
+
+  stations    ObservationStation[]
+  occurrences JellyfishOccurrence[]
+
+  @@map("data_sources")
+}
+
+model ObservationStation {
+  id          BigInt   @id @default(autoincrement())
+  sourceId    BigInt   @map("source_id")
+  stationCode String   @map("station_code") @db.VarChar(50)
+  name        String   @db.VarChar(150)
+  stationType String   @map("station_type") @db.VarChar(20) // marine/weather
+  lat         Decimal  @db.Decimal(10, 7)
+  lng         Decimal  @db.Decimal(10, 7)
+  isActive    Boolean  @default(true) @map("is_active")
+  createdAt   DateTime @default(now()) @map("created_at") @db.DateTime(0)
+
+  source       DataSource           @relation(fields: [sourceId], references: [id], onDelete: Restrict)
+  observations Observation[]
+  mappings     ObservationMapping[]
+
+  @@unique([sourceId, stationCode], name: "uk_observation_stations_code")
+  @@map("observation_stations")
+}
+
+model Observation {
+  id               BigInt   @id @default(autoincrement())
+  stationId        BigInt   @map("station_id")
+  observedAt       DateTime @map("observed_at") @db.DateTime(0)
+  waterTemp        Decimal? @map("water_temp") @db.Decimal(4, 1)
+  salinity         Decimal? @db.Decimal(5, 2)
+  waveHeight       Decimal? @map("wave_height") @db.Decimal(4, 2)
+  currentDirection Int?     @map("current_direction") @db.SmallInt
+  currentSpeed     Decimal? @map("current_speed") @db.Decimal(5, 2)
+  windDirection    Int?     @map("wind_direction") @db.SmallInt
+  windSpeed        Decimal? @map("wind_speed") @db.Decimal(5, 2)
+  airTemp          Decimal? @map("air_temp") @db.Decimal(4, 1)
+  precipitation    Decimal? @db.Decimal(6, 2)
+  qualityFlag      String   @default("normal") @map("quality_flag") @db.VarChar(20) // normal/missing/outlier
+  collectedAt      DateTime @default(now()) @map("collected_at") @db.DateTime(0)
+
+  station ObservationStation @relation(fields: [stationId], references: [id], onDelete: Cascade)
+
+  @@unique([stationId, observedAt], name: "uk_observations_station_time")
+  @@index([stationId, observedAt], name: "ix_observations_station_time")
+  @@map("observations")
+}
+
+model ObservationMapping {
+  id          BigInt   @id @default(autoincrement())
+  beachId     BigInt   @map("beach_id")
+  stationId   BigInt   @map("station_id")
+  stationType String   @map("station_type") @db.VarChar(20) // marine/weather
+  distanceKm  Decimal? @map("distance_km") @db.Decimal(7, 3)
+  isPrimary   Boolean? @map("is_primary")
+  createdAt   DateTime @default(now()) @map("created_at") @db.DateTime(0)
+
+  beach   Beach              @relation(fields: [beachId], references: [id], onDelete: Cascade)
+  station ObservationStation @relation(fields: [stationId], references: [id], onDelete: Cascade)
+
+  @@unique([beachId, stationId], name: "uk_observation_mappings_pair")
+  @@unique([beachId, stationType, isPrimary], name: "uk_observation_mappings_primary")
+  @@map("observation_mappings")
+}
+
+model JellyfishOccurrence {
+  id           BigInt   @id @default(autoincrement())
+  sourceId     BigInt   @map("source_id")
+  externalId   String?  @map("external_id") @db.VarChar(100)
+  occurredAt   DateTime @map("occurred_at") @db.DateTime(0)
+  region       String?  @db.VarChar(50)
+  lat          Decimal? @db.Decimal(10, 7)
+  lng          Decimal? @db.Decimal(10, 7)
+  species      String?  @db.VarChar(100)
+  isToxic      Boolean? @map("is_toxic")
+  densityLevel String?  @map("density_level") @db.VarChar(20) // low/medium/high
+  alertLevel   String?  @map("alert_level") @db.VarChar(20) // none/attention/caution/warning
+  description  String?  @db.VarChar(500)
+  collectedAt  DateTime @default(now()) @map("collected_at") @db.DateTime(0)
+
+  source DataSource @relation(fields: [sourceId], references: [id], onDelete: Restrict)
+
+  @@unique([sourceId, externalId], name: "uk_jellyfish_occurrences_ext")
+  @@index([occurredAt, region], name: "ix_jellyfish_occurrences_time_region")
+  @@index([lat, lng], name: "ix_jellyfish_occurrences_geo")
+  @@map("jellyfish_occurrences")
+}
+
+// =====================================================================================
+// 3. 제보 (USR-004/005, ADM-008/009)
+// =====================================================================================
+
+model ConsentLog {
+  id            BigInt    @id @default(autoincrement())
+  userId        BigInt?   @map("user_id")
+  userToken     String?   @map("user_token") @db.VarChar(64)
+  consentType   String    @map("consent_type") @db.VarChar(30) // privacy/location/image/marketing
+  agreed        Boolean
+  policyVersion String    @map("policy_version") @db.VarChar(20)
+  agreedAt      DateTime  @default(now()) @map("agreed_at") @db.DateTime(0)
+  ipAddress     String?   @map("ip_address") @db.VarChar(45)
+  expiresAt     DateTime? @map("expires_at") @db.DateTime(0)
+
+  user           User?           @relation(fields: [userId], references: [id], onDelete: Restrict)
+  reportConsents ReportConsent[]
+
+  @@index([userToken, agreedAt], name: "ix_consent_logs_token")
+  @@map("consent_logs")
+}
+
+model JellyfishReport {
+  id                  BigInt    @id @default(autoincrement())
+  beachId             BigInt?   @map("beach_id")
+  reporterUserId      BigInt?   @map("reporter_user_id")
+  reporterToken       String?   @map("reporter_token") @db.VarChar(64)
+  lat                 Decimal?  @db.Decimal(10, 7)
+  lng                 Decimal?  @db.Decimal(10, 7)
+  imageUrl            String    @map("image_url") @db.VarChar(500)
+  thumbnailUrl        String?   @map("thumbnail_url") @db.VarChar(500)
+  reportType          String    @map("report_type") @db.VarChar(20) // general/multiple/sting
+  status              String    @default("received") @db.VarChar(20) // received/ai_processing/ai_done/verified/rejected/hold/reflected
+  aiResult            String?   @map("ai_result") @db.VarChar(20) // normal/toxic_suspected/unknown
+  aiConfidence        Decimal?  @map("ai_confidence") @db.Decimal(5, 4)
+  duplicateOfReportId BigInt?   @map("duplicate_of_report_id")
+  occurredAt          DateTime  @map("occurred_at") @db.DateTime(0)
+  submittedAt         DateTime  @default(now()) @map("submitted_at") @db.DateTime(0)
+  reflectedAt         DateTime? @map("reflected_at") @db.DateTime(0)
+  purgeScheduledAt    DateTime? @map("purge_scheduled_at") @db.DateTime(0)
+
+  beach          Beach?            @relation(fields: [beachId], references: [id], onDelete: Restrict)
+  reporter       User?             @relation("ReportReporter", fields: [reporterUserId], references: [id], onDelete: Restrict)
+  duplicateOf    JellyfishReport?  @relation("ReportDuplicate", fields: [duplicateOfReportId], references: [id], onDelete: SetNull)
+  duplicates     JellyfishReport[] @relation("ReportDuplicate")
+  consents       ReportConsent[]
+  visionResults  VisionResult[]
+  reviews        ReportReview[]
+  triggeredCalcs RiskCalculation[]
+  riskFactors    RiskFactor[]
+
+  @@index([beachId, submittedAt], name: "ix_jellyfish_reports_beach_time")
+  @@index([status, submittedAt], name: "ix_jellyfish_reports_status_time")
+  @@index([aiResult, submittedAt], name: "ix_jellyfish_reports_ai_result")
+  @@index([beachId, occurredAt, reportType], name: "ix_jellyfish_reports_dup_window")
+  @@index([reporterToken, submittedAt], name: "ix_jellyfish_reports_reporter")
+  @@map("jellyfish_reports")
+}
+
+model ReportConsent {
+  id           BigInt   @id @default(autoincrement())
+  reportId     BigInt   @map("report_id")
+  consentLogId BigInt   @map("consent_log_id")
+  createdAt    DateTime @default(now()) @map("created_at") @db.DateTime(0)
+
+  report     JellyfishReport @relation(fields: [reportId], references: [id], onDelete: Cascade)
+  consentLog ConsentLog      @relation(fields: [consentLogId], references: [id], onDelete: Restrict)
+
+  @@unique([reportId, consentLogId], name: "uk_report_consents_pair")
+  @@map("report_consents")
+}
+
+model VisionResult {
+  id            BigInt    @id @default(autoincrement())
+  reportId      BigInt    @map("report_id")
+  modelName     String    @default("VISION_MOCK") @map("model_name") @db.VarChar(100)
+  modelVersion  String?   @map("model_version") @db.VarChar(30)
+  result        String?   @db.VarChar(20) // normal/toxic_suspected/unknown
+  confidence    Decimal?  @db.Decimal(5, 4)
+  processStatus String    @default("pending") @map("process_status") @db.VarChar(20) // pending/processing/done/failed
+  errorMessage  String?   @map("error_message") @db.VarChar(500)
+  rawResponse   Json?     @map("raw_response")
+  isLatest      Boolean?  @map("is_latest")
+  requestedAt   DateTime  @default(now()) @map("requested_at") @db.DateTime(0)
+  processedAt   DateTime? @map("processed_at") @db.DateTime(0)
+
+  report JellyfishReport @relation(fields: [reportId], references: [id], onDelete: Cascade)
+
+  @@unique([reportId, isLatest], name: "uk_vision_results_latest")
+  @@index([processStatus, requestedAt], name: "ix_vision_results_status")
+  @@map("vision_results")
+}
+
+model ReportReview {
+  id            BigInt   @id @default(autoincrement())
+  reportId      BigInt   @map("report_id")
+  reviewStatus  String   @map("review_status") @db.VarChar(20) // verified/rejected/hold
+  rejectReason  String?  @map("reject_reason") @db.VarChar(30) // not_jellyfish/unclear/duplicate/wrong_location/inappropriate
+  memo          String?  @db.VarChar(500)
+  reflectedRisk Boolean  @default(false) @map("reflected_risk")
+  reviewedBy    BigInt   @map("reviewed_by")
+  reviewedAt    DateTime @default(now()) @map("reviewed_at") @db.DateTime(0)
+
+  report   JellyfishReport @relation(fields: [reportId], references: [id], onDelete: Cascade)
+  reviewer User            @relation(fields: [reviewedBy], references: [id], onDelete: Restrict)
+
+  @@index([reportId, reviewedAt], name: "ix_report_reviews_report_time")
+  @@index([reviewedBy, reviewedAt], name: "ix_report_reviews_reviewer")
+  @@map("report_reviews")
+}
+
+// =====================================================================================
+// 4. 위험도 산출 (SYS-003)
+// =====================================================================================
+
+model RiskRuleConfig {
+  id            BigInt   @id @default(autoincrement())
+  ruleCode      String   @map("rule_code") @db.VarChar(50)
+  ruleCategory  String   @map("rule_category") @db.VarChar(30) // risk_variable/report_weight/level_threshold/min_level
+  ruleName      String   @map("rule_name") @db.VarChar(150)
+  score         Int?     @db.SmallInt
+  conditionJson Json?    @map("condition_json")
+  minRiskLevel  String?  @map("min_risk_level") @db.VarChar(20) // safe/caution/danger/severe
+  version       String   @default("v1") @db.VarChar(20)
+  active        Boolean  @default(true)
+  updatedBy     BigInt?  @map("updated_by")
+  createdAt     DateTime @default(now()) @map("created_at") @db.DateTime(0)
+  updatedAt     DateTime @updatedAt @map("updated_at") @db.DateTime(0)
+
+  updater User? @relation(fields: [updatedBy], references: [id], onDelete: SetNull)
+
+  @@unique([ruleCode, version], name: "uk_risk_rule_configs_code_version")
+  @@index([active, ruleCategory], name: "ix_risk_rule_configs_active")
+  @@map("risk_rule_configs")
+}
+
+model RiskCalculation {
+  id                 BigInt    @id @default(autoincrement())
+  calculationUid     String    @unique @map("calculation_uid") @db.VarChar(50)
+  triggerType        String    @map("trigger_type") @db.VarChar(30) // schedule/data_sync/report_verified/manual
+  triggerReportId    BigInt?   @map("trigger_report_id")
+  triggeredBy        BigInt?   @map("triggered_by")
+  ruleVersion        String    @map("rule_version") @db.VarChar(20)
+  affectedBeachCount Int       @default(0) @map("affected_beach_count")
+  calcStatus         String    @default("running") @map("calc_status") @db.VarChar(20) // running/success/partial/failed
+  errorMessage       String?   @map("error_message") @db.VarChar(500)
+  startedAt          DateTime  @default(now()) @map("started_at") @db.DateTime(0)
+  finishedAt         DateTime? @map("finished_at") @db.DateTime(0)
+
+  triggerReport JellyfishReport? @relation(fields: [triggerReportId], references: [id], onDelete: SetNull)
+  triggerer     User?            @relation(fields: [triggeredBy], references: [id], onDelete: SetNull)
+  riskScores    RiskScore[]
+
+  @@index([startedAt], name: "ix_risk_calculations_time")
+  @@map("risk_calculations")
+}
+
+model RiskScore {
+  id               BigInt   @id @default(autoincrement())
+  calculationId    BigInt   @map("calculation_id")
+  beachId          BigInt   @map("beach_id")
+  horizon          String   @db.VarChar(10) // now/6h/24h/72h
+  riskScore        Int      @map("risk_score") @db.SmallInt
+  riskLevel        String   @map("risk_level") @db.VarChar(20) // safe/caution/danger/severe
+  baseRiskLevel    String?  @map("base_risk_level") @db.VarChar(20)
+  minLevelApplied  Boolean  @default(false) @map("min_level_applied")
+  minLevelRuleCode String?  @map("min_level_rule_code") @db.VarChar(50)
+  dataConfidence   String   @default("medium") @map("data_confidence") @db.VarChar(10) // high/medium/low
+  ruleVersion      String   @map("rule_version") @db.VarChar(20)
+  modelId          BigInt?  @map("model_id")
+  isLatest         Boolean? @map("is_latest")
+  generatedAt      DateTime @default(now()) @map("generated_at") @db.DateTime(0)
+
+  calculation      RiskCalculation   @relation(fields: [calculationId], references: [id], onDelete: Cascade)
+  beach            Beach             @relation(fields: [beachId], references: [id], onDelete: Cascade)
+  model            MlModel?          @relation(fields: [modelId], references: [id], onDelete: SetNull)
+  factors          RiskFactor[]
+  operationActions OperationAction[]
+
+  @@unique([beachId, horizon, isLatest], name: "uk_risk_scores_latest")
+  @@index([calculationId], name: "ix_risk_scores_calculation")
+  @@index([riskLevel, generatedAt], name: "ix_risk_scores_level")
+  @@map("risk_scores")
+}
+
+model RiskFactor {
+  id             BigInt  @id @default(autoincrement())
+  riskScoreId    BigInt  @map("risk_score_id")
+  factorCode     String  @map("factor_code") @db.VarChar(50)
+  factorName     String  @map("factor_name") @db.VarChar(150)
+  factorDetail   String? @map("factor_detail") @db.VarChar(500)
+  scoreDelta     Int     @map("score_delta") @db.SmallInt
+  sourceReportId BigInt? @map("source_report_id")
+  displayOrder   Int     @default(0) @map("display_order") @db.SmallInt
+
+  riskScore    RiskScore        @relation(fields: [riskScoreId], references: [id], onDelete: Cascade)
+  sourceReport JellyfishReport? @relation(fields: [sourceReportId], references: [id], onDelete: SetNull)
+
+  @@index([riskScoreId, displayOrder], name: "ix_risk_factors_score_order")
+  @@map("risk_factors")
+}
+
+// =====================================================================================
+// 5. 운영 대응 (ADM-006/007)
+// =====================================================================================
+
+model OperationAction {
+  id               BigInt   @id @default(autoincrement())
+  beachId          BigInt   @map("beach_id")
+  riskScoreId      BigInt?  @map("risk_score_id")
+  recommendationId BigInt?  @map("recommendation_id")
+  actionType       String?  @map("action_type") @db.VarChar(50)
+  operationStatus  String   @map("operation_status") @db.VarChar(30) // normal/monitoring_up/entry_caution/lifeguard_added/broadcast/zone_control_review/entry_ban/resumed
+  memo             String?  @db.VarChar(500)
+  createdBy        BigInt   @map("created_by")
+  createdAt        DateTime @default(now()) @map("created_at") @db.DateTime(0)
+
+  beach          Beach                @relation(fields: [beachId], references: [id], onDelete: Restrict)
+  riskScore      RiskScore?           @relation(fields: [riskScoreId], references: [id], onDelete: SetNull)
+  recommendation RiskRecommendation?  @relation(fields: [recommendationId], references: [id], onDelete: SetNull)
+  creator        User                 @relation(fields: [createdBy], references: [id], onDelete: Restrict)
+  statusLogs     OperationStatusLog[]
+
+  @@index([beachId, createdAt], name: "ix_operation_actions_beach_time")
+  @@index([createdBy, createdAt], name: "ix_operation_actions_creator")
+  @@map("operation_actions")
+}
+
+model OperationStatusLog {
+  id                BigInt   @id @default(autoincrement())
+  beachId           BigInt   @map("beach_id")
+  operationActionId BigInt?  @map("operation_action_id")
+  previousStatus    String?  @map("previous_status") @db.VarChar(30)
+  newStatus         String   @map("new_status") @db.VarChar(30)
+  reason            String?  @db.VarChar(500)
+  changedBy         BigInt   @map("changed_by")
+  changedAt         DateTime @default(now()) @map("changed_at") @db.DateTime(0)
+
+  beach           Beach            @relation(fields: [beachId], references: [id], onDelete: Restrict)
+  operationAction OperationAction? @relation(fields: [operationActionId], references: [id], onDelete: SetNull)
+  changer         User             @relation(fields: [changedBy], references: [id], onDelete: Restrict)
+
+  @@index([beachId, changedAt], name: "ix_operation_status_logs_beach_time")
+  @@map("operation_status_logs")
+}
+
+// =====================================================================================
+// 6. 알림 (SYS-005 / ADM-010)
+// =====================================================================================
+
+model NotificationTemplate {
+  id           BigInt   @id @default(autoincrement())
+  templateCode String   @unique @map("template_code") @db.VarChar(50)
+  targetType   String   @map("target_type") @db.VarChar(20) // admin/operator/public
+  riskLevel    String?  @map("risk_level") @db.VarChar(20)
+  eventType    String?  @map("event_type") @db.VarChar(30) // level_up/toxic_report/sting_report
+  title        String?  @db.VarChar(200)
+  body         String   @db.Text
+  active       Boolean  @default(true)
+  createdAt    DateTime @default(now()) @map("created_at") @db.DateTime(0)
+  updatedAt    DateTime @updatedAt @map("updated_at") @db.DateTime(0)
+
+  notifications Notification[]
+
+  @@map("notification_templates")
+}
+
+model Notification {
+  id              BigInt    @id @default(autoincrement())
+  targetType      String    @map("target_type") @db.VarChar(20) // admin/operator/public
+  targetUserId    BigInt?   @map("target_user_id")
+  targetUserToken String?   @map("target_user_token") @db.VarChar(64)
+  beachId         BigInt    @map("beach_id")
+  riskLevel       String?   @map("risk_level") @db.VarChar(20)
+  eventType       String    @map("event_type") @db.VarChar(30) // level_up/toxic_report/sting_report
+  templateId      BigInt?   @map("template_id")
+  message         String    @db.Text
+  dedupKey        String?   @unique @map("dedup_key") @db.VarChar(150)
+  cooldownUntil   DateTime? @map("cooldown_until") @db.DateTime(0)
+  createdAt       DateTime  @default(now()) @map("created_at") @db.DateTime(0)
+  readAt          DateTime? @map("read_at") @db.DateTime(0)
+
+  targetUser User?                  @relation(fields: [targetUserId], references: [id], onDelete: Cascade)
+  beach      Beach                  @relation(fields: [beachId], references: [id], onDelete: Cascade)
+  template   NotificationTemplate?  @relation(fields: [templateId], references: [id], onDelete: SetNull)
+  dispatches NotificationDispatch[]
+
+  @@index([targetUserId, readAt, createdAt], name: "ix_notifications_user_read")
+  @@index([beachId, createdAt], name: "ix_notifications_beach_time")
+  @@index([targetUserToken, readAt, createdAt], name: "ix_notifications_token_read")
+  @@map("notifications")
+}
+
+// =====================================================================================
+// 7. 리포트 (ADM-011 / SYS-006)
+// =====================================================================================
+
+model DailyReport {
+  id                BigInt   @id @default(autoincrement())
+  beachId           BigInt   @map("beach_id")
+  reportDate        DateTime @map("report_date") @db.Date
+  summaryJson       Json?    @map("summary_json")
+  maxRiskLevel      String?  @map("max_risk_level") @db.VarChar(20)
+  riskChangeSummary String?  @map("risk_change_summary") @db.VarChar(200)
+  reportCount       Int      @default(0) @map("report_count")
+  toxicCount        Int      @default(0) @map("toxic_count")
+  stingCount        Int      @default(0) @map("sting_count")
+  actionCount       Int      @default(0) @map("action_count")
+  memo              String?  @db.Text
+  createdBy         BigInt?  @map("created_by")
+  createdAt         DateTime @default(now()) @map("created_at") @db.DateTime(0)
+  updatedAt         DateTime @updatedAt @map("updated_at") @db.DateTime(0)
+
+  beach   Beach @relation(fields: [beachId], references: [id], onDelete: Cascade)
+  creator User? @relation(fields: [createdBy], references: [id], onDelete: SetNull)
+
+  @@unique([beachId, reportDate], name: "uk_daily_reports_beach_date")
+  @@index([reportDate], name: "ix_daily_reports_date")
+  @@map("daily_reports")
+}
+
+// =====================================================================================
+// 8. 사용자 부가 / 감사
+// =====================================================================================
+
+model FavoriteBeach {
+  id        BigInt   @id @default(autoincrement())
+  userId    BigInt?  @map("user_id")
+  userToken String?  @map("user_token") @db.VarChar(64)
+  beachId   BigInt   @map("beach_id")
+  createdAt DateTime @default(now()) @map("created_at") @db.DateTime(0)
+
+  user  User? @relation(fields: [userId], references: [id], onDelete: Cascade)
+  beach Beach @relation(fields: [beachId], references: [id], onDelete: Cascade)
+
+  @@unique([userId, beachId], name: "uk_favorite_beaches_user")
+  @@unique([userToken, beachId], name: "uk_favorite_beaches_token")
+  @@index([beachId], name: "ix_favorite_beaches_beach")
+  @@map("favorite_beaches")
+}
+
+model AuditLog {
+  id         BigInt   @id @default(autoincrement())
+  userId     BigInt?  @map("user_id")
+  actionType String   @map("action_type") @db.VarChar(50)
+  targetType String   @map("target_type") @db.VarChar(50)
+  targetId   BigInt?  @map("target_id")
+  beforeJson Json?    @map("before_json")
+  afterJson  Json?    @map("after_json")
+  ipAddress  String?  @map("ip_address") @db.VarChar(45)
+  createdAt  DateTime @default(now()) @map("created_at") @db.DateTime(0)
+
+  user User? @relation(fields: [userId], references: [id], onDelete: SetNull)
+
+  @@index([userId, createdAt], name: "ix_audit_logs_user_time")
+  @@index([targetType, targetId, createdAt], name: "ix_audit_logs_target")
+  @@map("audit_logs")
+}
+
+// =====================================================================================
+// 9. 2차 확장 (EX-001~004) — MVP 범위 밖. 스키마 확장 지점만 정의.
+// =====================================================================================
+
+model NotificationConsent {
+  id          BigInt    @id @default(autoincrement())
+  userId      BigInt?   @map("user_id")
+  userToken   String?   @map("user_token") @db.VarChar(64)
+  channel     String    @db.VarChar(20) // push/sms/email
+  agreed      Boolean   @default(false)
+  phoneNumber String?   @map("phone_number") @db.VarChar(30)
+  deviceToken String?   @map("device_token") @db.VarChar(255)
+  agreedAt    DateTime? @map("agreed_at") @db.DateTime(0)
+  revokedAt   DateTime? @map("revoked_at") @db.DateTime(0)
+
+  user User? @relation(fields: [userId], references: [id], onDelete: Cascade)
+
+  @@map("notification_consents")
+}
+
+model NotificationDispatch {
+  id             BigInt    @id @default(autoincrement())
+  notificationId BigInt    @map("notification_id")
+  channel        String    @db.VarChar(20) // push/sms/email
+  provider       String?   @db.VarChar(50)
+  recipient      String    @db.VarChar(255)
+  dispatchStatus String    @default("pending") @map("dispatch_status") @db.VarChar(20) // pending/sent/failed/rejected
+  failedReason   String?   @map("failed_reason") @db.VarChar(500)
+  retryCount     Int       @default(0) @map("retry_count") @db.SmallInt
+  costAmount     Decimal?  @map("cost_amount") @db.Decimal(10, 2)
+  sentAt         DateTime? @map("sent_at") @db.DateTime(0)
+  createdAt      DateTime  @default(now()) @map("created_at") @db.DateTime(0)
+
+  notification Notification @relation(fields: [notificationId], references: [id], onDelete: Cascade)
+
+  @@index([dispatchStatus, createdAt], name: "ix_notification_dispatches_status")
+  @@map("notification_dispatches")
+}
+
+model Partner {
+  id            BigInt   @id @default(autoincrement())
+  partnerCode   String   @unique @map("partner_code") @db.VarChar(50)
+  name          String   @db.VarChar(150)
+  businessNo    String?  @map("business_no") @db.VarChar(30)
+  contactName   String?  @map("contact_name") @db.VarChar(100)
+  contactEmail  String?  @map("contact_email") @db.VarChar(255)
+  planCode      String?  @map("plan_code") @db.VarChar(30)
+  partnerStatus String   @default("active") @map("partner_status") @db.VarChar(20) // active/suspended/terminated
+  createdAt     DateTime @default(now()) @map("created_at") @db.DateTime(0)
+
+  apiKeys  PartnerApiKey[]
+  callLogs PartnerApiCallLog[]
+
+  @@map("partners")
+}
+
+model PartnerApiKey {
+  id              BigInt    @id @default(autoincrement())
+  partnerId       BigInt    @map("partner_id")
+  keyPrefix       String    @unique @map("key_prefix") @db.VarChar(16)
+  apiKeyHash      String    @map("api_key_hash") @db.VarChar(255)
+  scopesJson      Json?     @map("scopes_json")
+  rateLimitPerMin Int?      @map("rate_limit_per_min")
+  expiresAt       DateTime? @map("expires_at") @db.DateTime(0)
+  revokedAt       DateTime? @map("revoked_at") @db.DateTime(0)
+  createdAt       DateTime  @default(now()) @map("created_at") @db.DateTime(0)
+
+  partner  Partner             @relation(fields: [partnerId], references: [id], onDelete: Cascade)
+  callLogs PartnerApiCallLog[]
+
+  @@map("partner_api_keys")
+}
+
+model PartnerApiCallLog {
+  id             BigInt   @id @default(autoincrement())
+  partnerId      BigInt   @map("partner_id")
+  apiKeyId       BigInt?  @map("api_key_id")
+  endpoint       String   @db.VarChar(255)
+  httpMethod     String   @map("http_method") @db.VarChar(10)
+  statusCode     Int      @map("status_code") @db.SmallInt
+  responseTimeMs Int?     @map("response_time_ms")
+  isBillable     Boolean  @default(true) @map("is_billable")
+  calledAt       DateTime @default(now()) @map("called_at") @db.DateTime(0)
+
+  partner Partner        @relation(fields: [partnerId], references: [id], onDelete: Cascade)
+  apiKey  PartnerApiKey? @relation(fields: [apiKeyId], references: [id], onDelete: SetNull)
+
+  @@index([partnerId, calledAt], name: "ix_partner_api_call_logs_partner_time")
+  @@map("partner_api_call_logs")
+}
+
+model MlModel {
+  id              BigInt    @id @default(autoincrement())
+  modelName       String    @map("model_name") @db.VarChar(100)
+  version         String    @db.VarChar(30)
+  algorithm       String?   @db.VarChar(50)
+  modelPurpose    String    @map("model_purpose") @db.VarChar(30) // risk_prediction/vision
+  hyperparamsJson Json?     @map("hyperparams_json")
+  metricsJson     Json?     @map("metrics_json")
+  artifactUri     String?   @map("artifact_uri") @db.VarChar(500)
+  modelStatus     String    @default("training") @map("model_status") @db.VarChar(20) // training/staging/active/archived
+  trainedAt       DateTime? @map("trained_at") @db.DateTime(0)
+  activatedAt     DateTime? @map("activated_at") @db.DateTime(0)
+  createdAt       DateTime  @default(now()) @map("created_at") @db.DateTime(0)
+
+  riskScores RiskScore[]
+
+  @@unique([modelName, version], name: "uk_ml_models_name_version")
+  @@map("ml_models")
+}
+
+model Subscription {
+  id                 BigInt    @id @default(autoincrement())
+  userId             BigInt    @map("user_id")
+  subscriberType     String    @map("subscriber_type") @db.VarChar(20) // fisherman/aquafarm
+  planCode           String    @map("plan_code") @db.VarChar(30)
+  subscriptionStatus String    @default("pending") @map("subscription_status") @db.VarChar(20) // pending/active/paused/canceled/expired
+  priceAmount        Decimal?  @map("price_amount") @db.Decimal(10, 2)
+  paymentStatus      String?   @map("payment_status") @db.VarChar(20) // unpaid/paid/refunded
+  startedAt          DateTime? @map("started_at") @db.DateTime(0)
+  expiresAt          DateTime? @map("expires_at") @db.DateTime(0)
+  createdAt          DateTime  @default(now()) @map("created_at") @db.DateTime(0)
+
+  user  User               @relation(fields: [userId], references: [id], onDelete: Cascade)
+  areas SubscriptionArea[]
+
+  @@index([userId, subscriptionStatus], name: "ix_subscriptions_user_status")
+  @@map("subscriptions")
+}
+
+model SubscriptionArea {
+  id             BigInt   @id @default(autoincrement())
+  subscriptionId BigInt   @map("subscription_id")
+  beachId        BigInt?  @map("beach_id")
+  label          String?  @db.VarChar(100)
+  centerLat      Decimal? @map("center_lat") @db.Decimal(10, 7)
+  centerLng      Decimal? @map("center_lng") @db.Decimal(10, 7)
+  radiusKm       Decimal? @map("radius_km") @db.Decimal(6, 2)
+  createdAt      DateTime @default(now()) @map("created_at") @db.DateTime(0)
+
+  subscription Subscription @relation(fields: [subscriptionId], references: [id], onDelete: Cascade)
+  beach        Beach?       @relation(fields: [beachId], references: [id], onDelete: Cascade)
+
+  @@map("subscription_areas")
+}
