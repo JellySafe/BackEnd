@@ -1,0 +1,55 @@
+import { Module } from '@nestjs/common';
+import {
+  AdminNotificationController,
+  NotificationTemplateController,
+} from './adapter/in/web/admin-notification.controller';
+import { PublicAlertController } from './adapter/in/web/public-alert.controller';
+import { NotificationPrismaRepository } from './adapter/out/persistence/notification.prisma-repository';
+import { NotificationKyselyQuery } from './adapter/out/persistence/notification.kysely-query';
+import { TemplateKyselyQuery } from './adapter/out/persistence/template.kysely-query';
+import { CreateNotificationService } from './application/service/create-notification.service';
+import { PreviewNotificationService } from './application/service/preview-notification.service';
+import { ListAlertsService } from './application/service/list-alerts.service';
+import { MarkAlertReadService } from './application/service/mark-alert-read.service';
+import { ListTemplatesService } from './application/service/list-templates.service';
+import { NOTIFICATION_REPOSITORY } from './application/port/out/notification-repository.port';
+import { NOTIFICATION_QUERY } from './application/port/out/notification-query.port';
+import { TEMPLATE_QUERY } from './application/port/out/template-query.port';
+import {
+  CREATE_NOTIFICATION_USE_CASE,
+  LIST_ALERTS_USE_CASE,
+  LIST_TEMPLATES_USE_CASE,
+  MARK_ALERT_READ_USE_CASE,
+  PREVIEW_NOTIFICATION_USE_CASE,
+} from './application/port/in/notification-use-cases';
+
+/**
+ * notification 컨텍스트 (알림함/문구, SYS-005 / ADM-010 / USR-003).
+ * 인바운드 포트(유스케이스)와 아웃바운드 포트(리포지토리/쿼리/템플릿)를
+ * DI 토큰으로 어댑터에 바인딩한다.
+ *
+ * CREATE_NOTIFICATION_USE_CASE 는 다른 컨텍스트(risk/report)가 위험 상승/제보 발생 시
+ * 알림을 생성하기 위해 사용하는 인바운드 포트이므로 exports 한다.
+ */
+@Module({
+  controllers: [
+    AdminNotificationController,
+    NotificationTemplateController,
+    PublicAlertController,
+  ],
+  providers: [
+    // 인바운드 포트 → 유스케이스 서비스
+    { provide: CREATE_NOTIFICATION_USE_CASE, useClass: CreateNotificationService },
+    { provide: PREVIEW_NOTIFICATION_USE_CASE, useClass: PreviewNotificationService },
+    { provide: LIST_ALERTS_USE_CASE, useClass: ListAlertsService },
+    { provide: MARK_ALERT_READ_USE_CASE, useClass: MarkAlertReadService },
+    { provide: LIST_TEMPLATES_USE_CASE, useClass: ListTemplatesService },
+    // 아웃바운드 포트 → 어댑터
+    { provide: NOTIFICATION_REPOSITORY, useClass: NotificationPrismaRepository },
+    { provide: NOTIFICATION_QUERY, useClass: NotificationKyselyQuery },
+    { provide: TEMPLATE_QUERY, useClass: TemplateKyselyQuery },
+  ],
+  // 다른 컨텍스트가 알림 생성 시 사용하는 인바운드 포트 토큰을 공개한다.
+  exports: [CREATE_NOTIFICATION_USE_CASE],
+})
+export class NotificationModule {}
