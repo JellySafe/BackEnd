@@ -1,0 +1,61 @@
+import { Module } from '@nestjs/common';
+import { RISK_RECALC } from '@contexts/report/application/port/out/risk-recalc.port';
+import { NotificationModule } from '@contexts/notification/notification.module';
+import { SystemRiskController } from './adapter/in/web/system-risk.controller';
+import { AdminRiskController } from './adapter/in/web/admin-risk.controller';
+import { PublicRiskController } from './adapter/in/web/public-risk.controller';
+import { CalculateRiskService } from './application/service/calculate-risk.service';
+import { GetBeachRiskDetailService } from './application/service/get-beach-risk-detail.service';
+import { ListLatestRisksService } from './application/service/list-latest-risks.service';
+import { GetDashboardSummaryService } from './application/service/get-dashboard-summary.service';
+import { ListRiskRulesService } from './application/service/list-risk-rules.service';
+import { RiskRecalcAdapter } from './adapter/out/risk-recalc.adapter';
+import { RuleConfigKyselyQuery } from './adapter/out/persistence/rule-config.kysely-query';
+import { RiskInputKyselyQuery } from './adapter/out/persistence/risk-input.kysely-query';
+import { RiskPrismaRepository } from './adapter/out/persistence/risk.prisma-repository';
+import { RiskKyselyQuery } from './adapter/out/persistence/risk.kysely-query';
+import { RiskAlertAdapter } from './adapter/out/risk-alert.adapter';
+import { RULE_CONFIG } from './application/port/out/rule-config.port';
+import { RISK_INPUT } from './application/port/out/risk-input.port';
+import { RISK_PERSISTENCE } from './application/port/out/risk-persistence.port';
+import { RISK_QUERY } from './application/port/out/risk-query.port';
+import { RISK_ALERT } from './application/port/out/risk-alert.port';
+import {
+  CALCULATE_RISK_USE_CASE,
+  GET_BEACH_RISK_DETAIL_USE_CASE,
+  GET_DASHBOARD_SUMMARY_USE_CASE,
+  LIST_LATEST_RISKS_USE_CASE,
+  LIST_RISK_RULES_USE_CASE,
+} from './application/port/in/risk-use-cases';
+
+/**
+ * risk 컨텍스트 (위험도 룰 엔진 SYS-003).
+ * 인바운드 포트(유스케이스)와 아웃바운드 포트(룰/입력/영속성/조회)를 DI 토큰으로 어댑터에 바인딩한다.
+ *
+ * exports:
+ *  - RISK_RECALC: report 의 RiskRecalcPort 구현. app 조립 시 report 의 noop 대신 이 어댑터가 연결된다.
+ *  - CALCULATE_RISK_USE_CASE: 스케줄러/배치가 위험도 산출을 직접 호출할 수 있게 노출한다.
+ */
+@Module({
+  imports: [NotificationModule],
+  controllers: [SystemRiskController, AdminRiskController, PublicRiskController],
+  providers: [
+    // 인바운드 포트 → 유스케이스 서비스
+    { provide: CALCULATE_RISK_USE_CASE, useClass: CalculateRiskService },
+    { provide: GET_BEACH_RISK_DETAIL_USE_CASE, useClass: GetBeachRiskDetailService },
+    { provide: LIST_LATEST_RISKS_USE_CASE, useClass: ListLatestRisksService },
+    { provide: GET_DASHBOARD_SUMMARY_USE_CASE, useClass: GetDashboardSummaryService },
+    { provide: LIST_RISK_RULES_USE_CASE, useClass: ListRiskRulesService },
+    // 아웃바운드 포트 → 어댑터
+    { provide: RULE_CONFIG, useClass: RuleConfigKyselyQuery },
+    { provide: RISK_INPUT, useClass: RiskInputKyselyQuery },
+    { provide: RISK_PERSISTENCE, useClass: RiskPrismaRepository },
+    { provide: RISK_QUERY, useClass: RiskKyselyQuery },
+    // report 의 재산출 포트 구현 (RECALC_BATCH 트리거)
+    { provide: RISK_RECALC, useClass: RiskRecalcAdapter },
+    // 위험 단계 상승 알림 (SYS-005, level_up) → notification 컨텍스트로 위임
+    { provide: RISK_ALERT, useClass: RiskAlertAdapter },
+  ],
+  exports: [RISK_RECALC, CALCULATE_RISK_USE_CASE],
+})
+export class RiskModule {}
