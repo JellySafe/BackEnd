@@ -1,4 +1,5 @@
 import { Module } from '@nestjs/common';
+import { RiskModule } from '@contexts/risk/risk.module';
 import { AdminObservationController } from './adapter/in/web/admin-observation.controller';
 import { ObservationScheduler } from './adapter/in/schedule/observation.scheduler';
 import { DataSourcePrismaRepository } from './adapter/out/persistence/data-source.prisma-repository';
@@ -32,6 +33,10 @@ import {
  * DI 토큰으로 어댑터에 바인딩한다. 스케줄러가 배치를 구동한다.
  */
 @Module({
+  // RiskModule 이 export 하는 RISK_RECALC_TRIGGER(위험도 재산출 트리거)를 주입받기 위해 import.
+  // 수집·매핑 배치 완료 후 신선한 데이터로 위험도를 재산출(data_sync)하고, 단계 상승 시
+  // 관심 해변 구독자 알림 확산(SYS-005)까지 이어진다. RiskModule 은 observation 을 import 하지 않아 순환 없음.
+  imports: [RiskModule],
   controllers: [AdminObservationController],
   providers: [
     // 인바운드 포트 → 유스케이스 서비스

@@ -1,5 +1,6 @@
 import { Module } from '@nestjs/common';
 import { RISK_RECALC } from '@contexts/report/application/port/out/risk-recalc.port';
+import { RISK_RECALC_TRIGGER } from '@contexts/observation/application/port/out/risk-recalc-trigger.port';
 import { NotificationModule } from '@contexts/notification/notification.module';
 import { SystemRiskController } from './adapter/in/web/system-risk.controller';
 import { AdminRiskController } from './adapter/in/web/admin-risk.controller';
@@ -10,6 +11,7 @@ import { ListLatestRisksService } from './application/service/list-latest-risks.
 import { GetDashboardSummaryService } from './application/service/get-dashboard-summary.service';
 import { ListRiskRulesService } from './application/service/list-risk-rules.service';
 import { RiskRecalcAdapter } from './adapter/out/risk-recalc.adapter';
+import { ObservationRecalcAdapter } from './adapter/out/observation-recalc.adapter';
 import { RuleConfigKyselyQuery } from './adapter/out/persistence/rule-config.kysely-query';
 import { RiskInputKyselyQuery } from './adapter/out/persistence/risk-input.kysely-query';
 import { RiskPrismaRepository } from './adapter/out/persistence/risk.prisma-repository';
@@ -35,6 +37,7 @@ import {
  *
  * exports:
  *  - RISK_RECALC: report 의 RiskRecalcPort 구현. app 조립 시 report 의 noop 대신 이 어댑터가 연결된다.
+ *  - RISK_RECALC_TRIGGER: observation 배치가 수집·매핑 후 위험도 재산출(data_sync)을 트리거하는 포트 구현.
  *  - CALCULATE_RISK_USE_CASE: 스케줄러/배치가 위험도 산출을 직접 호출할 수 있게 노출한다.
  */
 @Module({
@@ -54,11 +57,13 @@ import {
     { provide: RISK_QUERY, useClass: RiskKyselyQuery },
     // report 의 재산출 포트 구현 (RECALC_BATCH 트리거)
     { provide: RISK_RECALC, useClass: RiskRecalcAdapter },
+    // observation 배치의 재산출 트리거 포트 구현 (data_sync 트리거)
+    { provide: RISK_RECALC_TRIGGER, useClass: ObservationRecalcAdapter },
     // 위험 단계 상승 알림 (SYS-005, level_up) → notification 컨텍스트로 위임
     { provide: RISK_ALERT, useClass: RiskAlertAdapter },
     // 주기적 위험도 재산출 스케줄러 (RISK_RECALC_CRON, triggerType='schedule')
     RiskRecalcScheduler,
   ],
-  exports: [RISK_RECALC, CALCULATE_RISK_USE_CASE],
+  exports: [RISK_RECALC, RISK_RECALC_TRIGGER, CALCULATE_RISK_USE_CASE],
 })
 export class RiskModule {}
