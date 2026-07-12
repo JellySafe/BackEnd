@@ -4,6 +4,8 @@ import { ScheduleModule } from '@nestjs/schedule';
 import { PrismaModule } from './shared/persistence/prisma/prisma.module';
 import { KyselyModule } from './shared/persistence/kysely/kysely.module';
 import { AuthModule } from './shared/auth/auth.module';
+import { HealthModule } from './shared/health/health.module';
+import { validateEnv } from './shared/config/env.validation';
 import { BeachModule } from './contexts/beach/beach.module';
 import { RiskModule } from './contexts/risk/risk.module';
 import { ReportModule } from './contexts/report/report.module';
@@ -24,11 +26,12 @@ import { SecondaryModule } from './contexts/secondary/secondary.module';
  */
 @Module({
   imports: [
-    ConfigModule.forRoot({ isGlobal: true }),
+    ConfigModule.forRoot({ isGlobal: true, validate: validateEnv }),
     ScheduleModule.forRoot(),
     PrismaModule,
     KyselyModule,
     AuthModule,
+    HealthModule,
     // 바운디드 컨텍스트
     RiskModule,
     ReportModule,
