@@ -15,6 +15,7 @@ import { RiskInputKyselyQuery } from './adapter/out/persistence/risk-input.kysel
 import { RiskPrismaRepository } from './adapter/out/persistence/risk.prisma-repository';
 import { RiskKyselyQuery } from './adapter/out/persistence/risk.kysely-query';
 import { RiskAlertAdapter } from './adapter/out/risk-alert.adapter';
+import { RiskRecalcScheduler } from './adapter/in/schedule/risk-recalc.scheduler';
 import { RULE_CONFIG } from './application/port/out/rule-config.port';
 import { RISK_INPUT } from './application/port/out/risk-input.port';
 import { RISK_PERSISTENCE } from './application/port/out/risk-persistence.port';
@@ -55,6 +56,8 @@ import {
     { provide: RISK_RECALC, useClass: RiskRecalcAdapter },
     // 위험 단계 상승 알림 (SYS-005, level_up) → notification 컨텍스트로 위임
     { provide: RISK_ALERT, useClass: RiskAlertAdapter },
+    // 주기적 위험도 재산출 스케줄러 (RISK_RECALC_CRON, triggerType='schedule')
+    RiskRecalcScheduler,
   ],
   exports: [RISK_RECALC, CALCULATE_RISK_USE_CASE],
 })

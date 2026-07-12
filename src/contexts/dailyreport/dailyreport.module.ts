@@ -1,12 +1,15 @@
 import { Module } from '@nestjs/common';
 import { AdminDailyReportController } from './adapter/in/web/admin-daily-report.controller';
+import { DailyReportScheduler } from './adapter/in/schedule/daily-report.scheduler';
 import { DailyReportPrismaRepository } from './adapter/out/persistence/daily-report.prisma-repository';
 import { DailyReportKyselyQuery } from './adapter/out/persistence/daily-report.kysely-query';
+import { BeachIdsKyselyQuery } from './adapter/out/persistence/beach-ids.kysely-query';
 import { GetDailyReportService } from './application/service/get-daily-report.service';
 import { GenerateDailyReportService } from './application/service/generate-daily-report.service';
 import { UpdateReportMemoService } from './application/service/update-report-memo.service';
 import { DAILY_REPORT_REPOSITORY } from './application/port/out/daily-report-repository.port';
 import { DAILY_REPORT_QUERY } from './application/port/out/daily-report-query.port';
+import { BEACH_IDS_QUERY } from './application/port/out/beach-ids-query.port';
 import {
   GENERATE_DAILY_REPORT_USE_CASE,
   GET_DAILY_REPORT_USE_CASE,
@@ -29,6 +32,9 @@ import {
     // 아웃바운드 포트 → 어댑터
     { provide: DAILY_REPORT_REPOSITORY, useClass: DailyReportPrismaRepository },
     { provide: DAILY_REPORT_QUERY, useClass: DailyReportKyselyQuery },
+    { provide: BEACH_IDS_QUERY, useClass: BeachIdsKyselyQuery },
+    // 스케줄러 (adapter/in/schedule, SYS-006)
+    DailyReportScheduler,
   ],
   exports: [GENERATE_DAILY_REPORT_USE_CASE],
 })
