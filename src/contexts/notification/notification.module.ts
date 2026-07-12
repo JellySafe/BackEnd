@@ -1,4 +1,5 @@
 import { Module } from '@nestjs/common';
+import { FavoriteModule } from '@contexts/favorite/favorite.module';
 import {
   AdminNotificationController,
   NotificationTemplateController,
@@ -12,6 +13,7 @@ import { PreviewNotificationService } from './application/service/preview-notifi
 import { ListAlertsService } from './application/service/list-alerts.service';
 import { MarkAlertReadService } from './application/service/mark-alert-read.service';
 import { ListTemplatesService } from './application/service/list-templates.service';
+import { NotifyBeachSubscribersService } from './application/service/notify-beach-subscribers.service';
 import { NOTIFICATION_REPOSITORY } from './application/port/out/notification-repository.port';
 import { NOTIFICATION_QUERY } from './application/port/out/notification-query.port';
 import { TEMPLATE_QUERY } from './application/port/out/template-query.port';
@@ -20,6 +22,7 @@ import {
   LIST_ALERTS_USE_CASE,
   LIST_TEMPLATES_USE_CASE,
   MARK_ALERT_READ_USE_CASE,
+  NOTIFY_BEACH_SUBSCRIBERS_USE_CASE,
   PREVIEW_NOTIFICATION_USE_CASE,
 } from './application/port/in/notification-use-cases';
 
@@ -32,6 +35,8 @@ import {
  * 알림을 생성하기 위해 사용하는 인바운드 포트이므로 exports 한다.
  */
 @Module({
+  // FavoriteModule: 관심 해변 구독자 조회(GET_BEACH_SUBSCRIBERS_USE_CASE)로 알림 확산.
+  imports: [FavoriteModule],
   controllers: [
     AdminNotificationController,
     NotificationTemplateController,
@@ -40,6 +45,7 @@ import {
   providers: [
     // 인바운드 포트 → 유스케이스 서비스
     { provide: CREATE_NOTIFICATION_USE_CASE, useClass: CreateNotificationService },
+    { provide: NOTIFY_BEACH_SUBSCRIBERS_USE_CASE, useClass: NotifyBeachSubscribersService },
     { provide: PREVIEW_NOTIFICATION_USE_CASE, useClass: PreviewNotificationService },
     { provide: LIST_ALERTS_USE_CASE, useClass: ListAlertsService },
     { provide: MARK_ALERT_READ_USE_CASE, useClass: MarkAlertReadService },
@@ -49,7 +55,7 @@ import {
     { provide: NOTIFICATION_QUERY, useClass: NotificationKyselyQuery },
     { provide: TEMPLATE_QUERY, useClass: TemplateKyselyQuery },
   ],
-  // 다른 컨텍스트가 알림 생성 시 사용하는 인바운드 포트 토큰을 공개한다.
-  exports: [CREATE_NOTIFICATION_USE_CASE],
+  // 다른 컨텍스트가 알림 생성/확산 시 사용하는 인바운드 포트 토큰을 공개한다.
+  exports: [CREATE_NOTIFICATION_USE_CASE, NOTIFY_BEACH_SUBSCRIBERS_USE_CASE],
 })
 export class NotificationModule {}

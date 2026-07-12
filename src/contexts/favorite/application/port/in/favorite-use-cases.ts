@@ -1,6 +1,6 @@
 import { Id } from '@shared/kernel/id';
 import { FavoriteOwner } from '../../../domain/favorite-beach';
-import { FavoriteListItem } from '../out/favorite-query.port';
+import { BeachSubscriber, FavoriteListItem } from '../out/favorite-query.port';
 
 // ----- USR-003 관심 해변 저장 -----
 export interface AddFavoriteCommand {
@@ -34,3 +34,9 @@ export interface ListFavoritesUseCase {
   list(owner: FavoriteOwner): Promise<FavoriteListItem[]>;
 }
 export const LIST_FAVORITES_USE_CASE = Symbol('LIST_FAVORITES_USE_CASE');
+
+// ----- 해변별 관심 등록자 조회 (SYS-005 알림 확산용, 타 컨텍스트 소비) -----
+export interface GetBeachSubscribersUseCase {
+  getSubscribers(beachId: Id): Promise<BeachSubscriber[]>;
+}
+export const GET_BEACH_SUBSCRIBERS_USE_CASE = Symbol('GET_BEACH_SUBSCRIBERS_USE_CASE');

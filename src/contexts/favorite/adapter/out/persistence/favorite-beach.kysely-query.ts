@@ -1,7 +1,9 @@
 import { Injectable } from '@nestjs/common';
 import { KyselyService } from '@shared/persistence/kysely/kysely.service';
+import { Id } from '@shared/kernel/id';
 import { RiskLevel, isRiskLevel } from '@shared/kernel/risk-level';
 import {
+  BeachSubscriber,
   FavoriteListItem,
   FavoriteQueryPort,
 } from '../../../application/port/out/favorite-query.port';
@@ -56,6 +58,19 @@ export class FavoriteBeachKyselyQuery implements FavoriteQueryPort {
         : null,
       currentRiskScore: row.currentRiskScore === null ? null : Number(row.currentRiskScore),
       createdAt: new Date(row.createdAt),
+    }));
+  }
+
+  async findSubscribers(beachId: Id): Promise<BeachSubscriber[]> {
+    const rows = await this.db
+      .selectFrom('favorite_beaches as f')
+      .select(['f.user_id as userId', 'f.user_token as userToken'])
+      .where('f.beach_id', '=', beachId)
+      .execute();
+
+    return rows.map((row) => ({
+      userId: row.userId === null ? null : Number(row.userId),
+      userToken: row.userToken ?? null,
     }));
   }
 }

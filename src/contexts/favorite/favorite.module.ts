@@ -5,10 +5,12 @@ import { FavoriteBeachKyselyQuery } from './adapter/out/persistence/favorite-bea
 import { AddFavoriteService } from './application/service/add-favorite.service';
 import { RemoveFavoriteService } from './application/service/remove-favorite.service';
 import { ListFavoritesService } from './application/service/list-favorites.service';
+import { GetBeachSubscribersService } from './application/service/get-beach-subscribers.service';
 import { FAVORITE_REPOSITORY } from './application/port/out/favorite-repository.port';
 import { FAVORITE_QUERY } from './application/port/out/favorite-query.port';
 import {
   ADD_FAVORITE_USE_CASE,
+  GET_BEACH_SUBSCRIBERS_USE_CASE,
   LIST_FAVORITES_USE_CASE,
   REMOVE_FAVORITE_USE_CASE,
 } from './application/port/in/favorite-use-cases';
@@ -25,10 +27,12 @@ import {
     { provide: ADD_FAVORITE_USE_CASE, useClass: AddFavoriteService },
     { provide: REMOVE_FAVORITE_USE_CASE, useClass: RemoveFavoriteService },
     { provide: LIST_FAVORITES_USE_CASE, useClass: ListFavoritesService },
+    { provide: GET_BEACH_SUBSCRIBERS_USE_CASE, useClass: GetBeachSubscribersService },
     // 아웃바운드 포트 → 어댑터
     { provide: FAVORITE_REPOSITORY, useClass: FavoriteBeachPrismaRepository },
     { provide: FAVORITE_QUERY, useClass: FavoriteBeachKyselyQuery },
   ],
-  exports: [ADD_FAVORITE_USE_CASE, LIST_FAVORITES_USE_CASE],
+  // GET_BEACH_SUBSCRIBERS_USE_CASE: notification 이 관심 해변 알림 확산에 사용
+  exports: [ADD_FAVORITE_USE_CASE, LIST_FAVORITES_USE_CASE, GET_BEACH_SUBSCRIBERS_USE_CASE],
 })
 export class FavoriteModule {}

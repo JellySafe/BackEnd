@@ -35,6 +35,26 @@ export interface CreateNotificationUseCase {
 }
 export const CREATE_NOTIFICATION_USE_CASE = Symbol('CREATE_NOTIFICATION_USE_CASE');
 
+// ----- SYS-005 관심 해변 구독자 알림 확산 (fan-out) -----
+export interface NotifyBeachSubscribersCommand {
+  beachId: Id;
+  eventType: NotificationEvent;
+  riskLevel?: RiskLevel | null;
+  now?: Date;
+}
+
+export interface NotifyBeachSubscribersResult {
+  /** 조회된 관심 등록자 수 */
+  subscriberCount: number;
+  /** 실제로 새 알림이 생성된 수(중복 제외) */
+  createdCount: number;
+}
+
+export interface NotifyBeachSubscribersUseCase {
+  notifySubscribers(command: NotifyBeachSubscribersCommand): Promise<NotifyBeachSubscribersResult>;
+}
+export const NOTIFY_BEACH_SUBSCRIBERS_USE_CASE = Symbol('NOTIFY_BEACH_SUBSCRIBERS_USE_CASE');
+
 // ----- ADM-010 알림/안내방송 문구 생성(미리보기) -----
 export interface PreviewNotificationCommand {
   beachId: Id;
