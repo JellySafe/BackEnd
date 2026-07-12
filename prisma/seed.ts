@@ -4,7 +4,7 @@ import { PrismaClient } from '@prisma/client';
 /**
  * 초기 시드 데이터.
  *   - 관리자 계정 1 (admin@jellysafe.local / admin1234)
- *   - MVP 1순위 해변 5곳 (협재/함덕/이호테우/중문/표선)
+ *   - 제주 지정 해수욕장 12곳 (제주시 8, 서귀포시 4. priority 1~5 는 MVP 1순위)
  *   - 위험도 룰 점수표 (03_Data_AI): 위험 변수 / 제보 가중치 / 위험 단계 구간 / 최소 단계 보장
  *   - 위험 단계별 대응 권고 (ADM-006)
  *   - 안전/고지 문구 (G-006, DISCLAIMER-001)
@@ -40,17 +40,29 @@ async function seedAdmin() {
 }
 
 async function seedBeaches() {
+  // 제주특별자치도 지정 해수욕장 12곳 (제주시 8, 서귀포시 4).
+  // priority 1~5 는 기능정의서상 MVP 1순위(협재/함덕/이호테우/중문/표선), 6~12 는 나머지 지정 해변.
+  // 좌표/방위각/취약도는 초기값이며 실운영 전 PM 확정 대상이다.
   const beaches = [
+    // --- MVP 1순위 5곳 ---
     { name: '협재해수욕장', region: '제주시', lat: 33.3941, lng: 126.2396, facingDirection: 315, priority: 1, vulnerabilityScore: 15 },
     { name: '함덕해수욕장', region: '제주시', lat: 33.5432, lng: 126.6698, facingDirection: 0, priority: 2, vulnerabilityScore: 20 },
     { name: '이호테우해수욕장', region: '제주시', lat: 33.4986, lng: 126.4525, facingDirection: 340, priority: 3, vulnerabilityScore: 10 },
     { name: '중문색달해수욕장', region: '서귀포시', lat: 33.2447, lng: 126.4103, facingDirection: 180, priority: 4, vulnerabilityScore: 10 },
     { name: '표선해수욕장', region: '서귀포시', lat: 33.3262, lng: 126.8339, facingDirection: 135, priority: 5, vulnerabilityScore: 5 },
+    // --- 나머지 제주 지정 해수욕장 7곳 ---
+    { name: '곽지과물해수욕장', region: '제주시', lat: 33.4514, lng: 126.3050, facingDirection: 340, priority: 6, vulnerabilityScore: 10 },
+    { name: '금능으뜸원해수욕장', region: '제주시', lat: 33.3889, lng: 126.2372, facingDirection: 315, priority: 7, vulnerabilityScore: 10 },
+    { name: '삼양검은모래해수욕장', region: '제주시', lat: 33.5183, lng: 126.5972, facingDirection: 0, priority: 8, vulnerabilityScore: 10 },
+    { name: '김녕성세기해수욕장', region: '제주시', lat: 33.5588, lng: 126.7566, facingDirection: 0, priority: 9, vulnerabilityScore: 5 },
+    { name: '월정리해수욕장', region: '제주시', lat: 33.5563, lng: 126.7955, facingDirection: 0, priority: 10, vulnerabilityScore: 5 },
+    { name: '화순금모래해수욕장', region: '서귀포시', lat: 33.2419, lng: 126.3389, facingDirection: 200, priority: 11, vulnerabilityScore: 5 },
+    { name: '신양섭지해수욕장', region: '서귀포시', lat: 33.4351, lng: 126.9130, facingDirection: 90, priority: 12, vulnerabilityScore: 5 },
   ];
   for (const b of beaches) {
     await prisma.beach.upsert({ where: { name: b.name }, update: {}, create: b });
   }
-  console.log(`  ✓ 해변 ${beaches.length}곳`);
+  console.log(`  ✓ 해변 ${beaches.length}곳 (제주 지정 해수욕장)`);
 }
 
 async function seedRiskRules() {
