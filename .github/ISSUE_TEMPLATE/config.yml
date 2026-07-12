@@ -1,0 +1,2 @@
+# 빈 이슈 생성을 막고 템플릿(Feature/Bug) 사용을 강제한다.
+blank_issues_enabled: false

@@ -1,0 +1,49 @@
+name: "🐛 Bug"
+description: "버그 리포트"
+labels: ["bug"]
+body:
+  - type: textarea
+    attributes:
+      label: 🐛 설명
+      description: 어떤 버그인지 설명해 주세요.
+      placeholder: 무엇이 잘못되었나요?
+    validations:
+      required: true
+  - type: textarea
+    attributes:
+      label: 🔁 재현 방법
+      description: 버그를 재현하는 단계를 작성해 주세요.
+      placeholder: |
+        1. ...
+        2. ...
+        3. ...
+    validations:
+      required: true
+  - type: textarea
+    attributes:
+      label: 🤔 예상 동작
+      description: 원래 어떻게 동작해야 하나요?
+    validations:
+      required: true
+  - type: textarea
+    attributes:
+      label: 😱 실제 동작
+      description: 실제로 어떻게 동작하나요? (에러 로그/스크린샷 포함)
+    validations:
+      required: true
+  - type: textarea
+    attributes:
+      label: 🖥️ 환경
+      description: OS, Node 버전, 브랜치/커밋 등 환경 정보를 작성해 주세요.
+      placeholder: |
+        - OS:
+        - Node:
+        - Commit:
+    validations:
+      required: false
+  - type: textarea
+    attributes:
+      label: 🙋🏻 참고 자료
+      description: 참고 자료가 있다면 작성해 주세요.
+    validations:
+      required: false
