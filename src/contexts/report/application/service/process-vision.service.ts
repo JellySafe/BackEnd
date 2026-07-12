@@ -63,12 +63,8 @@ export class ProcessVisionService implements ProcessVisionUseCase {
         raw: res.raw ?? null,
       });
 
-      // REPORT-004: 독성 의심/다수 출현이면 중복 후보를 표시(참고용).
-      if (report.beachId !== null) {
-        await this.query
-          .findDuplicateCandidate(report.beachId, report.reportType, report.snapshot().occurredAt, 60)
-          .catch(() => null);
-      }
+      // REPORT-004: 동일 해변·시간 윈도우 내 유사 제보가 있으면 중복 후보로 표시(참고용).
+      await this.markDuplicateIfAny(reportId, report);
     } catch (err) {
       // AI-003: 판별 실패는 unknown 으로 두고 관리자 수동 확인 대상으로 넘긴다.
       this.logger.warn(`제보 ${reportId} AI 판별 실패 → unknown 처리: ${err}`);
@@ -89,6 +85,34 @@ export class ProcessVisionService implements ProcessVisionUseCase {
     // SYS-005: 독성 의심 판별 또는 쏘임 제보면 운영자에게 자동 알림.
     // 알림 실패는 삼켜 본 판별 흐름을 방해하지 않는다.
     await this.triggerNotification(report);
+  }
+
+  /**
+   * REPORT-004 중복 후보 표시.
+   * 동일 해변 + 시간 윈도우(60분) 내 유사 제보가 있으면 duplicate_of_report_id 를 설정한다.
+   * 반려가 아니라 표시만 하며(상태 전이 없음), 실패해도 본 판별 흐름을 막지 않는다.
+   */
+  private async markDuplicateIfAny(reportId: Id, report: JellyfishReport): Promise<void> {
+    const beachId = report.beachId;
+    // 중복 탐지는 해변 기준. beachId 없으면 스킵.
+    if (beachId === null) {
+      return;
+    }
+    try {
+      const candidateId = await this.query.findDuplicateCandidate(
+        beachId,
+        report.reportType,
+        report.snapshot().occurredAt,
+        60,
+      );
+      // 후보가 있고 자기 자신이 아니면 중복 표시 후 저장.
+      if (candidateId !== null && candidateId !== reportId) {
+        report.markDuplicateOf(candidateId);
+        await this.repository.update(report);
+      }
+    } catch (err) {
+      this.logger.warn(`제보 ${reportId} 중복 후보 표시 실패(무시): ${err}`);
+    }
   }
 
   /** 독성 의심/쏘임이면 알림 트리거. beachId 없으면 스킵. 실패는 warn. */

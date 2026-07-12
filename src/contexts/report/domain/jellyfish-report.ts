@@ -146,6 +146,15 @@ export class JellyfishReport {
     this.props.purgeScheduledAt = at;
   }
 
+  /**
+   * REPORT-004 중복 후보 표시.
+   * 동일 해변·시간 윈도우 내 유사 제보를 참고용으로 연결한다(관리자 검수 참고).
+   * 상태 전이/불변식은 건드리지 않는 순수 표시 메서드다.
+   */
+  markDuplicateOf(reportId: Id): void {
+    this.props.duplicateOfReportId = reportId;
+  }
+
   private transitionTo(next: ReportStatus): void {
     const allowed = ALLOWED_TRANSITIONS[this.props.status];
     if (!allowed.includes(next)) {
