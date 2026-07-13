@@ -1,4 +1,6 @@
 import { Body, Controller, Get, Inject, Post, Query } from '@nestjs/common';
+import { ApiBearerAuth, ApiTags } from '@nestjs/swagger';
+import { ApiOkData } from '@shared/http/api-response.decorator';
 import { normalizePageRequest, offsetOf } from '@shared/kernel/pagination';
 import {
   ListPartnersUseCase,
@@ -7,10 +9,13 @@ import {
   REGISTER_PARTNER_USE_CASE,
 } from '../../../application/port/in/partner-use-cases';
 import { RegisterPartnerRequest } from './dto/register-partner.request';
+import { RegisterPartnerResponse, ListPartnersResponse } from './dto/partner.response';
 
 /**
  * [2차] 파트너 관리 API (EX-001 외부 연동). 골격 — 실제 인증/과금은 2차 범위.
  */
+@ApiTags('secondary-partner')
+@ApiBearerAuth('bearer')
 @Controller('admin/partners')
 export class AdminPartnerController {
   constructor(
@@ -19,6 +24,7 @@ export class AdminPartnerController {
   ) {}
 
   /** [2차] 파트너 등록 */
+  @ApiOkData(RegisterPartnerResponse)
   @Post()
   async register(@Body() body: RegisterPartnerRequest) {
     const partner = await this.registerPartner.register(body);
@@ -26,6 +32,7 @@ export class AdminPartnerController {
   }
 
   /** [2차] 파트너 목록 */
+  @ApiOkData(ListPartnersResponse)
   @Get()
   async list(@Query('page') page?: number, @Query('size') size?: number) {
     const req = normalizePageRequest(Number(page), Number(size));

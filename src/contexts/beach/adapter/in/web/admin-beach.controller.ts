@@ -1,5 +1,7 @@
 import { Body, Controller, Get, Inject, Param, ParseIntPipe, Patch, Post, Query } from '@nestjs/common';
+import { ApiBearerAuth, ApiTags } from '@nestjs/swagger';
 import { normalizePageRequest } from '@shared/kernel/pagination';
+import { ApiOkData, ApiOkPage } from '@shared/http/api-response.decorator';
 import {
   CreateBeachUseCase,
   CREATE_BEACH_USE_CASE,
@@ -11,10 +13,14 @@ import {
 import { ListAdminBeachesQuery } from './dto/list-admin-beaches.query';
 import { CreateBeachRequest } from './dto/create-beach.request';
 import { UpdateBeachRequest } from './dto/update-beach.request';
+import { BeachAdminItemResponse } from './dto/beach-admin-item.response';
+import { BeachDetailResponse } from './dto/beach-detail.response';
 
 /**
  * 관리자 해변 마스터 API (ADM-005).
  */
+@ApiTags('beach')
+@ApiBearerAuth('bearer')
 @Controller('admin/beaches')
 export class AdminBeachController {
   constructor(
@@ -24,6 +30,7 @@ export class AdminBeachController {
   ) {}
 
   /** ADM-005 해변 마스터 목록 */
+  @ApiOkPage(BeachAdminItemResponse)
   @Get()
   list(@Query() query: ListAdminBeachesQuery) {
     const page = normalizePageRequest(query.page, query.size);
@@ -34,6 +41,7 @@ export class AdminBeachController {
   }
 
   /** ADM-005 해변 등록 */
+  @ApiOkData(BeachDetailResponse)
   @Post()
   create(@Body() body: CreateBeachRequest) {
     return this.createBeach.create({
@@ -48,6 +56,7 @@ export class AdminBeachController {
   }
 
   /** ADM-005 해변 수정 */
+  @ApiOkData(BeachDetailResponse)
   @Patch(':beachId')
   update(@Param('beachId', ParseIntPipe) beachId: number, @Body() body: UpdateBeachRequest) {
     return this.updateBeach.update({

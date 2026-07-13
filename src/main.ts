@@ -35,6 +35,8 @@ async function bootstrap(): Promise<void> {
     .setTitle('JellySafe API')
     .setDescription('제주 연안 해파리 위험도 예측/대응 지원 서비스 API')
     .setVersion('0.1.0')
+    // 관리자 API 는 Bearer JWT 필요. Swagger 상단 Authorize 에 토큰 입력.
+    .addBearerAuth({ type: 'http', scheme: 'bearer', bearerFormat: 'JWT' }, 'bearer')
     .build();
   const document = SwaggerModule.createDocument(app, swaggerConfig);
   SwaggerModule.setup(`${prefix}/docs`, app, document);

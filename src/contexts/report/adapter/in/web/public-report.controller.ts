@@ -1,4 +1,6 @@
 import { Body, Controller, Get, Inject, Param, ParseIntPipe, Post } from '@nestjs/common';
+import { ApiParam, ApiTags } from '@nestjs/swagger';
+import { ApiOkData } from '@shared/http/api-response.decorator';
 import {
   GetReportResultUseCase,
   GET_REPORT_RESULT_USE_CASE,
@@ -6,10 +8,13 @@ import {
   SUBMIT_REPORT_USE_CASE,
 } from '../../../application/port/in/report-use-cases';
 import { SubmitReportRequest } from './dto/submit-report.request';
+import { SubmitReportResponse } from './dto/submit-report.response';
+import { ReportResultResponse } from './dto/report-result.response';
 
 /**
  * 일반 사용자 제보 API (USR-004, USR-005).
  */
+@ApiTags('report')
 @Controller('public/reports')
 export class PublicReportController {
   constructor(
@@ -19,6 +24,7 @@ export class PublicReportController {
 
   /** USR-004 해파리 발견 제보 */
   @Post()
+  @ApiOkData(SubmitReportResponse)
   submit(@Body() body: SubmitReportRequest) {
     return this.submitReport.submit({
       beachId: body.beachId ?? null,
@@ -36,6 +42,8 @@ export class PublicReportController {
 
   /** USR-005 제보 결과 및 AI 판별 안내 */
   @Get(':reportId')
+  @ApiParam({ name: 'reportId', example: 1024, description: '제보 식별자' })
+  @ApiOkData(ReportResultResponse)
   getResult(@Param('reportId', ParseIntPipe) reportId: number) {
     return this.getReportResult.getResult(reportId);
   }

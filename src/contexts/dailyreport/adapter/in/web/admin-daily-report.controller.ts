@@ -10,6 +10,8 @@ import {
   Post,
   Query,
 } from '@nestjs/common';
+import { ApiBearerAuth, ApiTags } from '@nestjs/swagger';
+import { ApiOkData } from '@shared/http/api-response.decorator';
 import {
   GenerateDailyReportUseCase,
   GENERATE_DAILY_REPORT_USE_CASE,
@@ -21,11 +23,14 @@ import {
 import { GetDailyReportQueryDto } from './dto/get-daily-report.query';
 import { GenerateDailyReportRequest } from './dto/generate-daily-report.request';
 import { UpdateMemoRequest } from './dto/update-memo.request';
+import { DailyReportResponse } from './dto/daily-report.response';
 
 /**
  * 관리자 일간 운영 리포트 API (ADM-011, SYS-006, FLOW-ADM-004).
  * createdBy 는 임시로 x-user-id 헤더에서 받는다(인증 컨텍스트 완성 후 가드로 교체).
  */
+@ApiTags('dailyreport')
+@ApiBearerAuth('bearer')
 @Controller('admin/daily-reports')
 export class AdminDailyReportController {
   constructor(
@@ -36,6 +41,7 @@ export class AdminDailyReportController {
   ) {}
 
   /** ADM-011 특정일·해변 리포트 조회(없으면 즉석 집계본 반환). */
+  @ApiOkData(DailyReportResponse)
   @Get()
   get(@Query() query: GetDailyReportQueryDto) {
     return this.getDailyReport.get({
@@ -45,6 +51,7 @@ export class AdminDailyReportController {
   }
 
   /** SYS-006 리포트 생성/재생성. */
+  @ApiOkData(DailyReportResponse)
   @Post()
   generate(
     @Body() body: GenerateDailyReportRequest,
@@ -59,6 +66,7 @@ export class AdminDailyReportController {
   }
 
   /** FLOW-ADM-004 운영자 메모 저장. */
+  @ApiOkData(DailyReportResponse)
   @Patch(':id/memo')
   patchMemo(@Param('id', ParseIntPipe) id: number, @Body() body: UpdateMemoRequest) {
     return this.updateMemo.updateMemo({ reportId: id, memo: body.memo ?? null });

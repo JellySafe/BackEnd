@@ -1,4 +1,6 @@
 import { Controller, Get, Inject, Query } from '@nestjs/common';
+import { ApiBearerAuth, ApiTags } from '@nestjs/swagger';
+import { ApiOkDataArray } from '@shared/http/api-response.decorator';
 import {
   ListDataSourcesUseCase,
   LIST_DATA_SOURCES_USE_CASE,
@@ -6,6 +8,8 @@ import {
   LIST_OBSERVATIONS_USE_CASE,
 } from '../../../application/port/in/observation-use-cases';
 import { ListObservationsQuery } from './dto/list-observations.query';
+import { DataSourceStatusResponse } from './dto/data-source-status.response';
+import { ObservationResponse } from './dto/observation.response';
 
 const DEFAULT_OBSERVATION_LIMIT = 100;
 
@@ -14,6 +18,8 @@ const DEFAULT_OBSERVATION_LIMIT = 100;
  * GET /admin/data-sources : 수집 소스 상태(lastSyncedAt/lastSyncStatus 포함)
  * GET /admin/observations : 최근 관측치 조회(stationId/from/to 필터)
  */
+@ApiTags('observation')
+@ApiBearerAuth('bearer')
 @Controller('admin')
 export class AdminObservationController {
   constructor(
@@ -22,12 +28,14 @@ export class AdminObservationController {
   ) {}
 
   /** 수집 소스 상태 조회 */
+  @ApiOkDataArray(DataSourceStatusResponse)
   @Get('data-sources')
   dataSources() {
     return this.listDataSources.list();
   }
 
   /** 최근 관측치 조회 */
+  @ApiOkDataArray(ObservationResponse)
   @Get('observations')
   observations(@Query() query: ListObservationsQuery) {
     return this.listObservations.list(

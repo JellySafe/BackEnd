@@ -1,4 +1,6 @@
 import { Body, Controller, Inject, Post } from '@nestjs/common';
+import { ApiBearerAuth, ApiTags } from '@nestjs/swagger';
+import { ApiOkData } from '@shared/http/api-response.decorator';
 import { Public, Roles } from '@shared/auth/auth.decorators';
 import {
   LoginUserUseCase,
@@ -8,11 +10,14 @@ import {
 } from '../../../application/port/in/user-use-cases';
 import { RegisterUserRequest } from './dto/register-user.request';
 import { LoginUserRequest } from './dto/login-user.request';
+import { RegisterUserResponse } from './dto/register-user.response';
+import { LoginUserResponse } from './dto/login-user.response';
 
 /**
  * 관리자/운영자 인증 API (AUTH-001).
  * 로그인 성공 시 관리자 API 호출용 JWT(accessToken)를 발급한다.
  */
+@ApiTags('user')
 @Controller('admin/auth')
 export class AdminAuthController {
   constructor(
@@ -21,6 +26,8 @@ export class AdminAuthController {
   ) {}
 
   /** AUTH-001 계정 등록 (관리자만). 최초 관리자 계정은 시드로 생성한다. */
+  @ApiBearerAuth('bearer')
+  @ApiOkData(RegisterUserResponse)
   @Roles('admin')
   @Post('register')
   register(@Body() body: RegisterUserRequest) {
@@ -35,6 +42,7 @@ export class AdminAuthController {
   }
 
   /** AUTH-001 로그인 (공개). accessToken 발급. */
+  @ApiOkData(LoginUserResponse)
   @Public()
   @Post('login')
   login(@Body() body: LoginUserRequest) {

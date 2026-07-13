@@ -11,6 +11,8 @@ import {
   Post,
   Query,
 } from '@nestjs/common';
+import { ApiNoContentResponse, ApiTags } from '@nestjs/swagger';
+import { ApiOkData, ApiOkDataArray } from '@shared/http/api-response.decorator';
 import { FavoriteOwner } from '../../../domain/favorite-beach';
 import {
   AddFavoriteUseCase,
@@ -22,11 +24,14 @@ import {
 } from '../../../application/port/in/favorite-use-cases';
 import { AddFavoriteRequest } from './dto/add-favorite.request';
 import { FavoriteOwnerQuery } from './dto/favorite-owner.query';
+import { AddFavoriteResponse } from './dto/add-favorite.response';
+import { FavoriteListItemResponse } from './dto/favorite-list-item.response';
 
 /**
  * 일반 사용자 관심 해변 API (USR-003).
  * 로그인 사용자는 x-user-id 헤더, 비로그인은 userToken/token 으로 식별한다.
  */
+@ApiTags('favorite')
 @Controller('public/favorites')
 export class PublicFavoriteController {
   constructor(
@@ -36,6 +41,7 @@ export class PublicFavoriteController {
   ) {}
 
   /** USR-003 관심 해변 저장(중복은 멱등). */
+  @ApiOkData(AddFavoriteResponse)
   @Post()
   add(@Body() body: AddFavoriteRequest, @Headers('x-user-id') userIdHeader?: string) {
     return this.addFavorite.add({
@@ -45,6 +51,7 @@ export class PublicFavoriteController {
   }
 
   /** 관심 해변 해제. */
+  @ApiNoContentResponse()
   @Delete(':beachId')
   @HttpCode(204)
   async remove(
@@ -59,6 +66,7 @@ export class PublicFavoriteController {
   }
 
   /** 관심 해변 목록 + 각 해변 현재 위험단계. */
+  @ApiOkDataArray(FavoriteListItemResponse)
   @Get()
   list(@Query() query: FavoriteOwnerQuery, @Headers('x-user-id') userIdHeader?: string) {
     return this.listFavorites.list(resolveOwner(query.token, undefined, userIdHeader));

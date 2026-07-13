@@ -8,7 +8,10 @@ import {
   UseInterceptors,
 } from '@nestjs/common';
 import { FileInterceptor } from '@nestjs/platform-express';
+import { ApiBody, ApiConsumes, ApiTags } from '@nestjs/swagger';
+import { ApiOkData } from '@shared/http/api-response.decorator';
 import { ValidationError } from '@shared/kernel/domain-error';
+import { UploadImageResponse } from './dto/upload-image.response';
 
 /**
  * 업로드된 파일의 최소 구조(Multer). @types/multer 미설치 환경에서도
@@ -31,10 +34,20 @@ const ALLOWED_EXT = new Set(['.jpg', '.jpeg', '.png', '.gif', '.webp', '.heic'])
  * 제보 작성(POST /public/reports)에 넣을 imageUrl 을 돌려준다.
  * 비로그인 제보를 지원하므로 public 이며 인증이 필요 없다.
  */
+@ApiTags('report')
 @Controller('public/reports')
 export class ReportUploadController {
   /** USR-004 제보 이미지 업로드 */
   @Post('image')
+  @ApiConsumes('multipart/form-data')
+  @ApiBody({
+    schema: {
+      type: 'object',
+      properties: { image: { type: 'string', format: 'binary' } },
+      required: ['image'],
+    },
+  })
+  @ApiOkData(UploadImageResponse)
   @UseInterceptors(FileInterceptor('image'))
   async uploadImage(
     @UploadedFile() file?: UploadedImageFile,

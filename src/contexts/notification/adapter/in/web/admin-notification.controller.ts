@@ -1,4 +1,6 @@
 import { Body, Controller, Get, Inject, Post, Query } from '@nestjs/common';
+import { ApiBearerAuth, ApiTags } from '@nestjs/swagger';
+import { ApiOkData, ApiOkDataArray } from '@shared/http/api-response.decorator';
 import {
   ListTemplatesUseCase,
   LIST_TEMPLATES_USE_CASE,
@@ -7,11 +9,15 @@ import {
 } from '../../../application/port/in/notification-use-cases';
 import { PreviewNotificationRequest } from './dto/preview-notification.request';
 import { ListTemplatesQuery } from './dto/list-templates.query';
+import { PreviewNotificationResponse } from './dto/preview-notification.response';
+import { TemplateResponse } from './dto/template.response';
 
 /**
  * 관리자 알림 문구 API (ADM-010).
  * MVP 는 실제 발송이 아니라 인앱 문구 생성/미리보기 중심(NOTI-002).
  */
+@ApiTags('notification')
+@ApiBearerAuth('bearer')
 @Controller('admin/notifications')
 export class AdminNotificationController {
   constructor(
@@ -20,6 +26,7 @@ export class AdminNotificationController {
   ) {}
 
   /** ADM-010 알림/안내방송 문구 생성(미리보기). 저장하지 않는다. */
+  @ApiOkData(PreviewNotificationResponse)
   @Post('preview')
   preview(@Body() body: PreviewNotificationRequest) {
     return this.previewNotification.preview({
@@ -35,6 +42,8 @@ export class AdminNotificationController {
 /**
  * 관리자 알림 템플릿 조회 API (ADM-010, 선택).
  */
+@ApiTags('notification')
+@ApiBearerAuth('bearer')
 @Controller('admin/notification-templates')
 export class NotificationTemplateController {
   constructor(
@@ -42,6 +51,7 @@ export class NotificationTemplateController {
   ) {}
 
   /** 활성 템플릿 목록 조회. */
+  @ApiOkDataArray(TemplateResponse)
   @Get()
   list(@Query() query: ListTemplatesQuery) {
     return this.listTemplates.list(query.targetType);

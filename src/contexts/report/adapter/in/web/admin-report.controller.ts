@@ -9,7 +9,9 @@ import {
   Patch,
   Query,
 } from '@nestjs/common';
+import { ApiBearerAuth, ApiParam, ApiTags } from '@nestjs/swagger';
 import { normalizePageRequest } from '@shared/kernel/pagination';
+import { ApiOkData, ApiOkPage } from '@shared/http/api-response.decorator';
 import { ValidationError } from '@shared/kernel/domain-error';
 import {
   ListReportsUseCase,
@@ -19,12 +21,16 @@ import {
 } from '../../../application/port/in/report-use-cases';
 import { ListReportsQuery } from './dto/list-reports.query';
 import { ReviewReportRequest } from './dto/review-report.request';
+import { ReportListItemResponse } from './dto/report-list-item.response';
+import { ReviewReportResponse } from './dto/review-report.response';
 
 /**
  * 관리자 제보 검수 API (ADM-008, ADM-009).
  * reviewerId 는 임시로 x-user-id 헤더에서 받는다.
  * 인증 컨텍스트(user/auth) 완성 후 @CurrentUser 가드로 교체 예정.
  */
+@ApiTags('report')
+@ApiBearerAuth('bearer')
 @Controller('admin/reports')
 export class AdminReportController {
   constructor(
@@ -34,6 +40,7 @@ export class AdminReportController {
 
   /** ADM-008 제보 목록 조회 */
   @Get()
+  @ApiOkPage(ReportListItemResponse)
   list(@Query() query: ListReportsQuery) {
     const page = normalizePageRequest(query.page, query.size);
     return this.listReports.list(
@@ -50,6 +57,8 @@ export class AdminReportController {
 
   /** ADM-009 제보 검수 처리 */
   @Patch(':reportId/review')
+  @ApiParam({ name: 'reportId', example: 1024, description: '제보 식별자' })
+  @ApiOkData(ReviewReportResponse)
   review(
     @Param('reportId', ParseIntPipe) reportId: number,
     @Body() body: ReviewReportRequest,
