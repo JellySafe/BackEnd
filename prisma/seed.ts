@@ -4,6 +4,7 @@ import { PrismaClient } from '@prisma/client';
 /**
  * 초기 시드 데이터.
  *   - 관리자 계정 1 (admin@jellysafe.local / admin1234)
+ *   - 프론트 연동용 기본 로그인 계정 (test@jellysafe.local / test1234)
  *   - 제주 지정 해수욕장 12곳 (제주시 8, 서귀포시 4. priority 1~5 는 MVP 1순위)
  *   - 위험도 룰 점수표 (03_Data_AI): 위험 변수 / 제보 가중치 / 위험 단계 구간 / 최소 단계 보장
  *   - 위험 단계별 대응 권고 (ADM-006)
@@ -37,6 +38,27 @@ async function seedAdmin() {
     },
   });
   console.log('  ✓ 관리자 계정 (admin@jellysafe.local / admin1234)');
+}
+
+/**
+ * 프론트엔드 연동용 기본 로그인 계정.
+ * 재시드해도 비밀번호가 test1234 로 복구되도록 update 에도 해시를 넣는다
+ * (다른 시드와 달리 update:{} 가 아니다 — 데모 계정이 잠기면 프론트 개발이 막히므로).
+ */
+async function seedTestUser() {
+  const email = 'test@jellysafe.local';
+  await prisma.user.upsert({
+    where: { email },
+    update: { passwordHash: hashPassword('test1234'), isActive: true },
+    create: {
+      email,
+      role: 'admin',
+      passwordHash: hashPassword('test1234'),
+      name: '테스트 계정',
+      organization: 'JellySafe',
+    },
+  });
+  console.log('  ✓ 기본 로그인 계정 (test@jellysafe.local / test1234)');
 }
 
 async function seedBeaches() {
@@ -176,6 +198,7 @@ async function seedDataSources() {
 async function main() {
   console.log('JellySafe 시드 시작...');
   await seedAdmin();
+  await seedTestUser();
   await seedBeaches();
   await seedRiskRules();
   await seedRecommendations();
