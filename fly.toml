@@ -1,0 +1,33 @@
+# Fly.io 배포 설정. `fly launch` 로 자동 생성되지만, 이 프로젝트에 맞게 미리 정의한다.
+# 앱 이름은 `fly launch` 시 고유 이름으로 바뀔 수 있다.
+app = "jellysafe-backend"
+primary_region = "nrt"   # 도쿄 리전 (한국에서 가장 가까움)
+
+[build]
+  dockerfile = "Dockerfile"
+
+[env]
+  NODE_ENV = "production"
+  PORT = "3000"
+  API_PREFIX = "api"
+  SCHEDULER_ENABLED = "true"
+
+[http_service]
+  internal_port = 3000
+  force_https = true
+  # 스케줄러(관측 수집/위험도 재산출/일간 리포트/파기)가 상시 돌아야 하므로
+  # 트래픽이 없어도 최소 1대를 항상 켜 둔다. auto_stop 을 끄는 것이 핵심.
+  auto_stop_machines = false
+  auto_start_machines = true
+  min_machines_running = 1
+
+  [[http_service.checks]]
+    interval = "30s"
+    timeout = "5s"
+    grace_period = "15s"
+    method = "GET"
+    path = "/api/health"
+
+[[vm]]
+  size = "shared-cpu-1x"
+  memory = "512mb"

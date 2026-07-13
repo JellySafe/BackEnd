@@ -1,0 +1,25 @@
+# Render 배포 Blueprint. 대시보드에서 이 저장소를 연결하면 자동 인식된다.
+# 무료 플랜은 15분 유휴 시 잠들어 스케줄러가 멈추므로, 상시 실행되는 starter 플랜을 쓴다.
+services:
+  - type: web
+    name: jellysafe-backend
+    runtime: docker
+    dockerfilePath: ./Dockerfile
+    region: singapore # 아시아 리전
+    plan: starter # 상시 실행($7/월). free 는 sleep 되어 스케줄러 부적합
+    healthCheckPath: /api/health
+    autoDeploy: true
+    envVars:
+      - key: NODE_ENV
+        value: production
+      - key: PORT
+        value: "3000"
+      - key: API_PREFIX
+        value: api
+      - key: SCHEDULER_ENABLED
+        value: "true"
+      # 아래 두 개는 대시보드에서 직접 입력(민감정보, 커밋 금지)
+      - key: DATABASE_URL
+        sync: false
+      - key: JWT_SECRET
+        sync: false

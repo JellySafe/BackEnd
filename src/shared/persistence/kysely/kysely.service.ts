@@ -21,9 +21,14 @@ export class KyselyService extends Kysely<DB> implements OnModuleDestroy {
   constructor(config: ConfigService) {
     const url = config.getOrThrow<string>('DATABASE_URL');
     const poolLimit = Number(config.get('DB_POOL_LIMIT') ?? 10);
+    // 관리형 MySQL(Aiven/PlanetScale 등)은 SSL 연결이 필수다. DB_SSL=true 로 켠다.
+    // 로컬 개발(SSL 미사용)은 기본값 off 라 영향이 없다.
+    const sslEnabled = (config.get<string>('DB_SSL') ?? 'false') === 'true';
+    const rejectUnauthorized = (config.get<string>('DB_SSL_REJECT_UNAUTHORIZED') ?? 'true') !== 'false';
     const pool = createPool({
       uri: url,
       connectionLimit: poolLimit,
+      ssl: sslEnabled ? { rejectUnauthorized } : undefined,
       // BIGINT 를 문자열이 아닌 number 로 받는다(Kysely 생성 타입과 일치, 안전 정수 범위 가정).
       supportBigNumbers: true,
       bigNumberStrings: false,
