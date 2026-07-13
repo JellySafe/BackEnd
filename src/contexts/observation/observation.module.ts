@@ -56,7 +56,7 @@ import {
     { provide: OCCURRENCE_REPOSITORY, useClass: OccurrencePrismaRepository },
     { provide: MAPPING_REPOSITORY, useClass: MappingPrismaRepository },
     { provide: OBSERVATION_QUERY, useClass: ObservationKyselyQuery },
-    // 수집기: 해양 관측은 기상청(KMA, 제주 21지점) + 국립해양조사원(KHOA, 유향·유속),
+    // 수집기: 해양 관측은 기상청(KMA) 해양기상종합관측 + 국립해양조사원(KHOA, 유향·유속),
     // 해파리 출현/속보는 국립수산과학원(NIFS) 실 OpenAPI.
     // CompositeCollectorAdapter 가 관측소 코드로 담당 수집기를 고르고,
     // 인증키 미설정/호출 실패 시 mock 으로 폴백한다.

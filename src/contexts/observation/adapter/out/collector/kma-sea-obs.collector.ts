@@ -9,10 +9,12 @@ import { StationInfo } from '../../../domain/station';
  * 기상청(KMA) 해양기상종합관측 수집 어댑터 (SYS-001, 실데이터).
  * 해양기상부이 / 파고부이 / 항만기상 / 등표 / 해양환경 관측을 한 번에 제공한다.
  *
- * 엔드포인트: GET {BASE}?tm={YYYYMMDDHHmm}&stn=0&authKey=
- *   - **stn=0 이면 전 지점을 한 번에** 돌려준다(KHOA 처럼 지점마다 호출할 필요가 없다).
- *     그래서 배치는 전 지점 1회 호출 후 관측소별로 나눠 담는다.
- *   - tm 은 KST 기준이며, 요청 시각에서 가장 가까운 생산 시각의 자료를 준다.
+ * 엔드포인트: GET {BASE}?tm={YYYYMMDDHHmm}&stn={지점번호}&authKey=
+ *   - **stn=0(전 지점)은 해양기상부이만 준다.** 파고부이·항만기상은 빠진다.
+ *     하필 협재(22486)·중문(22458)·김녕(22491) 등 해수욕장 앞바다 지점이 파고부이라,
+ *     stn=0 으로 받으면 해변별 수온·파고 차이를 만드는 지점을 통째로 놓친다.
+ *     그래서 지점번호를 지정해 지점별로 조회한다(그러면 파고부이도 정상 응답한다).
+ *   - tm 은 KST 기준이며, 생략하면 현재 시각에서 가장 가까운 생산 시각의 자료를 준다.
  *
  * 응답 필드 → ObservationReading 매핑:
  *   TW→waterTemp, WH→waveHeight, WD→windDirection, WS→windSpeed, TA→airTemp.
@@ -52,8 +54,14 @@ export class KmaSeaObsCollector {
   }
 
   /**
-   * 전 지점을 1회 호출로 받아, 넘겨받은 관측소에 해당하는 것만 ObservationReading 으로 변환한다.
+   * 관측소별로 조회해 ObservationReading 으로 변환한다.
    * stations 는 Composite 가 supports() 로 걸러 넘겨준다.
+   *
+   * stn=0(전 지점 1회 조회)을 쓰지 않는 이유: 실호출로 확인한 결과 stn=0 은
+   * **해양기상부이만** 돌려주고 파고부이·항만기상은 빠진다. 그런데 협재(22486)·
+   * 중문(22458)·김녕(22491)처럼 해수욕장 앞바다에 있는 지점이 바로 그 파고부이라,
+   * stn=0 만 쓰면 해변별 수온·파고 차이를 만드는 지점을 통째로 놓친다.
+   * stn=<지점번호> 로 지정하면 파고부이도 정상 응답한다 → 지점별로 조회한다.
    */
   async collectObservations(
     source: DataSource,
@@ -68,8 +76,10 @@ export class KmaSeaObsCollector {
       return [];
     }
 
-    const rows = await this.fetchAllStations(key);
-    const byCode = new Map(rows.map((r) => [r.stnId, r]));
+    const byCode = await this.fetchStations(
+      key,
+      stations.map((s) => s.stationCode),
+    );
 
     const readings: ObservationReading[] = [];
     const absent: string[] = [];
@@ -94,9 +104,40 @@ export class KmaSeaObsCollector {
     return readings;
   }
 
-  /** 전 지점(stn=0) 1회 조회. tm 을 생략하면 현재 시각 기준 최신 자료를 준다. */
-  private async fetchAllStations(key: string): Promise<SeaObsRow[]> {
-    const url = `${KMA_ENDPOINT}?stn=0&authKey=${encodeURIComponent(key)}`;
+  /**
+   * 지점별 최신 관측을 조회한다. 지점 수만큼 호출하되 동시 실행을 제한한다.
+   * 한 지점이 실패해도 나머지는 살린다 — 부이 하나가 점검 중이라고 배치 전체를 버릴 이유가 없다.
+   */
+  private async fetchStations(
+    key: string,
+    codes: string[],
+  ): Promise<Map<string, SeaObsRow>> {
+    const byCode = new Map<string, SeaObsRow>();
+    const queue = [...codes];
+
+    const worker = async (): Promise<void> => {
+      for (let code = queue.shift(); code !== undefined; code = queue.shift()) {
+        try {
+          const row = await this.fetchStation(key, code);
+          if (row !== null) {
+            byCode.set(code, row);
+          }
+        } catch (err) {
+          const message = err instanceof Error ? err.message : String(err);
+          this.logger.warn(`[KMA] 지점 ${code} 조회 실패: ${message}`);
+        }
+      }
+    };
+
+    await Promise.all(
+      Array.from({ length: Math.min(FETCH_CONCURRENCY, queue.length) }, () => worker()),
+    );
+    return byCode;
+  }
+
+  /** 단일 지점 조회. tm 을 생략하면 현재 시각 기준 최신 자료를 준다. 여러 행이 오면 마지막(최신)을 쓴다. */
+  private async fetchStation(key: string, stationCode: string): Promise<SeaObsRow | null> {
+    const url = `${KMA_ENDPOINT}?stn=${encodeURIComponent(stationCode)}&authKey=${encodeURIComponent(key)}`;
 
     const res = await fetch(url, {
       headers: { 'User-Agent': USER_AGENT },
@@ -108,9 +149,13 @@ export class KmaSeaObsCollector {
 
     // 응답이 CP949 다. UTF-8 로 디코딩하면 지점명이 깨진다.
     const text = new TextDecoder('euc-kr').decode(await res.arrayBuffer());
-    return parseSeaObs(text);
+    const rows = parseSeaObs(text).filter((r) => r.stnId === stationCode);
+    return rows.length > 0 ? rows[rows.length - 1] : null;
   }
 }
+
+/** 지점별 동시 조회 수. 기상청 API 허브에 부담을 주지 않으면서 제주 전 지점을 수 초 안에 끝낸다. */
+const FETCH_CONCURRENCY = 5;
 
 /** KMA 지점 번호(숫자). KHOA 부이 코드(TW_00NN)와 겹치지 않는다. */
 const STATION_CODE_PATTERN = /^\d+$/;
