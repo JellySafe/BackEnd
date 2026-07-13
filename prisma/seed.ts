@@ -187,6 +187,9 @@ async function seedDataSources() {
     { sourceCode: 'NIFS_JELLYFISH', name: '국립수산과학원 해파리 출현/속보', provider: '국립수산과학원', sourceType: 'jellyfish', isSample: true, syncIntervalMinutes: 60, endpointUrl: null },
     // KHOA 해양관측부이는 실 OpenAPI 연동 완료(KhoaBuoyCollector). 샘플이 아니다.
     { sourceCode: 'KHOA_MARINE', name: '국립해양조사원 해양관측부이 (수온/염분/파고/유향·유속)', provider: '국립해양조사원', sourceType: 'marine', isSample: false, syncIntervalMinutes: 30, endpointUrl: 'https://apis.data.go.kr/1192136/twRecent/GetTWRecentApiService' },
+    // 기상청 해양기상종합관측은 실 OpenAPI 연동 완료(KmaSeaObsCollector). 제주 21지점을 커버한다.
+    // sourceType 은 소스 단위 값이라 'marine' 으로 두고, 지점별 marine/weather 구분은 station_type 이 담는다.
+    { sourceCode: 'KMA_SEA_OBS', name: '기상청 해양기상종합관측 (수온/파고/풍향·풍속)', provider: '기상청', sourceType: 'marine', isSample: false, syncIntervalMinutes: 30, endpointUrl: 'https://apihub.kma.go.kr/api/typ01/url/sea_obs.php' },
     { sourceCode: 'KMA_WEATHER', name: '기상청 기상 관측 (풍향/풍속/기온)', provider: '기상청', sourceType: 'weather', isSample: true, syncIntervalMinutes: 30, endpointUrl: null },
     { sourceCode: 'BEACH_MASTER', name: '해수욕장 위치 마스터', provider: '제주특별자치도', sourceType: 'beach', isSample: true, endpointUrl: null },
   ];
@@ -199,31 +202,77 @@ async function seedDataSources() {
 }
 
 /**
- * 관측소 마스터 (SYS-001/002).
+ * 관측소 마스터 (SYS-001/002) — 제주 해역 실관측소.
  *
- * KHOA 해양관측부이 중 **제주 해역에 있는 것은 중문해수욕장 부이(TW_0075) 하나뿐**이다.
- * (TW_0001~TW_0200 전수 조회로 확인 — 나머지 26개 부이는 부산·인천·강릉 등 육지 해안이다.)
- * 따라서 제주 해변들은 SYS-002 최근접 매핑에서 대부분 이 부이에 붙게 되고,
- * 관측 기반 위험 요인은 섬 전체가 사실상 같은 값을 공유한다. 해변별 차이는
- * 취약도·제보·해파리 출현 데이터에서 발생한다. 관측소 확충 시 이 배열에 추가하면 된다.
+ * 두 소스를 함께 등록해 상호 보완한다:
+ *
+ *  - **기상청(KMA_SEA_OBS) 21지점** — 커버리지 담당. 협재·중문·김녕 등 해수욕장 앞바다에
+ *    파고부이가 있어 해변별 수온·파고가 실제로 갈린다. 다만 유향·유속·염분은 관측하지 않는다.
+ *  - **국립해양조사원(KHOA_MARINE) 1지점** — 유향·유속·염분을 주는 유일한 소스지만
+ *    제주 해역 부이가 중문(TW_0075) 하나뿐이다(TW_0001~TW_0200 전수 조회로 확인).
+ *
+ * station_type 은 지점이 실제로 주는 항목으로 정한다(risk-input 이 marine/weather 를 나눠 조회한다):
+ *   해양기상부이·파고부이 → marine (수온/파고)
+ *   항만기상·등표·해양환경 → weather (풍향/풍속)
+ *
+ * 기상청 '기상1호'(22003)는 관측선이라 좌표가 고정이 아니다. SYS-002 최근접 매핑이
+ * 틀어지므로 등록하지 않는다.
  */
 async function seedObservationStations() {
-  const khoa = await prisma.dataSource.findUnique({ where: { sourceCode: 'KHOA_MARINE' } });
-  if (!khoa) {
-    throw new Error('KHOA_MARINE 데이터 소스가 없습니다 — seedDataSources 를 먼저 실행하세요.');
+  const sources = await prisma.dataSource.findMany({
+    where: { sourceCode: { in: ['KMA_SEA_OBS', 'KHOA_MARINE'] } },
+  });
+  const sourceIdOf = new Map(sources.map((s) => [s.sourceCode, s.id]));
+  for (const code of ['KMA_SEA_OBS', 'KHOA_MARINE']) {
+    if (!sourceIdOf.has(code)) {
+      throw new Error(`${code} 데이터 소스가 없습니다 — seedDataSources 를 먼저 실행하세요.`);
+    }
   }
 
   const stations = [
-    { stationCode: 'TW_0075', name: '중문해수욕장 해양관측부이', stationType: 'marine', lat: 33.2345, lng: 126.40955 },
+    // --- 기상청 해양기상종합관측 (제주 21지점). stationCode = 기상청 지점번호(STN_ID) ---
+    // 해양기상부이 (수온/파고/풍속)
+    { sourceCode: 'KMA_SEA_OBS', stationCode: '22107', name: '마라도 해양기상부이', stationType: 'marine', lat: 33.0833, lng: 126.0333 },
+    { sourceCode: 'KMA_SEA_OBS', stationCode: '22187', name: '서귀포 해양기상부이', stationType: 'marine', lat: 33.1281, lng: 127.0228 },
+    { sourceCode: 'KMA_SEA_OBS', stationCode: '22514', name: '구엄 해양기상부이', stationType: 'marine', lat: 33.520961, lng: 126.37485 },
+    { sourceCode: 'KMA_SEA_OBS', stationCode: '22515', name: '위미 해양기상부이', stationType: 'marine', lat: 33.22369, lng: 126.71119 },
+    // 파고부이 (수온/파고) — 해수욕장 앞바다에 위치해 해변별 위험도의 핵심 데이터원이다.
+    { sourceCode: 'KMA_SEA_OBS', stationCode: '22457', name: '제주항 파고부이', stationType: 'marine', lat: 33.525, lng: 126.4935 },
+    { sourceCode: 'KMA_SEA_OBS', stationCode: '22458', name: '중문 파고부이', stationType: 'marine', lat: 33.2253, lng: 126.3935 },
+    { sourceCode: 'KMA_SEA_OBS', stationCode: '22469', name: '우도 파고부이', stationType: 'marine', lat: 33.5222, lng: 126.9667 },
+    { sourceCode: 'KMA_SEA_OBS', stationCode: '22476', name: '가파도 파고부이', stationType: 'marine', lat: 33.316, lng: 126.1527 },
+    { sourceCode: 'KMA_SEA_OBS', stationCode: '22486', name: '협재 파고부이', stationType: 'marine', lat: 33.4005, lng: 126.2092 },
+    { sourceCode: 'KMA_SEA_OBS', stationCode: '22491', name: '김녕 파고부이', stationType: 'marine', lat: 33.5818, lng: 126.7638 },
+    { sourceCode: 'KMA_SEA_OBS', stationCode: '22495', name: '신산 파고부이', stationType: 'marine', lat: 33.3777, lng: 126.9057 },
+    { sourceCode: 'KMA_SEA_OBS', stationCode: '22505', name: '영락 파고부이', stationType: 'marine', lat: 33.2385, lng: 126.1948 },
+    { sourceCode: 'KMA_SEA_OBS', stationCode: '22516', name: '신창 파고부이', stationType: 'marine', lat: 33.368, lng: 126.1093 },
+    { sourceCode: 'KMA_SEA_OBS', stationCode: '22517', name: '하도 파고부이', stationType: 'marine', lat: 33.5043, lng: 127.2335 },
+    // 항만기상 (수온/풍속)
+    { sourceCode: 'KMA_SEA_OBS', stationCode: '690704', name: '제주 항만기상', stationType: 'weather', lat: 33.52416667, lng: 126.54527778 },
+    { sourceCode: 'KMA_SEA_OBS', stationCode: '697010', name: '서귀포 항만기상', stationType: 'weather', lat: 33.23666667, lng: 126.56361111 },
+    { sourceCode: 'KMA_SEA_OBS', stationCode: '699835', name: '모슬포 항만기상', stationType: 'weather', lat: 33.21444444, lng: 126.25111111 },
+    { sourceCode: 'KMA_SEA_OBS', stationCode: '699903', name: '성산포 항만기상', stationType: 'weather', lat: 33.475, lng: 126.92777778 },
+    // 해양환경 / 등표 (풍속)
+    { sourceCode: 'KMA_SEA_OBS', stationCode: '33011', name: '판포 해양환경', stationType: 'weather', lat: 33.36686, lng: 126.20052 },
+    { sourceCode: 'KMA_SEA_OBS', stationCode: '33015', name: '서귀포 해양환경', stationType: 'weather', lat: 33.2635, lng: 126.6426 },
+    { sourceCode: 'KMA_SEA_OBS', stationCode: '960', name: '지귀도 등표', stationType: 'weather', lat: 33.22333, lng: 126.6542 },
+
+    // --- 국립해양조사원 해양관측부이 (유향·유속·염분 공급원) ---
+    { sourceCode: 'KHOA_MARINE', stationCode: 'TW_0075', name: '중문해수욕장 해양관측부이', stationType: 'marine', lat: 33.2345, lng: 126.40955 },
   ];
-  for (const st of stations) {
+
+  for (const { sourceCode, ...st } of stations) {
+    const sourceId = sourceIdOf.get(sourceCode)!;
     await prisma.observationStation.upsert({
-      where: { uk_observation_stations_code: { sourceId: khoa.id, stationCode: st.stationCode } },
+      where: { uk_observation_stations_code: { sourceId, stationCode: st.stationCode } },
       update: { name: st.name, stationType: st.stationType, lat: st.lat, lng: st.lng, isActive: true },
-      create: { sourceId: khoa.id, ...st },
+      create: { sourceId, ...st },
     });
   }
-  console.log(`  ✓ 관측소 ${stations.length}건 (KHOA 부이)`);
+
+  const kma = stations.filter((s) => s.sourceCode === 'KMA_SEA_OBS').length;
+  const khoa = stations.length - kma;
+  console.log(`  ✓ 관측소 ${stations.length}건 (기상청 ${kma} / 국립해양조사원 ${khoa})`);
 }
 
 async function main() {

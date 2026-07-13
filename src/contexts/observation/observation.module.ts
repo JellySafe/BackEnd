@@ -11,6 +11,7 @@ import { ObservationKyselyQuery } from './adapter/out/persistence/observation.ky
 import { MockCollectorAdapter } from './adapter/out/collector/mock-collector.adapter';
 import { NifsJellyfishCollector } from './adapter/out/collector/nifs-jellyfish.collector';
 import { KhoaBuoyCollector } from './adapter/out/collector/khoa-buoy.collector';
+import { KmaSeaObsCollector } from './adapter/out/collector/kma-sea-obs.collector';
 import { CompositeCollectorAdapter } from './adapter/out/collector/composite-collector.adapter';
 import { SyncObservationsService } from './application/service/sync-observations.service';
 import { MapStationsService } from './application/service/map-stations.service';
@@ -54,12 +55,14 @@ import {
     { provide: OCCURRENCE_REPOSITORY, useClass: OccurrencePrismaRepository },
     { provide: MAPPING_REPOSITORY, useClass: MappingPrismaRepository },
     { provide: OBSERVATION_QUERY, useClass: ObservationKyselyQuery },
-    // 수집기: 해양 관측은 국립해양조사원(KHOA) 부이, 해파리 출현/속보는 국립수산과학원(NIFS) 실 OpenAPI.
-    // 기상 관측소는 아직 mock 이다. CompositeCollectorAdapter 가 셋을 조합하고,
+    // 수집기: 해양 관측은 기상청(KMA, 제주 21지점) + 국립해양조사원(KHOA, 유향·유속),
+    // 해파리 출현/속보는 국립수산과학원(NIFS) 실 OpenAPI.
+    // CompositeCollectorAdapter 가 관측소 코드로 담당 수집기를 고르고,
     // 인증키 미설정/호출 실패 시 mock 으로 폴백한다.
     MockCollectorAdapter,
     NifsJellyfishCollector,
     KhoaBuoyCollector,
+    KmaSeaObsCollector,
     { provide: EXTERNAL_COLLECTOR, useClass: CompositeCollectorAdapter },
     // 스케줄러 (adapter/in/schedule)
     ObservationScheduler,
