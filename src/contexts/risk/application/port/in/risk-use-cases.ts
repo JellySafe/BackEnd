@@ -77,12 +77,27 @@ export interface ListLatestRisksUseCase {
 export const LIST_LATEST_RISKS_USE_CASE = Symbol('LIST_LATEST_RISKS_USE_CASE');
 
 // ===== ADM-001 대시보드 요약 =====
-export interface DashboardSummaryView {
-  overallRisk: RiskLevel;
+/** 전일 대비 증감(오늘 값 - 어제 값). 음수 가능. */
+export interface DashboardDeltas {
+  overallScore: number;
   dangerBeachCount: number;
   toxicPendingCount: number;
   unreviewedReportCount: number;
   actionCount: number;
+}
+
+export interface DashboardSummaryView {
+  overallRisk: RiskLevel;
+  /** 전체 대표 위험 점수(0~100). 최신 'now' 위험도 중 최고 risk_score. 데이터 없으면 0. */
+  overallScore: number;
+  dangerBeachCount: number;
+  toxicPendingCount: number;
+  unreviewedReportCount: number;
+  actionCount: number;
+  /** 기준 시각 = 최신 'now' 위험도의 generated_at 최댓값. 없으면 null. */
+  generatedAt: Date | null;
+  /** 전일 대비 증감. */
+  deltas: DashboardDeltas;
 }
 
 export interface GetDashboardSummaryUseCase {

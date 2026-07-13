@@ -13,6 +13,17 @@ export function riskLevelLabel(level: RiskLevel | null): string {
   return level ? RISK_LEVEL_LABEL[level] : '';
 }
 
+/**
+ * 위험도가 아직 산출되지 않아 riskLevel 을 알 수 없을 때 {riskLevel} 자리에 넣을 문구.
+ * 빈 문자열로 치환하면 "위험도가  단계로 상승했습니다." 처럼 빈칸 문구가 나가므로 방지한다.
+ */
+export const UNKNOWN_RISK_LEVEL_LABEL = '확인 필요';
+
+/** 토큰 치환 전용 라벨. null 이면 빈칸 대신 안전한 문구를 쓴다. */
+function riskLevelToken(level: RiskLevel | null): string {
+  return level ? RISK_LEVEL_LABEL[level] : UNKNOWN_RISK_LEVEL_LABEL;
+}
+
 /** 이벤트 한글 라벨 (fallback 문구용). */
 const EVENT_LABEL: Record<NotificationEvent, string> = {
   level_up: '위험 단계 상승',
@@ -30,11 +41,12 @@ export interface MessageVars {
  * 치환 토큰을 실제 값으로 바꾸는 공통 로직.
  * 지원 토큰: {beachName}, {riskLevel}(한글 라벨), {eventType}(한글 라벨).
  * 미정의 토큰은 그대로 둔다.
+ * riskLevel 이 null 이면(위험도 미산출) 빈칸 대신 UNKNOWN_RISK_LEVEL_LABEL 로 치환한다.
  */
 function substituteTokens(text: string, vars: MessageVars): string {
   const dict: Record<string, string> = {
     beachName: vars.beachName,
-    riskLevel: riskLevelLabel(vars.riskLevel),
+    riskLevel: riskLevelToken(vars.riskLevel),
     eventType: EVENT_LABEL[vars.eventType],
   };
   return text.replace(/\{(\w+)\}/g, (whole, key: string) =>

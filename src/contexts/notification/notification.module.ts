@@ -8,6 +8,7 @@ import { PublicAlertController } from './adapter/in/web/public-alert.controller'
 import { NotificationPrismaRepository } from './adapter/out/persistence/notification.prisma-repository';
 import { NotificationKyselyQuery } from './adapter/out/persistence/notification.kysely-query';
 import { TemplateKyselyQuery } from './adapter/out/persistence/template.kysely-query';
+import { BeachRiskKyselyQuery } from './adapter/out/persistence/beach-risk.kysely-query';
 import { CreateNotificationService } from './application/service/create-notification.service';
 import { PreviewNotificationService } from './application/service/preview-notification.service';
 import { ListAlertsService } from './application/service/list-alerts.service';
@@ -19,6 +20,7 @@ import { ListAdminNotificationsService } from './application/service/list-admin-
 import { NOTIFICATION_REPOSITORY } from './application/port/out/notification-repository.port';
 import { NOTIFICATION_QUERY } from './application/port/out/notification-query.port';
 import { TEMPLATE_QUERY } from './application/port/out/template-query.port';
+import { BEACH_RISK_QUERY } from './application/port/out/beach-risk-query.port';
 import {
   CREATE_NOTIFICATION_USE_CASE,
   LIST_ADMIN_NOTIFICATIONS_USE_CASE,
@@ -61,6 +63,8 @@ import {
     { provide: NOTIFICATION_REPOSITORY, useClass: NotificationPrismaRepository },
     { provide: NOTIFICATION_QUERY, useClass: NotificationKyselyQuery },
     { provide: TEMPLATE_QUERY, useClass: TemplateKyselyQuery },
+    // ADM-010 문구 {riskLevel} 자동 채움: 해변 현재 위험도(risk_scores) 읽기 전용 조회.
+    { provide: BEACH_RISK_QUERY, useClass: BeachRiskKyselyQuery },
   ],
   // 다른 컨텍스트가 알림 생성/확산 시 사용하는 인바운드 포트 토큰을 공개한다.
   exports: [CREATE_NOTIFICATION_USE_CASE, NOTIFY_BEACH_SUBSCRIBERS_USE_CASE],
