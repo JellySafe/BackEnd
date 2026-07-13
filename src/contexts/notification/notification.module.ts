@@ -14,16 +14,20 @@ import { ListAlertsService } from './application/service/list-alerts.service';
 import { MarkAlertReadService } from './application/service/mark-alert-read.service';
 import { ListTemplatesService } from './application/service/list-templates.service';
 import { NotifyBeachSubscribersService } from './application/service/notify-beach-subscribers.service';
+import { SendNotificationService } from './application/service/send-notification.service';
+import { ListAdminNotificationsService } from './application/service/list-admin-notifications.service';
 import { NOTIFICATION_REPOSITORY } from './application/port/out/notification-repository.port';
 import { NOTIFICATION_QUERY } from './application/port/out/notification-query.port';
 import { TEMPLATE_QUERY } from './application/port/out/template-query.port';
 import {
   CREATE_NOTIFICATION_USE_CASE,
+  LIST_ADMIN_NOTIFICATIONS_USE_CASE,
   LIST_ALERTS_USE_CASE,
   LIST_TEMPLATES_USE_CASE,
   MARK_ALERT_READ_USE_CASE,
   NOTIFY_BEACH_SUBSCRIBERS_USE_CASE,
   PREVIEW_NOTIFICATION_USE_CASE,
+  SEND_NOTIFICATION_USE_CASE,
 } from './application/port/in/notification-use-cases';
 
 /**
@@ -47,6 +51,9 @@ import {
     { provide: CREATE_NOTIFICATION_USE_CASE, useClass: CreateNotificationService },
     { provide: NOTIFY_BEACH_SUBSCRIBERS_USE_CASE, useClass: NotifyBeachSubscribersService },
     { provide: PREVIEW_NOTIFICATION_USE_CASE, useClass: PreviewNotificationService },
+    // ADM-010 수동 발송 / 관리자 알림함
+    { provide: SEND_NOTIFICATION_USE_CASE, useClass: SendNotificationService },
+    { provide: LIST_ADMIN_NOTIFICATIONS_USE_CASE, useClass: ListAdminNotificationsService },
     { provide: LIST_ALERTS_USE_CASE, useClass: ListAlertsService },
     { provide: MARK_ALERT_READ_USE_CASE, useClass: MarkAlertReadService },
     { provide: LIST_TEMPLATES_USE_CASE, useClass: ListTemplatesService },

@@ -70,6 +70,10 @@ export class NotifyBeachSubscribersService implements NotifyBeachSubscribersUseC
         riskLevel: command.riskLevel ?? null,
         eventType: command.eventType,
         now: command.now,
+        // ADM-010 수동 발송: 관리자 문구/멱등 정책을 각 구독자에게 그대로 전파(미지정이면 기존 자동 동작).
+        messageOverride: command.messageOverride,
+        titleOverride: command.titleOverride,
+        skipDedup: command.skipDedup,
       });
       return res.created;
     } catch (err) {

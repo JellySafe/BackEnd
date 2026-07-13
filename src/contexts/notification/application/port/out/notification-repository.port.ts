@@ -14,6 +14,7 @@ export interface SaveResult {
 export interface NotificationRepositoryPort {
   /**
    * 신규 알림 저장. dedupKey UNIQUE 충돌은 조용히 무시하고 created=false 로 반환한다(멱등).
+   * NotificationValue.title(string | null)도 함께 저장한다(제목 없는 알림은 null).
    */
   save(notification: NotificationValue): Promise<SaveResult>;
 

@@ -16,6 +16,8 @@ export interface NotificationValue {
   riskLevel: RiskLevel | null;
   eventType: NotificationEvent;
   templateId: Id | null;
+  /** 알림 제목(ADM-010). 템플릿에 title 이 없거나 관리자가 비워두면 null. */
+  title: string | null;
   message: string;
   dedupKey: string | null;
   cooldownUntil: Date | null;
@@ -31,6 +33,8 @@ export interface NewNotificationInput {
   riskLevel?: RiskLevel | null;
   eventType: NotificationEvent;
   templateId?: Id | null;
+  /** 선택. 미지정/공백이면 null 로 저장한다(자동 알림 하위호환). */
+  title?: string | null;
   message: string;
   dedupKey?: string | null;
   cooldownUntil?: Date | null;
@@ -58,6 +62,9 @@ export function createNotification(input: NewNotificationInput): NotificationVal
     throw new ValidationError('NOTI_MESSAGE_REQUIRED', '알림 문구가 필요합니다.');
   }
 
+  // 제목은 선택값이다. 공백만 있는 제목은 의미가 없어 null 로 정규화한다(title 컬럼 NULLABLE).
+  const title = input.title?.trim() ? input.title.trim() : null;
+
   return {
     targetType: input.targetType,
     targetUserId: input.targetUserId ?? null,
@@ -66,6 +73,7 @@ export function createNotification(input: NewNotificationInput): NotificationVal
     riskLevel: input.riskLevel ?? null,
     eventType: input.eventType,
     templateId: input.templateId ?? null,
+    title,
     message: input.message,
     dedupKey: input.dedupKey ?? null,
     cooldownUntil: input.cooldownUntil ?? null,

@@ -1,7 +1,7 @@
 import { Inject, Injectable, Logger } from '@nestjs/common';
 import { buildDedupKey } from '../../domain/dedup-key';
 import { createNotification } from '../../domain/notification';
-import { fallbackMessage, renderMessage } from '../../domain/message-template';
+import { fallbackMessage, renderMessage, renderTitle } from '../../domain/message-template';
 import {
   CreateNotificationCommand,
   CreateNotificationResult,
@@ -33,29 +33,57 @@ export class CreateNotificationService implements CreateNotificationUseCase {
     const now = command.now ?? new Date();
     const riskLevel = command.riskLevel ?? null;
 
-    const dedupKey = buildDedupKey({
-      beachId: command.beachId,
-      eventType: command.eventType,
-      riskLevel,
-      at: now,
-    });
-
-    // 문구는 항상 생성해 두어 중복 스킵 시에도 호출측이 결과 문구를 참고할 수 있게 한다.
-    const beachName = (await this.query.findBeachName(command.beachId)) ?? '해당 해변';
-    const template = command.templateCode
-      ? await this.templates.findByCode(command.templateCode)
-      : await this.templates.findMatch({
-          targetType: command.targetType,
-          riskLevel,
+    // ADM-010 수동 발송: skipDedup 이면 멱등 키 없이 매번 생성한다.
+    const dedupKey = command.skipDedup
+      ? null
+      : buildDedupKey({
+          beachId: command.beachId,
           eventType: command.eventType,
+          riskLevel,
+          at: now,
         });
-    const vars = { beachName, riskLevel, eventType: command.eventType };
-    const message = template
-      ? renderMessage(template.body, vars)
-      : fallbackMessage(command.targetType, vars);
 
-    // NOTI-003 사전 멱등 확인: 동일 dedupKey 존재 시 생성 스킵.
-    if (await this.repository.existsByDedupKey(dedupKey)) {
+    // 관리자 문구 override 가 있으면 템플릿 치환 대신 그대로 저장(하위호환: 없으면 기존 템플릿 동작).
+    const override =
+      command.messageOverride != null && command.messageOverride.trim().length > 0
+        ? command.messageOverride
+        : null;
+
+    // ADM-010 수동 발송 제목. 공백만 들어오면 없는 것으로 본다(템플릿 제목으로 폴백).
+    const titleOverride =
+      command.titleOverride != null && command.titleOverride.trim().length > 0
+        ? command.titleOverride.trim()
+        : null;
+
+    let message: string;
+    let templateId: number | null = null;
+    // 제목 결정: override(수동 발송/관리자 편집본) 우선, 없으면 템플릿 title 렌더(자동 알림).
+    let title: string | null = titleOverride;
+    if (override !== null) {
+      message = override;
+    } else {
+      // 문구는 항상 생성해 두어 중복 스킵 시에도 호출측이 결과 문구를 참고할 수 있게 한다.
+      const beachName = (await this.query.findBeachName(command.beachId)) ?? '해당 해변';
+      const template = command.templateCode
+        ? await this.templates.findByCode(command.templateCode)
+        : await this.templates.findMatch({
+            targetType: command.targetType,
+            riskLevel,
+            eventType: command.eventType,
+          });
+      const vars = { beachName, riskLevel, eventType: command.eventType };
+      message = template
+        ? renderMessage(template.body, vars)
+        : fallbackMessage(command.targetType, vars);
+      templateId = template ? template.id : null;
+      // override 가 없을 때만 템플릿 제목을 치환해 쓴다(템플릿이 없거나 title 이 없으면 null).
+      if (title === null) {
+        title = template ? renderTitle(template.title, vars) : null;
+      }
+    }
+
+    // NOTI-003 사전 멱등 확인: 동일 dedupKey 존재 시 생성 스킵(skipDedup 이면 건너뜀).
+    if (dedupKey !== null && (await this.repository.existsByDedupKey(dedupKey))) {
       return { notificationId: null, created: false, dedupKey, message };
     }
 
@@ -71,7 +99,8 @@ export class CreateNotificationService implements CreateNotificationUseCase {
       beachId: command.beachId,
       riskLevel,
       eventType: command.eventType,
-      templateId: template ? template.id : null,
+      templateId,
+      title,
       message,
       dedupKey,
       cooldownUntil,

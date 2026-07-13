@@ -1,9 +1,16 @@
 import { ApiProperty } from '@nestjs/swagger';
 
-/** USR-003 GET /public/alerts 알림함 목록 한 행 (AlertListItem 미러링). */
-export class AlertListItemResponse {
+/** ADM-010 GET /admin/notifications 관리자 알림함 한 행 (AdminNotificationListItem 미러링). */
+export class AdminNotificationListItemResponse {
   @ApiProperty({ example: 5012, description: '알림 식별자' })
   notificationId!: number;
+
+  @ApiProperty({
+    example: 'operator',
+    description: '알림 대상',
+    enum: ['admin', 'operator', 'public'],
+  })
+  targetType!: string;
 
   @ApiProperty({ example: 12, description: '해변 식별자' })
   beachId!: number;

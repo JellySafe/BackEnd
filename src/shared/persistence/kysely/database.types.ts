@@ -135,6 +135,7 @@ export type Notification = {
     risk_level: string | null;
     event_type: string;
     template_id: number | null;
+    title: string | null;
     message: string;
     dedup_key: string | null;
     cooldown_until: Timestamp | null;

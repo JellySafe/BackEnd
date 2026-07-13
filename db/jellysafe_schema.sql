@@ -704,6 +704,7 @@ CREATE TABLE notifications (
     risk_level        VARCHAR(20) COLLATE utf8mb4_bin NULL                               COMMENT '알림 시점 위험 단계',
     event_type        VARCHAR(30) COLLATE utf8mb4_bin NOT NULL                           COMMENT '발생 이벤트: level_up/toxic_report/sting_report',
     template_id       BIGINT                          NULL                               COMMENT '사용한 템플릿 FK',
+    title             VARCHAR(200)                    NULL                               COMMENT '치환 완료된 제목. ADM-010 수동 발송 시 관리자 편집본',
     message           TEXT                            NOT NULL                           COMMENT '치환 완료된 최종 문구',
     dedup_key         VARCHAR(150)                    NULL                               COMMENT '중복 방지 키 (예: beachId:eventType:riskLevel:yyyyMMddHH). NOTI-003',
     cooldown_until    DATETIME                        NULL                               COMMENT '이 키로 재생성이 금지되는 시각(UTC)',

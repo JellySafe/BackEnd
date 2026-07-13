@@ -2,7 +2,12 @@ import { Id } from '@shared/kernel/id';
 import { Page, PageRequest } from '@shared/kernel/pagination';
 import { RiskLevel } from '@shared/kernel/risk-level';
 import { NotificationEvent, NotificationTarget } from '../../../domain/notification-enums';
-import { AlertListFilter, AlertListItem } from '../out/notification-query.port';
+import {
+  AdminNotificationFilter,
+  AdminNotificationListItem,
+  AlertListFilter,
+  AlertListItem,
+} from '../out/notification-query.port';
 import { TemplateRecord } from '../out/template-query.port';
 
 // ----- SYS-005 위험 상승 알림 생성 (다른 컨텍스트가 호출하는 인바운드 포트) -----
@@ -19,6 +24,21 @@ export interface CreateNotificationCommand {
   cooldownMinutes?: number;
   /** 테스트/재현용 기준 시각. 없으면 현재 시각. */
   now?: Date;
+  /**
+   * ADM-010 수동 발송: 관리자가 최종 편집한 문구를 그대로 저장한다.
+   * 지정 시 템플릿 치환 대신 이 값을 message 로 저장한다(하위호환: 미지정이면 기존 템플릿 동작).
+   */
+  messageOverride?: string | null;
+  /**
+   * ADM-010 수동 발송 제목. 지정 시 notifications.title 에 그대로 저장한다.
+   * 미지정(또는 공백)이면 매칭 템플릿의 title 을 치환해 저장하고, 템플릿에 title 이 없으면 null.
+   */
+  titleOverride?: string | null;
+  /**
+   * true 면 dedupKey 를 null 로 두고 멱등 스킵 없이 매번 생성한다(ADM-010 수동 발송).
+   * 미지정(false)이면 기존 dedupKey 멱등 동작을 유지한다.
+   */
+  skipDedup?: boolean;
 }
 
 export interface CreateNotificationResult {
@@ -26,7 +46,8 @@ export interface CreateNotificationResult {
   notificationId: Id | null;
   /** 실제로 새 알림을 생성했으면 true, 중복으로 스킵했으면 false. */
   created: boolean;
-  dedupKey: string;
+  /** 멱등 키. skipDedup 인 경우 null. */
+  dedupKey: string | null;
   message: string;
 }
 
@@ -41,6 +62,12 @@ export interface NotifyBeachSubscribersCommand {
   eventType: NotificationEvent;
   riskLevel?: RiskLevel | null;
   now?: Date;
+  /** ADM-010 수동 발송: 구독자 알림에 관리자 문구를 그대로 사용(미지정이면 템플릿 치환). */
+  messageOverride?: string | null;
+  /** ADM-010 수동 발송 제목. 각 구독자 알림의 title 로 저장(미지정이면 템플릿 title). */
+  titleOverride?: string | null;
+  /** true 면 각 구독자에게 dedup 없이 매번 생성(ADM-010 수동 발송). */
+  skipDedup?: boolean;
 }
 
 export interface NotifyBeachSubscribersResult {
@@ -60,11 +87,14 @@ export interface PreviewNotificationCommand {
   beachId: Id;
   targetType: NotificationTarget;
   riskLevel?: RiskLevel | null;
-  eventType: NotificationEvent;
+  /** 화면에 입력이 없으므로 optional. 미지정 시 서비스가 level_up 을 기본값으로 쓴다. */
+  eventType?: NotificationEvent;
   templateCode?: string;
 }
 
 export interface PreviewNotificationResult {
+  /** 치환 완료된 제목. 템플릿에 title 이 없으면 null. */
+  title: string | null;
   message: string;
   targetType: NotificationTarget;
   templateCode: string | null;
@@ -97,3 +127,38 @@ export interface ListTemplatesUseCase {
   list(targetType?: NotificationTarget): Promise<TemplateRecord[]>;
 }
 export const LIST_TEMPLATES_USE_CASE = Symbol('LIST_TEMPLATES_USE_CASE');
+
+// ----- ADM-010 관리자 수동 알림 발송 -----
+export interface SendNotificationCommand {
+  targetType: NotificationTarget;
+  beachId: Id;
+  /** 미지정 시 level_up (DB CHECK 계약값). */
+  eventType?: NotificationEvent;
+  riskLevel?: RiskLevel | null;
+  /** 관리자가 편집한 제목. 지정 시 notifications.title 로 저장한다. */
+  title?: string | null;
+  /** 관리자가 편집한 본문. 지정 시 템플릿 치환 대신 그대로 저장. */
+  message?: string | null;
+  /** 감사 목적 발송자 식별(선택). */
+  actorUserId?: Id | null;
+}
+
+export interface SendNotificationResult {
+  /** 알림이 하나라도 생성되었으면 true. */
+  created: boolean;
+  /** 단일 브로드캐스트(admin/operator) 발송 시 생성된 알림 id. public 확산 시 null. */
+  notificationId: Id | null;
+  /** public 확산 시 실제 생성된 수신자 수. */
+  recipientCount?: number;
+}
+
+export interface SendNotificationUseCase {
+  send(command: SendNotificationCommand): Promise<SendNotificationResult>;
+}
+export const SEND_NOTIFICATION_USE_CASE = Symbol('SEND_NOTIFICATION_USE_CASE');
+
+// ----- ADM-010 관리자 알림함 조회 -----
+export interface ListAdminNotificationsUseCase {
+  list(filter: AdminNotificationFilter, page: PageRequest): Promise<Page<AdminNotificationListItem>>;
+}
+export const LIST_ADMIN_NOTIFICATIONS_USE_CASE = Symbol('LIST_ADMIN_NOTIFICATIONS_USE_CASE');

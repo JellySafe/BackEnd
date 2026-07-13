@@ -505,6 +505,7 @@ model Notification {
   riskLevel       String?   @map("risk_level") @db.VarChar(20)
   eventType       String    @map("event_type") @db.VarChar(30) // level_up/toxic_report/sting_report
   templateId      BigInt?   @map("template_id")
+  title           String?   @db.VarChar(200) // ADM-010 수동 발송 제목(치환 완료본)
   message         String    @db.Text
   dedupKey        String?   @unique @map("dedup_key") @db.VarChar(150)
   cooldownUntil   DateTime? @map("cooldown_until") @db.DateTime(0)

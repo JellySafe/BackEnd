@@ -22,8 +22,10 @@ export class PreviewNotificationRequest {
   @IsIn(RISK_LEVELS as readonly string[])
   riskLevel?: RiskLevel;
 
+  /** 화면에 입력이 없으므로 optional. 미지정 시 서비스가 level_up 을 기본값으로 쓴다. */
+  @IsOptional()
   @IsIn(NOTIFICATION_EVENTS as readonly string[])
-  eventType!: NotificationEvent;
+  eventType?: NotificationEvent;
 
   @IsOptional()
   @IsString()

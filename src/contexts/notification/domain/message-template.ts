@@ -27,19 +27,35 @@ export interface MessageVars {
 }
 
 /**
- * 템플릿 본문의 치환 토큰을 실제 값으로 바꾼다.
+ * 치환 토큰을 실제 값으로 바꾸는 공통 로직.
  * 지원 토큰: {beachName}, {riskLevel}(한글 라벨), {eventType}(한글 라벨).
  * 미정의 토큰은 그대로 둔다.
  */
-export function renderMessage(templateBody: string, vars: MessageVars): string {
+function substituteTokens(text: string, vars: MessageVars): string {
   const dict: Record<string, string> = {
     beachName: vars.beachName,
     riskLevel: riskLevelLabel(vars.riskLevel),
     eventType: EVENT_LABEL[vars.eventType],
   };
-  return templateBody.replace(/\{(\w+)\}/g, (whole, key: string) =>
+  return text.replace(/\{(\w+)\}/g, (whole, key: string) =>
     key in dict ? dict[key] : whole,
   );
+}
+
+/**
+ * 템플릿 본문의 치환 토큰을 실제 값으로 바꾼다.
+ */
+export function renderMessage(templateBody: string, vars: MessageVars): string {
+  return substituteTokens(templateBody, vars);
+}
+
+/**
+ * 템플릿 제목의 치환 토큰을 실제 값으로 바꾼다(ADM-010 미리보기 제목).
+ * 템플릿에 title 이 없으면(null) null 을 반환한다.
+ */
+export function renderTitle(templateTitle: string | null | undefined, vars: MessageVars): string | null {
+  if (templateTitle === null || templateTitle === undefined) return null;
+  return substituteTokens(templateTitle, vars);
 }
 
 /**

@@ -11,6 +11,7 @@ export function toPersistence(v: NotificationValue): Prisma.NotificationUnchecke
     riskLevel: v.riskLevel,
     eventType: v.eventType,
     templateId: v.templateId === null ? null : BigInt(v.templateId),
+    title: v.title,
     message: v.message,
     dedupKey: v.dedupKey,
     cooldownUntil: v.cooldownUntil,
