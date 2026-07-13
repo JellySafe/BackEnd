@@ -9,6 +9,9 @@ import { OccurrencePrismaRepository } from './adapter/out/persistence/occurrence
 import { MappingPrismaRepository } from './adapter/out/persistence/mapping.prisma-repository';
 import { ObservationKyselyQuery } from './adapter/out/persistence/observation.kysely-query';
 import { MockCollectorAdapter } from './adapter/out/collector/mock-collector.adapter';
+import { NifsJellyfishCollector } from './adapter/out/collector/nifs-jellyfish.collector';
+import { KhoaBuoyCollector } from './adapter/out/collector/khoa-buoy.collector';
+import { CompositeCollectorAdapter } from './adapter/out/collector/composite-collector.adapter';
 import { SyncObservationsService } from './application/service/sync-observations.service';
 import { MapStationsService } from './application/service/map-stations.service';
 import { ListDataSourcesService } from './application/service/list-data-sources.service';
@@ -51,8 +54,13 @@ import {
     { provide: OCCURRENCE_REPOSITORY, useClass: OccurrencePrismaRepository },
     { provide: MAPPING_REPOSITORY, useClass: MappingPrismaRepository },
     { provide: OBSERVATION_QUERY, useClass: ObservationKyselyQuery },
-    // MVP mock 수집기 (실제 API 연동 시 이 바인딩만 교체)
-    { provide: EXTERNAL_COLLECTOR, useClass: MockCollectorAdapter },
+    // 수집기: 해양 관측은 국립해양조사원(KHOA) 부이, 해파리 출현/속보는 국립수산과학원(NIFS) 실 OpenAPI.
+    // 기상 관측소는 아직 mock 이다. CompositeCollectorAdapter 가 셋을 조합하고,
+    // 인증키 미설정/호출 실패 시 mock 으로 폴백한다.
+    MockCollectorAdapter,
+    NifsJellyfishCollector,
+    KhoaBuoyCollector,
+    { provide: EXTERNAL_COLLECTOR, useClass: CompositeCollectorAdapter },
     // 스케줄러 (adapter/in/schedule)
     ObservationScheduler,
   ],
