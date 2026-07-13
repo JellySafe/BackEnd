@@ -184,15 +184,46 @@ async function seedNotificationTemplates() {
 
 async function seedDataSources() {
   const sources = [
-    { sourceCode: 'NIFS_JELLYFISH', name: '국립수산과학원 해파리 출현/속보', provider: '국립수산과학원', sourceType: 'jellyfish', isSample: true, syncIntervalMinutes: 60 },
-    { sourceCode: 'KHOA_MARINE', name: '해양수산부 해양 관측 (수온/파고/유향)', provider: '국립해양조사원', sourceType: 'marine', isSample: true, syncIntervalMinutes: 30 },
-    { sourceCode: 'KMA_WEATHER', name: '기상청 기상 관측 (풍향/풍속/기온)', provider: '기상청', sourceType: 'weather', isSample: true, syncIntervalMinutes: 30 },
-    { sourceCode: 'BEACH_MASTER', name: '해수욕장 위치 마스터', provider: '제주특별자치도', sourceType: 'beach', isSample: true },
+    { sourceCode: 'NIFS_JELLYFISH', name: '국립수산과학원 해파리 출현/속보', provider: '국립수산과학원', sourceType: 'jellyfish', isSample: true, syncIntervalMinutes: 60, endpointUrl: null },
+    // KHOA 해양관측부이는 실 OpenAPI 연동 완료(KhoaBuoyCollector). 샘플이 아니다.
+    { sourceCode: 'KHOA_MARINE', name: '국립해양조사원 해양관측부이 (수온/염분/파고/유향·유속)', provider: '국립해양조사원', sourceType: 'marine', isSample: false, syncIntervalMinutes: 30, endpointUrl: 'https://apis.data.go.kr/1192136/twRecent/GetTWRecentApiService' },
+    { sourceCode: 'KMA_WEATHER', name: '기상청 기상 관측 (풍향/풍속/기온)', provider: '기상청', sourceType: 'weather', isSample: true, syncIntervalMinutes: 30, endpointUrl: null },
+    { sourceCode: 'BEACH_MASTER', name: '해수욕장 위치 마스터', provider: '제주특별자치도', sourceType: 'beach', isSample: true, endpointUrl: null },
   ];
   for (const s of sources) {
-    await prisma.dataSource.upsert({ where: { sourceCode: s.sourceCode }, update: {}, create: s });
+    // 소스 서술 필드는 재시드 시 수렴해야 하므로 update 에도 넣는다(lastSync* 는 건드리지 않는다).
+    const { sourceCode, ...rest } = s;
+    await prisma.dataSource.upsert({ where: { sourceCode }, update: rest, create: s });
   }
   console.log(`  ✓ 데이터 소스 ${sources.length}건`);
+}
+
+/**
+ * 관측소 마스터 (SYS-001/002).
+ *
+ * KHOA 해양관측부이 중 **제주 해역에 있는 것은 중문해수욕장 부이(TW_0075) 하나뿐**이다.
+ * (TW_0001~TW_0200 전수 조회로 확인 — 나머지 26개 부이는 부산·인천·강릉 등 육지 해안이다.)
+ * 따라서 제주 해변들은 SYS-002 최근접 매핑에서 대부분 이 부이에 붙게 되고,
+ * 관측 기반 위험 요인은 섬 전체가 사실상 같은 값을 공유한다. 해변별 차이는
+ * 취약도·제보·해파리 출현 데이터에서 발생한다. 관측소 확충 시 이 배열에 추가하면 된다.
+ */
+async function seedObservationStations() {
+  const khoa = await prisma.dataSource.findUnique({ where: { sourceCode: 'KHOA_MARINE' } });
+  if (!khoa) {
+    throw new Error('KHOA_MARINE 데이터 소스가 없습니다 — seedDataSources 를 먼저 실행하세요.');
+  }
+
+  const stations = [
+    { stationCode: 'TW_0075', name: '중문해수욕장 해양관측부이', stationType: 'marine', lat: 33.2345, lng: 126.40955 },
+  ];
+  for (const st of stations) {
+    await prisma.observationStation.upsert({
+      where: { uk_observation_stations_code: { sourceId: khoa.id, stationCode: st.stationCode } },
+      update: { name: st.name, stationType: st.stationType, lat: st.lat, lng: st.lng, isActive: true },
+      create: { sourceId: khoa.id, ...st },
+    });
+  }
+  console.log(`  ✓ 관측소 ${stations.length}건 (KHOA 부이)`);
 }
 
 async function main() {
@@ -205,6 +236,7 @@ async function main() {
   await seedGuides();
   await seedNotificationTemplates();
   await seedDataSources();
+  await seedObservationStations();
   console.log('시드 완료.');
 }
 
