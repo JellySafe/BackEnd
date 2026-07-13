@@ -1,5 +1,5 @@
 import { Controller, Get, Inject, Query } from '@nestjs/common';
-import { ApiBearerAuth, ApiTags } from '@nestjs/swagger';
+import { ApiBearerAuth, ApiOperation, ApiTags } from '@nestjs/swagger';
 import { ApiOkPage } from '@shared/http/api-response.decorator';
 import { normalizePageRequest } from '@shared/kernel/pagination';
 import {
@@ -27,6 +27,10 @@ export class AdminUserController {
   ) {}
 
   /** 사용자 목록 (role 필터) */
+  @ApiOperation({
+    summary: '[관리자] 계정 목록 — 계정 관리 화면의 표',
+    description: '등록된 관리자/운영자 계정 목록. `role`, `isActive` 로 필터. 페이지네이션(`page`, `size`).',
+  })
   @ApiOkPage(UserListItemResponse)
   @Get('users')
   users(@Query() query: ListUsersQuery) {
@@ -35,6 +39,13 @@ export class AdminUserController {
   }
 
   /** AUTH-002 감사 로그 목록 (targetType/userId 필터) */
+  @ApiOperation({
+    summary: '[관리자] 감사 로그 — 누가 언제 무엇을 바꿨나',
+    description: [
+      '운영자가 수행한 변경 이력(AUTH-002). 제보 검수, 대응 기록, 해변 수정 등이 남는다.',
+      '`userId`(행위자), `targetType`/`targetId`(대상) 로 필터. 페이지네이션.',
+    ].join('\n'),
+  })
   @ApiOkPage(AuditLogListItemResponse)
   @Get('audit-logs')
   auditLogs(@Query() query: ListAuditLogsQuery) {

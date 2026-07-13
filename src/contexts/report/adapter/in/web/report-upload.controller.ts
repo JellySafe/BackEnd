@@ -8,7 +8,7 @@ import {
   UseInterceptors,
 } from '@nestjs/common';
 import { FileInterceptor } from '@nestjs/platform-express';
-import { ApiBody, ApiConsumes, ApiTags } from '@nestjs/swagger';
+import { ApiBody, ApiConsumes, ApiOperation, ApiTags } from '@nestjs/swagger';
 import { ApiOkData } from '@shared/http/api-response.decorator';
 import { ValidationError } from '@shared/kernel/domain-error';
 import { UploadImageResponse } from './dto/upload-image.response';
@@ -38,6 +38,18 @@ const ALLOWED_EXT = new Set(['.jpg', '.jpeg', '.png', '.gif', '.webp', '.heic'])
 @Controller('public/reports')
 export class ReportUploadController {
   /** USR-004 제보 이미지 업로드 */
+  @ApiOperation({
+    summary: '[앱] 제보 사진 업로드 — 제보 제출 전에 먼저 호출 (2단계 중 1단계)',
+    description: [
+      '제보 사진을 서버에 올리고 `imageUrl` 을 돌려받는다. 그 값을 `POST /public/reports` 의 body 에 넣는다.',
+      '',
+      '- `multipart/form-data` 로 보내고, 파일 필드 이름은 **`image`** 여야 한다.',
+      '- 이미지 파일만 허용(jpg, png, gif, webp, heic).',
+      '- 인증 불필요(비로그인 제보 지원).',
+      '',
+      '현재는 서버 로컬 `uploads/` 에 저장하고 `/uploads/파일명` 경로를 준다. 추후 S3/CDN 으로 바꿔도 응답 형태는 그대로다.',
+    ].join('\n'),
+  })
   @Post('image')
   @ApiConsumes('multipart/form-data')
   @ApiBody({

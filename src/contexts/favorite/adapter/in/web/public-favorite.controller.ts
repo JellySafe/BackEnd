@@ -11,7 +11,7 @@ import {
   Post,
   Query,
 } from '@nestjs/common';
-import { ApiNoContentResponse, ApiTags } from '@nestjs/swagger';
+import { ApiNoContentResponse, ApiOperation, ApiTags } from '@nestjs/swagger';
 import { ApiOkData, ApiOkDataArray } from '@shared/http/api-response.decorator';
 import { FavoriteOwner } from '../../../domain/favorite-beach';
 import {
@@ -41,6 +41,18 @@ export class PublicFavoriteController {
   ) {}
 
   /** USR-003 관심 해변 저장(중복은 멱등). */
+  @ApiOperation({
+    summary: '[앱] 관심 해변 등록 — 즐겨찾기 ★ 켜기',
+    description: [
+      '해변을 관심 목록에 넣는다(USR-003). 등록해 두면 그 해변의 위험 알림을 받게 된다.',
+      '',
+      '**사용자 식별 방법 (둘 중 하나)**',
+      '- 로그인 사용자: `x-user-id` 헤더에 userId',
+      '- 비로그인 사용자: body 의 `userToken` 에 기기 고유 문자열',
+      '',
+      '이미 등록된 해변을 또 호출해도 에러가 아니다(멱등). 버튼 연타를 따로 막지 않아도 된다.',
+    ].join('\n'),
+  })
   @ApiOkData(AddFavoriteResponse)
   @Post()
   add(@Body() body: AddFavoriteRequest, @Headers('x-user-id') userIdHeader?: string) {
@@ -51,6 +63,14 @@ export class PublicFavoriteController {
   }
 
   /** 관심 해변 해제. */
+  @ApiOperation({
+    summary: '[앱] 관심 해변 해제 — 즐겨찾기 ★ 끄기',
+    description: [
+      '관심 목록에서 해변을 뺀다. 성공 시 **204 No Content** (응답 본문 없음).',
+      '',
+      '사용자 식별은 등록과 동일하다. 단, 비로그인은 body 가 아니라 **쿼리스트링 `?token=`** 으로 보낸다(DELETE 라서).',
+    ].join('\n'),
+  })
   @ApiNoContentResponse()
   @Delete(':beachId')
   @HttpCode(204)
@@ -66,6 +86,14 @@ export class PublicFavoriteController {
   }
 
   /** 관심 해변 목록 + 각 해변 현재 위험단계. */
+  @ApiOperation({
+    summary: '[앱] 내 관심 해변 목록 — 위험 단계 포함',
+    description: [
+      '내가 즐겨찾기한 해변들을 **각 해변의 현재 위험 단계와 함께** 준다. "내 해변" 탭을 이거 하나로 그릴 수 있다.',
+      '',
+      '사용자 식별: 로그인은 `x-user-id` 헤더, 비로그인은 쿼리 `?token=`.',
+    ].join('\n'),
+  })
   @ApiOkDataArray(FavoriteListItemResponse)
   @Get()
   list(@Query() query: FavoriteOwnerQuery, @Headers('x-user-id') userIdHeader?: string) {

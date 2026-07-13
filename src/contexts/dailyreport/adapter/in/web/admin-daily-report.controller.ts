@@ -9,7 +9,7 @@ import {
   Post,
   Query,
 } from '@nestjs/common';
-import { ApiBearerAuth, ApiTags } from '@nestjs/swagger';
+import { ApiBearerAuth, ApiOperation, ApiTags } from '@nestjs/swagger';
 import { ApiOkData } from '@shared/http/api-response.decorator';
 import { CurrentUser, Roles } from '@shared/auth/auth.decorators';
 import { AuthUser } from '@shared/auth/auth-user';
@@ -43,6 +43,17 @@ export class AdminDailyReportController {
   ) {}
 
   /** ADM-011 특정일·해변 리포트 조회(없으면 즉석 집계본 반환). */
+  @ApiOperation({
+    summary: '[관리자] 일간 리포트 조회 — 해변 하루치 운영 요약',
+    description: [
+      '`beachId` + `date` 로 해당 날짜의 운영 리포트를 본다(ADM-011). 그날의 위험도 추이, 제보 건수, 대응 내역 요약.',
+      '',
+      '**저장된 리포트가 없으면 즉석에서 집계해서 돌려준다** — 404 가 나지 않는다.',
+      '즉 화면에서는 생성 여부를 신경 쓰지 않고 그냥 조회하면 된다.',
+      '',
+      '`operator` 또는 `admin` 권한 필요.',
+    ].join('\n'),
+  })
   @ApiOkData(DailyReportResponse)
   @Get()
   get(@Query() query: GetDailyReportQueryDto) {
@@ -53,6 +64,17 @@ export class AdminDailyReportController {
   }
 
   /** SYS-006 리포트 생성/재생성. */
+  @ApiOperation({
+    summary: '[관리자] 일간 리포트 생성/재생성 — 확정 저장',
+    description: [
+      '해당 날짜 리포트를 집계해서 **DB 에 확정 저장**한다(SYS-006). 이미 있으면 덮어쓴다(재생성).',
+      '',
+      '조회(GET)는 없으면 즉석 집계라 저장이 안 된다. 메모를 달거나 확정본을 남기려면 이걸 먼저 호출해야 한다.',
+      '화면의 "리포트 생성" / "새로고침" 버튼에 연결.',
+      '',
+      '작성자는 body 가 아니라 Bearer 토큰에서 자동으로 기록된다.',
+    ].join('\n'),
+  })
   @ApiOkData(DailyReportResponse)
   @Post()
   generate(@Body() body: GenerateDailyReportRequest, @CurrentUser() user: AuthUser) {
@@ -64,6 +86,15 @@ export class AdminDailyReportController {
   }
 
   /** FLOW-ADM-004 운영자 메모 저장. */
+  @ApiOperation({
+    summary: '[관리자] 리포트 메모 저장 — 운영자 코멘트 달기',
+    description: [
+      '리포트에 운영자 메모를 남긴다. 자동 집계 수치에 사람이 맥락을 덧붙이는 자리.',
+      '',
+      '`id` 는 **리포트 id** 다(해변 id 아님). 생성/조회 응답에서 받은 값을 쓴다.',
+      '메모를 달려면 리포트가 저장돼 있어야 하므로, 즉석 집계본만 본 상태라면 `POST /admin/daily-reports` 를 먼저 호출한다.',
+    ].join('\n'),
+  })
   @ApiOkData(DailyReportResponse)
   @Patch(':id/memo')
   patchMemo(@Param('id', ParseIntPipe) id: number, @Body() body: UpdateMemoRequest) {

@@ -1,5 +1,5 @@
 import { Body, Controller, Get, Inject, Post, Query } from '@nestjs/common';
-import { ApiBearerAuth, ApiTags } from '@nestjs/swagger';
+import { ApiBearerAuth, ApiOperation, ApiTags } from '@nestjs/swagger';
 import { ApiOkData } from '@shared/http/api-response.decorator';
 import { normalizePageRequest, offsetOf } from '@shared/kernel/pagination';
 import {
@@ -26,6 +26,15 @@ export class AdminSubscriptionController {
   ) {}
 
   /** [2차] 구독 생성 */
+  @ApiOperation({
+    summary: '[2차 확장] 구독 생성 — MVP 에서는 사용하지 않음',
+    description: [
+      '어업/양식 사업자 구독을 만드는 골격(EX-002).',
+      '',
+      '⚠️ **2차 확장 골격이라 지금 붙일 필요 없다.** 실제 로직 대신 자리만 잡아둔 상태이고,',
+      '응답에 `note: "[2차] ..."` 가 그대로 들어있다. MVP 화면 연동 대상이 아니다.',
+    ].join('\n'),
+  })
   @ApiOkData(CreateSubscriptionResponse)
   @Post()
   async create(@Body() body: CreateSubscriptionRequest) {
@@ -42,6 +51,15 @@ export class AdminSubscriptionController {
   }
 
   /** [2차] 구독 목록 */
+  @ApiOperation({
+    summary: '[2차 확장] 구독 목록 — MVP 에서는 사용하지 않음',
+    description: [
+      '구독 목록 조회 골격(EX-002).',
+      '',
+      '⚠️ **2차 확장 골격이라 지금 붙일 필요 없다.** 실제 로직 대신 자리만 잡아둔 상태이고,',
+      '응답에 `note: "[2차] ..."` 가 그대로 들어있다. MVP 화면 연동 대상이 아니다.',
+    ].join('\n'),
+  })
   @ApiOkData(ListSubscriptionsResponse)
   @Get()
   async list(@Query('page') page?: number, @Query('size') size?: number) {
