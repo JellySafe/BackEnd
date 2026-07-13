@@ -1,6 +1,7 @@
 import { Module } from '@nestjs/common';
 import { RiskModule } from '@contexts/risk/risk.module';
 import { AdminObservationController } from './adapter/in/web/admin-observation.controller';
+import { SystemObservationController } from './adapter/in/web/system-observation.controller';
 import { ObservationScheduler } from './adapter/in/schedule/observation.scheduler';
 import { DataSourcePrismaRepository } from './adapter/out/persistence/data-source.prisma-repository';
 import { StationPrismaRepository } from './adapter/out/persistence/station.prisma-repository';
@@ -41,7 +42,7 @@ import {
   // 수집·매핑 배치 완료 후 신선한 데이터로 위험도를 재산출(data_sync)하고, 단계 상승 시
   // 관심 해변 구독자 알림 확산(SYS-005)까지 이어진다. RiskModule 은 observation 을 import 하지 않아 순환 없음.
   imports: [RiskModule],
-  controllers: [AdminObservationController],
+  controllers: [AdminObservationController, SystemObservationController],
   providers: [
     // 인바운드 포트 → 유스케이스 서비스
     { provide: SYNC_OBSERVATIONS_USE_CASE, useClass: SyncObservationsService },
