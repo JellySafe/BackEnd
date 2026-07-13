@@ -18,6 +18,8 @@ services:
         value: api
       - key: SCHEDULER_ENABLED
         value: "true"
+      - key: CORS_ORIGIN
+        value: "https://jellysafe-public.vercel.app,https://jellysafe-admin.vercel.app"
       # 아래 두 개는 대시보드에서 직접 입력(민감정보, 커밋 금지)
       - key: DATABASE_URL
         sync: false

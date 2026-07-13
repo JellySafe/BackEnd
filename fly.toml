@@ -14,6 +14,8 @@ primary_region = 'nrt'
   NODE_ENV = 'production'
   PORT = '3000'
   SCHEDULER_ENABLED = 'true'
+  # 프론트엔드(Vercel) 도메인만 브라우저에서 API 호출 허용. 미지정 시 모든 origin 허용이라 반드시 명시한다.
+  CORS_ORIGIN = 'https://jellysafe-public.vercel.app,https://jellysafe-admin.vercel.app'
 
 [http_service]
   internal_port = 3000
