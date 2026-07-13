@@ -19,6 +19,17 @@ async function bootstrap(): Promise<void> {
   const prefix = config.get<string>('API_PREFIX') ?? 'api';
   const port = Number(config.get('PORT') ?? 3000);
 
+  // CORS: 프론트엔드(브라우저)에서 API 를 호출할 수 있게 허용한다.
+  // CORS_ORIGIN 에 콤마로 구분된 허용 도메인을 지정한다(예: https://app.example.com).
+  // 미지정 시 개발 편의로 모든 origin 을 허용한다.
+  const corsOrigin = config.get<string>('CORS_ORIGIN');
+  app.enableCors({
+    origin: corsOrigin ? corsOrigin.split(',').map((o) => o.trim()) : true,
+    credentials: true,
+    methods: ['GET', 'POST', 'PATCH', 'PUT', 'DELETE', 'OPTIONS'],
+    allowedHeaders: ['Content-Type', 'Authorization'],
+  });
+
   app.setGlobalPrefix(prefix);
   app.useGlobalPipes(
     new ValidationPipe({

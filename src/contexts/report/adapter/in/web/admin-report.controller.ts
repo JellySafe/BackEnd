@@ -2,7 +2,6 @@ import {
   Body,
   Controller,
   Get,
-  Headers,
   Inject,
   Param,
   ParseIntPipe,
@@ -12,7 +11,8 @@ import {
 import { ApiBearerAuth, ApiParam, ApiTags } from '@nestjs/swagger';
 import { normalizePageRequest } from '@shared/kernel/pagination';
 import { ApiOkData, ApiOkPage } from '@shared/http/api-response.decorator';
-import { ValidationError } from '@shared/kernel/domain-error';
+import { CurrentUser, Roles } from '@shared/auth/auth.decorators';
+import { AuthUser } from '@shared/auth/auth-user';
 import {
   ListReportsUseCase,
   LIST_REPORTS_USE_CASE,
@@ -26,8 +26,7 @@ import { ReviewReportResponse } from './dto/review-report.response';
 
 /**
  * 관리자 제보 검수 API (ADM-008, ADM-009).
- * reviewerId 는 임시로 x-user-id 헤더에서 받는다.
- * 인증 컨텍스트(user/auth) 완성 후 @CurrentUser 가드로 교체 예정.
+ * 검수자(reviewerId)는 전역 AdminAuthGuard 가 검증한 JWT 주체(@CurrentUser)를 사용한다.
  */
 @ApiTags('report')
 @ApiBearerAuth('bearer')
@@ -59,21 +58,19 @@ export class AdminReportController {
   @Patch(':reportId/review')
   @ApiParam({ name: 'reportId', example: 1024, description: '제보 식별자' })
   @ApiOkData(ReviewReportResponse)
+  @Roles('operator', 'admin')
   review(
     @Param('reportId', ParseIntPipe) reportId: number,
     @Body() body: ReviewReportRequest,
-    @Headers('x-user-id') userIdHeader?: string,
+    @CurrentUser() user: AuthUser,
   ) {
-    const reviewerId = Number(userIdHeader);
-    if (!Number.isInteger(reviewerId) || reviewerId <= 0) {
-      throw new ValidationError('REVIEWER_REQUIRED', '검수자 식별자(x-user-id)가 필요합니다.');
-    }
+    // 검수자 식별은 전역 AdminAuthGuard 가 검증한 JWT 주체(user.userId)를 사용한다.
     return this.reviewReport.review({
       reportId,
       reviewStatus: body.reviewStatus,
       rejectReason: body.rejectReason ?? null,
       memo: body.memo ?? null,
-      reviewerId,
+      reviewerId: user.userId,
     });
   }
 }

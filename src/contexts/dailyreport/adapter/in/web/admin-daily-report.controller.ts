@@ -2,7 +2,6 @@ import {
   Body,
   Controller,
   Get,
-  Headers,
   Inject,
   Param,
   ParseIntPipe,
@@ -12,6 +11,8 @@ import {
 } from '@nestjs/common';
 import { ApiBearerAuth, ApiTags } from '@nestjs/swagger';
 import { ApiOkData } from '@shared/http/api-response.decorator';
+import { CurrentUser, Roles } from '@shared/auth/auth.decorators';
+import { AuthUser } from '@shared/auth/auth-user';
 import {
   GenerateDailyReportUseCase,
   GENERATE_DAILY_REPORT_USE_CASE,
@@ -27,10 +28,11 @@ import { DailyReportResponse } from './dto/daily-report.response';
 
 /**
  * 관리자 일간 운영 리포트 API (ADM-011, SYS-006, FLOW-ADM-004).
- * createdBy 는 임시로 x-user-id 헤더에서 받는다(인증 컨텍스트 완성 후 가드로 교체).
+ * createdBy 는 전역 AdminAuthGuard 가 검증한 JWT 주체(@CurrentUser)를 사용한다.
  */
 @ApiTags('dailyreport')
 @ApiBearerAuth('bearer')
+@Roles('operator', 'admin')
 @Controller('admin/daily-reports')
 export class AdminDailyReportController {
   constructor(
@@ -53,15 +55,11 @@ export class AdminDailyReportController {
   /** SYS-006 리포트 생성/재생성. */
   @ApiOkData(DailyReportResponse)
   @Post()
-  generate(
-    @Body() body: GenerateDailyReportRequest,
-    @Headers('x-user-id') userIdHeader?: string,
-  ) {
-    const createdBy = Number(userIdHeader);
+  generate(@Body() body: GenerateDailyReportRequest, @CurrentUser() user: AuthUser) {
     return this.generateDailyReport.generate({
       beachId: body.beachId,
       date: new Date(body.date),
-      createdBy: Number.isInteger(createdBy) && createdBy > 0 ? createdBy : null,
+      createdBy: user.userId,
     });
   }
 
