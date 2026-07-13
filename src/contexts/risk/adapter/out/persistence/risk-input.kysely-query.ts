@@ -61,35 +61,16 @@ export class RiskInputKyselyQuery implements RiskInputPort {
     const nearbyAgo = new Date(now - options.nearbyWindowDays * DAY_MS);
     const reportAgo = new Date(now - options.reportWindowDays * DAY_MS);
 
-    // 최신 관측 (매핑된 관측소 중 가장 최근 1건)
-    const obsRow = await this.db
-      .selectFrom('observations as o')
-      .innerJoin('observation_mappings as m', 'm.station_id', 'o.station_id')
-      .where('m.beach_id', '=', beachId)
-      .select([
-        'o.observed_at as observedAt',
-        'o.water_temp as waterTemp',
-        'o.wave_height as waveHeight',
-        'o.wind_direction as windDirection',
-        'o.wind_speed as windSpeed',
-        'o.current_direction as currentDirection',
-        'o.current_speed as currentSpeed',
-      ])
-      .orderBy('o.observed_at', 'desc')
-      .limit(1)
-      .executeTakeFirst();
+    // 최신 관측: 해양(marine)/기상(weather) 관측소를 **각각** 최신 1건씩 뽑아 병합한다.
+    // 한 덩어리로 최신 1건만 뽑으면 기상 행(수온/파고/해류가 NULL)이 최신으로 선택될 때
+    // TEMP_UP·WAVE_HIGH·CURRENT_INFLOW 가 한꺼번에 결측 처리되어(결측 3개)
+    // 신뢰도가 low 로 떨어지고 점수 기여도 누락된다.
+    const [marineRow, weatherRow] = await Promise.all([
+      this.findLatestObservation(beachId, 'marine'),
+      this.findLatestObservation(beachId, 'weather'),
+    ]);
 
-    const latestObservation: ObservationInput | null = obsRow
-      ? {
-          observedAt: new Date(obsRow.observedAt),
-          waterTemp: numOrNull(obsRow.waterTemp),
-          waveHeight: numOrNull(obsRow.waveHeight),
-          windDirection: numOrNull(obsRow.windDirection),
-          windSpeed: numOrNull(obsRow.windSpeed),
-          currentDirection: numOrNull(obsRow.currentDirection),
-          currentSpeed: numOrNull(obsRow.currentSpeed),
-        }
-      : null;
+    const latestObservation = mergeObservations(marineRow, weatherRow);
 
     const observationAgeMinutes = latestObservation
       ? Math.max(0, Math.round((now - latestObservation.observedAt.getTime()) / 60000))
@@ -173,4 +154,88 @@ export class RiskInputKyselyQuery implements RiskInputPort {
       observationAgeMinutes,
     };
   }
+
+  /**
+   * 해변에 매핑된 특정 유형(marine/weather) 관측소의 최신 관측 1건.
+   * observed_at 동률(해양·기상이 같은 시각에 관측)일 때 임의 행이 뽑히지 않도록 id 로 결정적 정렬을 건다.
+   */
+  private async findLatestObservation(
+    beachId: Id,
+    stationType: StationType,
+  ): Promise<ObservationRow | null> {
+    const row = await this.db
+      .selectFrom('observations as o')
+      .innerJoin('observation_mappings as m', 'm.station_id', 'o.station_id')
+      .where('m.beach_id', '=', beachId)
+      .where('m.station_type', '=', stationType)
+      .select([
+        'o.observed_at as observedAt',
+        'o.water_temp as waterTemp',
+        'o.wave_height as waveHeight',
+        'o.wind_direction as windDirection',
+        'o.wind_speed as windSpeed',
+        'o.current_direction as currentDirection',
+        'o.current_speed as currentSpeed',
+      ])
+      .orderBy('o.observed_at', 'desc')
+      .orderBy('o.id', 'desc')
+      .limit(1)
+      .executeTakeFirst();
+
+    return row
+      ? {
+          observedAt: new Date(row.observedAt),
+          waterTemp: numOrNull(row.waterTemp),
+          waveHeight: numOrNull(row.waveHeight),
+          windDirection: numOrNull(row.windDirection),
+          windSpeed: numOrNull(row.windSpeed),
+          currentDirection: numOrNull(row.currentDirection),
+          currentSpeed: numOrNull(row.currentSpeed),
+        }
+      : null;
+  }
+}
+
+/** 관측소 유형 (observation_mappings.station_type). */
+type StationType = 'marine' | 'weather';
+
+/** 관측 한 행 (유형별 최신본). */
+type ObservationRow = ObservationInput;
+
+/** a ?? b — 유형별 담당 컬럼을 우선하되, 비면 다른 유형 행으로 보완한다. */
+function pick(primary: number | null, fallback: number | null): number | null {
+  return primary ?? fallback;
+}
+
+/**
+ * 해양/기상 최신 관측을 하나의 관측 입력으로 병합한다.
+ *   - 수온/파고/해류: marine 담당 (없으면 weather 로 보완)
+ *   - 풍향/풍속: weather 담당 (없으면 marine 로 보완)
+ *
+ * observedAt 은 병합에 기여한 행들 중 **가장 오래된** 시각을 쓴다.
+ * 신뢰도(RISK-005)는 "이 판단에 쓰인 데이터가 얼마나 신선한가"를 뜻하므로,
+ * 해양 관측소가 며칠째 끊긴 상태를 신선한 기상 관측이 가려서는 안 된다(안전 후퇴 방지).
+ */
+function mergeObservations(
+  marine: ObservationRow | null,
+  weather: ObservationRow | null,
+): ObservationInput | null {
+  if (!marine && !weather) return null;
+  if (!marine) return weather;
+  if (!weather) return marine;
+
+  const observedAt =
+    marine.observedAt.getTime() <= weather.observedAt.getTime()
+      ? marine.observedAt
+      : weather.observedAt;
+
+  return {
+    observedAt,
+    waterTemp: pick(marine.waterTemp, weather.waterTemp),
+    waveHeight: pick(marine.waveHeight, weather.waveHeight),
+    currentDirection: pick(marine.currentDirection, weather.currentDirection),
+    currentSpeed: pick(marine.currentSpeed, weather.currentSpeed),
+    windDirection: pick(weather.windDirection, marine.windDirection),
+    windSpeed: pick(weather.windSpeed, marine.windSpeed),
+  };
 }

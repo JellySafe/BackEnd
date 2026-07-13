@@ -84,18 +84,12 @@ export class AdminBeachRiskResponse {
   cards!: RiskCardResponse[];
 }
 
-/** USR-002 GET /public/beaches/:beachId/risk 응답 (PublicBeachRiskView 미러링). */
-export class PublicBeachRiskResponse {
-  @ApiProperty({ example: 12, description: '해변 식별자' })
-  beachId!: number;
-
-  @ApiProperty({ example: '해운대해수욕장', description: '해변명' })
-  beachName!: string;
-
+/** 일반 사용자 시점별 위험도 한 점 (PublicRiskPointView 미러링). */
+export class PublicRiskPointResponse {
   @ApiProperty({
-    example: 'now',
+    example: '24h',
     description: '예측 시점 지평',
-    enum: ['now', '6h', '24h', '72h'],
+    enum: ['now', '24h', '72h'],
   })
   horizon!: string;
 
@@ -110,8 +104,51 @@ export class PublicBeachRiskResponse {
   riskScore!: number;
 
   @ApiProperty({
-    example: ['수온 상승', '독성 해파리 제보 다수', '해류 유입'],
+    example: ['수온 상승', '독성 해파리 제보 다수'],
     description: '요약 원인(3~5개)',
+    type: [String],
+  })
+  factors!: string[];
+
+  @ApiProperty({
+    example: 'medium',
+    description: '데이터 신뢰도. 먼 시점일수록 예측 불확실성으로 한 단계씩 낮아진다.',
+    enum: ['high', 'medium', 'low'],
+  })
+  dataConfidence!: string;
+
+  @ApiProperty({ example: '2026-07-10T09:00:00.000Z', description: '산출 생성 일시' })
+  generatedAt!: string;
+}
+
+/** USR-002 GET /public/beaches/:beachId/risk 응답 (PublicBeachRiskView 미러링). */
+export class PublicBeachRiskResponse {
+  @ApiProperty({ example: 12, description: '해변 식별자' })
+  beachId!: number;
+
+  @ApiProperty({ example: '해운대해수욕장', description: '해변명' })
+  beachName!: string;
+
+  @ApiProperty({
+    example: 'now',
+    description: "대표 카드의 예측 시점 지평(항상 '현재' 우선)",
+    enum: ['now', '24h', '72h'],
+  })
+  horizon!: string;
+
+  @ApiProperty({
+    example: 'danger',
+    description: "위험 단계 (현재 시점). riskTimeline 의 'now' 항목과 같은 값이다.",
+    enum: ['safe', 'caution', 'danger', 'severe'],
+  })
+  riskLevel!: string;
+
+  @ApiProperty({ example: 68, description: '위험 점수(0~100) — 현재 시점' })
+  riskScore!: number;
+
+  @ApiProperty({
+    example: ['수온 상승', '독성 해파리 제보 다수', '해류 유입'],
+    description: '요약 원인(3~5개) — 현재 시점',
     type: [String],
   })
   factors!: string[];
@@ -124,15 +161,25 @@ export class PublicBeachRiskResponse {
 
   @ApiProperty({
     example: 'high',
-    description: '데이터 신뢰도',
+    description: '데이터 신뢰도 — 현재 시점',
     enum: ['high', 'medium', 'low'],
   })
   dataConfidence!: string;
 
   @ApiProperty({
     example: '2026-07-10T09:00:00.000Z',
-    description: '산출 생성 일시',
+    description: '산출 생성 일시 — 현재 시점',
     nullable: true,
   })
   generatedAt!: string | null;
+
+  @ApiProperty({
+    type: [PublicRiskPointResponse],
+    description: [
+      '시간별 위험도 예측. now → 24h → 72h 순으로 정렬된다.',
+      '산출 이력이 없는 해변은 빈 배열이다.',
+      "최상위 riskLevel/riskScore/factors 는 이 배열의 'now' 항목과 동일하다(하위호환).",
+    ].join(' '),
+  })
+  riskTimeline!: PublicRiskPointResponse[];
 }

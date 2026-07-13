@@ -51,7 +51,22 @@ export interface AdminBeachRiskView {
   cards: RiskCardView[];
 }
 
-/** 일반 사용자 상세 뷰 (대표 카드 요약 + 안전 가이드). */
+/** 일반 사용자용 시점별 위험도 한 점 (now/24h/72h). */
+export interface PublicRiskPointView {
+  horizon: RiskHorizon;
+  riskLevel: RiskLevel;
+  riskScore: number;
+  factors: string[]; // 요약 원인 3~5개
+  dataConfidence: DataConfidence;
+  generatedAt: Date;
+}
+
+/**
+ * 일반 사용자 상세 뷰 (대표 카드 요약 + 시간별 예측 + 안전 가이드).
+ *
+ * 최상위 riskLevel/riskScore/factors/... 는 '현재(now)' 대표 카드 값이다(기존 응답 하위호환).
+ * riskTimeline 은 now/24h/72h 를 시간순으로 담아 "시간별 위험도 예측" 화면을 채운다.
+ */
 export interface PublicBeachRiskView {
   beachId: Id;
   beachName: string;
@@ -62,6 +77,8 @@ export interface PublicBeachRiskView {
   guideText: string;
   dataConfidence: DataConfidence;
   generatedAt: Date | null;
+  /** now → 24h → 72h 순. 산출 이력이 없으면 빈 배열. */
+  riskTimeline: PublicRiskPointView[];
 }
 
 export interface GetBeachRiskDetailUseCase {
