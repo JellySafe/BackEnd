@@ -2,12 +2,14 @@ import { Id } from '@shared/kernel/id';
 import { Page, PageRequest } from '@shared/kernel/pagination';
 import { RiskLevel } from '@shared/kernel/risk-level';
 import { NotificationEvent, NotificationTarget } from '../../../domain/notification-enums';
+import { WebPushSubscription } from '../../../domain/push-subscription';
 import {
   AdminNotificationFilter,
   AdminNotificationListItem,
   AlertListFilter,
   AlertListItem,
 } from '../out/notification-query.port';
+import { PushConsentOwner } from '../out/push-consent-repository.port';
 import { TemplateRecord } from '../out/template-query.port';
 
 // ----- SYS-005 위험 상승 알림 생성 (다른 컨텍스트가 호출하는 인바운드 포트) -----
@@ -162,3 +164,89 @@ export interface ListAdminNotificationsUseCase {
   list(filter: AdminNotificationFilter, page: PageRequest): Promise<Page<AdminNotificationListItem>>;
 }
 export const LIST_ADMIN_NOTIFICATIONS_USE_CASE = Symbol('LIST_ADMIN_NOTIFICATIONS_USE_CASE');
+
+// ----- Web Push 구독 등록/해제 (비로그인 토큰 기반) -----
+export interface RegisterPushSubscriptionCommand {
+  owner: PushConsentOwner;
+  /** 브라우저 pushManager.subscribe() 결과(endpoint/keys). 서비스가 도메인에서 검증한다. */
+  subscription: unknown;
+  now?: Date;
+}
+
+export interface RegisterPushSubscriptionResult {
+  consentId: Id;
+  /** 신규 구독이면 true, 같은 endpoint 재등록이면 false(멱등). */
+  created: boolean;
+}
+
+export interface RegisterPushSubscriptionUseCase {
+  register(command: RegisterPushSubscriptionCommand): Promise<RegisterPushSubscriptionResult>;
+}
+export const REGISTER_PUSH_SUBSCRIPTION_USE_CASE = Symbol('REGISTER_PUSH_SUBSCRIPTION_USE_CASE');
+
+export interface RevokePushSubscriptionCommand {
+  owner: PushConsentOwner;
+  /** 특정 기기만 해제할 때의 endpoint. 미지정이면 이 사용자의 푸시 구독 전부 해제. */
+  endpoint?: string | null;
+  now?: Date;
+}
+
+export interface RevokePushSubscriptionResult {
+  /** 해제된 구독 수. 이미 해제됐거나 없으면 0(멱등, 에러 아님). */
+  revokedCount: number;
+}
+
+export interface RevokePushSubscriptionUseCase {
+  revoke(command: RevokePushSubscriptionCommand): Promise<RevokePushSubscriptionResult>;
+}
+export const REVOKE_PUSH_SUBSCRIPTION_USE_CASE = Symbol('REVOKE_PUSH_SUBSCRIPTION_USE_CASE');
+
+// ----- VAPID 공개키 조회 (브라우저가 구독할 때 applicationServerKey 로 필요) -----
+export interface PushPublicKeyResult {
+  /** VAPID 공개키(base64url). 미설정이면 null. */
+  publicKey: string | null;
+  /** false 면 서버가 푸시를 보내지 않는다(알림은 DB 에 쌓이고 인앱 알림함은 그대로 동작). */
+  configured: boolean;
+}
+
+export interface GetPushPublicKeyUseCase {
+  getPublicKey(): PushPublicKeyResult;
+}
+export const GET_PUSH_PUBLIC_KEY_USE_CASE = Symbol('GET_PUSH_PUBLIC_KEY_USE_CASE');
+
+// ----- 생성된 알림을 구독자 브라우저로 실제 발송 (SYS-005 / ADM-010) -----
+export interface DispatchNotificationPushCommand {
+  notificationId: Id;
+  owner: PushConsentOwner;
+  beachId: Id;
+  title: string | null;
+  message: string;
+  riskLevel?: RiskLevel | null;
+  eventType: NotificationEvent;
+  /** 브라우저 알림 병합 키로 쓴다(같은 dedupKey 알림은 알림창에서 덮어쓰기). */
+  dedupKey?: string | null;
+  now?: Date;
+}
+
+export interface DispatchNotificationPushResult {
+  /** VAPID 미설정 / 구독 없음 / 브로드캐스트 대상이라 발송을 건너뛴 경우 true. */
+  skipped: boolean;
+  /** 발송 시도한 구독 수. */
+  attempted: number;
+  sent: number;
+  failed: number;
+  /** 만료(410/404)로 무효화한 구독 수. */
+  expired: number;
+}
+
+/**
+ * 알림이 생성된 뒤 그 수신자의 브라우저로 Web Push 를 보낸다.
+ * **절대 예외를 던지지 않는다** — 발송 실패가 알림 생성/위험도 산출을 롤백시키면 안 된다.
+ */
+export interface DispatchNotificationPushUseCase {
+  dispatch(command: DispatchNotificationPushCommand): Promise<DispatchNotificationPushResult>;
+}
+export const DISPATCH_NOTIFICATION_PUSH_USE_CASE = Symbol('DISPATCH_NOTIFICATION_PUSH_USE_CASE');
+
+/** WebPushSubscription 을 인바운드 계약에서도 참조할 수 있게 재노출한다. */
+export type { WebPushSubscription };

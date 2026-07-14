@@ -1,11 +1,13 @@
 import { Inject, Injectable, Logger } from '@nestjs/common';
 import { buildDedupKey } from '../../domain/dedup-key';
-import { createNotification } from '../../domain/notification';
+import { createNotification, NotificationValue } from '../../domain/notification';
 import { fallbackMessage, renderMessage, renderTitle } from '../../domain/message-template';
 import {
   CreateNotificationCommand,
   CreateNotificationResult,
   CreateNotificationUseCase,
+  DispatchNotificationPushUseCase,
+  DISPATCH_NOTIFICATION_PUSH_USE_CASE,
 } from '../port/in/notification-use-cases';
 import {
   NotificationRepositoryPort,
@@ -13,11 +15,16 @@ import {
 } from '../port/out/notification-repository.port';
 import { NotificationQueryPort, NOTIFICATION_QUERY } from '../port/out/notification-query.port';
 import { TemplateQueryPort, TEMPLATE_QUERY } from '../port/out/template-query.port';
+import { Id } from '@shared/kernel/id';
 
 /**
  * SYS-005 위험 상승 알림 생성. 다른 컨텍스트(risk/report)가 호출하는 인바운드 포트.
  * NOTI-003 중복 방지: dedupKey 로 멱등 처리하고, UNIQUE 충돌은 조용히 무시한다.
- * MVP 는 인앱 알림함/문구 생성만 수행한다(Push/SMS 는 EX-002 로 제외).
+ *
+ * 알림을 새로 만들면 그 수신자의 브라우저로 Web Push 를 실제 발송한다(DispatchNotificationPush).
+ * **발송은 알림 생성과 원자적이지 않다** — 푸시가 실패해도 알림 행은 남아야 한다.
+ * 알림함(USR-003)으로는 읽히고, 발송 이력(notification_dispatches)에 failed 로 남아
+ * 나중에 재시도할 수 있는 상태가 정상이다. 그래서 발송 실패는 여기서 삼킨다.
  */
 @Injectable()
 export class CreateNotificationService implements CreateNotificationUseCase {
@@ -27,6 +34,8 @@ export class CreateNotificationService implements CreateNotificationUseCase {
     @Inject(NOTIFICATION_REPOSITORY) private readonly repository: NotificationRepositoryPort,
     @Inject(NOTIFICATION_QUERY) private readonly query: NotificationQueryPort,
     @Inject(TEMPLATE_QUERY) private readonly templates: TemplateQueryPort,
+    @Inject(DISPATCH_NOTIFICATION_PUSH_USE_CASE)
+    private readonly push: DispatchNotificationPushUseCase,
   ) {}
 
   async create(command: CreateNotificationCommand): Promise<CreateNotificationResult> {
@@ -110,7 +119,49 @@ export class CreateNotificationService implements CreateNotificationUseCase {
     const saved = await this.repository.save(value);
     if (!saved.created) {
       this.logger.debug(`알림 dedup 스킵: ${dedupKey}`);
+      // 중복 알림은 다시 보내지 않는다(NOTI-003 — 같은 위험 상승으로 푸시가 두 번 울리면 안 된다).
+      return { notificationId: saved.id, created: false, dedupKey, message };
     }
+
+    if (saved.id !== null) {
+      await this.dispatchPush(saved.id, value, now);
+    }
+
     return { notificationId: saved.id, created: saved.created, dedupKey, message };
+  }
+
+  /**
+   * 실제 발송(Web Push). **여기서 예외가 새어 나가면 안 된다.**
+   *
+   * 알림은 이미 커밋됐다. 푸시 서비스 장애로 이 호출이 실패했다고 알림 생성이 실패로
+   * 되돌아가면, 그 위에 올라탄 위험도 산출 배치(SYS-005)까지 통째로 실패한다.
+   * "알림은 남고 발송만 실패" 가 정상 상태다 — 발송 이력에 failed 로 남아 재시도 가능하다.
+   *
+   * 유스케이스가 이미 예외를 삼키도록 만들어져 있지만, 그 계약이 깨지더라도
+   * 알림 생성이 무너지지 않도록 호출측에서 한 번 더 막는다(다중 방어).
+   */
+  private async dispatchPush(
+    notificationId: Id,
+    value: NotificationValue,
+    now: Date,
+  ): Promise<void> {
+    try {
+      await this.push.dispatch({
+        notificationId,
+        owner: { userId: value.targetUserId, userToken: value.targetUserToken },
+        beachId: value.beachId,
+        title: value.title,
+        message: value.message,
+        riskLevel: value.riskLevel,
+        eventType: value.eventType,
+        dedupKey: value.dedupKey,
+        now,
+      });
+    } catch (err) {
+      this.logger.error(
+        `푸시 발송 실패 (notificationId=${notificationId}): ` +
+          `${err instanceof Error ? err.message : String(err)}. 알림 자체는 저장됐다.`,
+      );
+    }
   }
 }

@@ -154,6 +154,10 @@ export type NotificationConsent = {
     agreed: Generated<number>;
     phone_number: string | null;
     device_token: string | null;
+    /**
+     * Web Push 구독 정보(endpoint/p256dh/auth). 브라우저가 발급하며 endpoint 만 300자를 넘어 deviceToken 에 담기지 않는다.
+     */
+    push_subscription_json: unknown | null;
     agreed_at: Timestamp | null;
     revoked_at: Timestamp | null;
 };
@@ -413,6 +417,20 @@ export type VisionResult = {
     requested_at: Generated<Timestamp>;
     processed_at: Timestamp | null;
 };
+export type WeatherForecast = {
+    id: Generated<number>;
+    beach_id: number;
+    source_id: number | null;
+    base_at: Timestamp;
+    target_at: Timestamp;
+    wave_height: string | null;
+    wind_direction: number | null;
+    wind_speed: string | null;
+    air_temp: string | null;
+    precipitation: string | null;
+    sky_code: string | null;
+    collected_at: Generated<Timestamp>;
+};
 export type DB = {
     audit_logs: AuditLog;
     beaches: Beach;
@@ -447,4 +465,5 @@ export type DB = {
     subscriptions: Subscription;
     users: User;
     vision_results: VisionResult;
+    weather_forecasts: WeatherForecast;
 };
