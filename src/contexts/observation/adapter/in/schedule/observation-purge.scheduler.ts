@@ -8,8 +8,19 @@ import {
   ObservationPurgePort,
   OBSERVATION_PURGE,
 } from '../../../application/port/out/observation-purge.port';
+import {
+  ForecastRepositoryPort,
+  FORECAST_REPOSITORY,
+} from '../../../application/port/out/forecast-repository.port';
 
 const JOB_NAME = 'observation-purge';
+
+/**
+ * 지난 예보 보관 기간(일). 대상 시각이 지난 예보는 더 이상 예보가 아니다.
+ * 위험도 산출은 미래 구간만 읽으므로(risk-input.kysely-query) 지워도 산출 입력이 사라지지 않는다.
+ * 하루치를 남기는 건 "직전 예보가 실제와 얼마나 맞았나"를 사후에 볼 여지를 두기 위함이다.
+ */
+const FORECAST_RETENTION_DAYS = 1;
 
 /** 한 DELETE 로 지울 관측 행 수. 관측은 자식 행이 없어 위험도 이력(50)보다 크게 잡아도 안전하다. */
 const BATCH_SIZE = 1000;
@@ -44,6 +55,7 @@ export class ObservationPurgeScheduler implements OnModuleInit {
     configService: ConfigService,
     private readonly registry: SchedulerRegistry,
     @Inject(OBSERVATION_PURGE) private readonly purge: ObservationPurgePort,
+    @Inject(FORECAST_REPOSITORY) private readonly forecasts: ForecastRepositoryPort,
   ) {
     this.appConfig = new AppConfig(configService);
     this.config = new ObservationConfig(configService);
@@ -91,6 +103,19 @@ export class ObservationPurgeScheduler implements OnModuleInit {
       if (purged > 0) {
         this.logger.log(
           `관측 파기 완료: ${purged}행 (${days}일 이전). 관측소별 최신 1건은 보존됨`,
+        );
+      }
+
+      // 지난 예보 파기. 실패해도 관측 파기 결과를 무효화하지 않도록 격리한다.
+      try {
+        const fcstCutoff = new Date(Date.now() - FORECAST_RETENTION_DAYS * MS_PER_DAY);
+        const purgedForecasts = await this.forecasts.purgeOlderThan(fcstCutoff);
+        if (purgedForecasts > 0) {
+          this.logger.log(`지난 예보 파기 완료: ${purgedForecasts}행 (대상 시각 ${FORECAST_RETENTION_DAYS}일 이전)`);
+        }
+      } catch (err) {
+        this.logger.error(
+          `예보 파기 실패: ${err instanceof Error ? err.message : String(err)}`,
         );
       }
     } catch (err) {

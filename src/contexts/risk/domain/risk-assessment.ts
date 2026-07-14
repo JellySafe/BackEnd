@@ -1,6 +1,7 @@
 import { Id } from '@shared/kernel/id';
 import { DataConfidence } from '@shared/kernel/risk-level';
 import { FactorContribution, MinLevelTrigger } from './risk-engine';
+import { ForecastPoint } from './risk-forecast';
 import { DEFAULT_RULE_SCORES, RISK_FACTOR_NAMES, RiskFactorCode } from './risk-factors';
 
 /**
@@ -48,6 +49,11 @@ export interface RiskInputBundle {
   pastOccurrenceCount: number;
   verifiedReports: VerifiedReportInput[];
   observationAgeMinutes: number | null; // 최신 관측 경과(분), 없으면 null
+  /**
+   * 이 해변의 향후 기상 예보(weather_forecasts). 24h/72h 지평의 WAVE_HIGH/WIND_INFLOW 를
+   * **현재값 × 계수가 아니라 예보값으로** 재평가하는 데 쓴다. 비어 있으면 계수 폴백.
+   */
+  forecasts: ForecastPoint[];
 }
 
 /** 임계값 (config 기본값 — 개발 전 확정). */
@@ -156,6 +162,56 @@ export function evaluateRiskVariables(
   }
 
   return { factors, missing };
+}
+
+/**
+ * **예보 기반** 위험 변수 평가 (24h/72h 지평).
+ *
+ * 관측 기반 evaluateRiskVariables 와 같은 임계·같은 룰 점수를 쓰되, 입력이 현재 관측이 아니라
+ * **그 시각의 예보값**이다. 따라서 지속성 계수를 곱하지 않는다 — 곱하면 "예보값 × 현재값이
+ * 얼마나 오래가나" 라는 뜻 없는 수가 된다.
+ *
+ * 대상은 예보가 실제로 답할 수 있는 두 요인뿐이다:
+ *   WAVE_HIGH  (파고)   ← 예보 파고
+ *   WIND_INFLOW(유입 풍향) ← 예보 풍향·풍속
+ * 수온·해류·과거이력·제보는 예보가 답하지 않는다. 그대로 계수 폴백으로 남는다.
+ *
+ * 문구 규약(risk-horizon.ts 와 동일): 지평을 되풀이하지 않는다("(72시간 후 예상)" 금지 —
+ * 화면 탭이 이미 지평을 말한다). 대신 **그 값이 예보값임이 드러나게** "예보 파고 2.1m" 로 적는다.
+ */
+export function evaluateForecastVariables(
+  beach: BeachRiskInput,
+  forecast: ForecastPoint,
+  ruleScore: RuleScoreLookup,
+): FactorContribution[] {
+  const factors: FactorContribution[] = [];
+  const facing = beach.facingDirection;
+
+  // WAVE_HIGH — 예보 파고
+  if (forecast.waveHeight != null && forecast.waveHeight >= THRESHOLDS.highWave) {
+    factors.push(
+      mkVariable('WAVE_HIGH', ruleScore, `예보 파고 ${forecast.waveHeight.toFixed(1)}m`),
+    );
+  }
+
+  // WIND_INFLOW — 예보 풍향이 해변 방향이고 예보 풍속이 기준 이상
+  if (
+    facing != null &&
+    forecast.windDirection != null &&
+    forecast.windSpeed != null &&
+    forecast.windSpeed >= THRESHOLDS.inflowWindSpeed &&
+    angleDiff(forecast.windDirection, facing) <= THRESHOLDS.inflowAngleDeg
+  ) {
+    factors.push(
+      mkVariable(
+        'WIND_INFLOW',
+        ruleScore,
+        `예보 풍속 ${forecast.windSpeed.toFixed(1)}m/s, 해변 방향 유입`,
+      ),
+    );
+  }
+
+  return factors;
 }
 
 /**

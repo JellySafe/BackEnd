@@ -11,12 +11,15 @@ import { ObservationPrismaRepository } from './adapter/out/persistence/observati
 import { OccurrencePrismaRepository } from './adapter/out/persistence/occurrence.prisma-repository';
 import { MappingPrismaRepository } from './adapter/out/persistence/mapping.prisma-repository';
 import { ObservationKyselyQuery } from './adapter/out/persistence/observation.kysely-query';
+import { WeatherForecastPrismaRepository } from './adapter/out/persistence/weather-forecast.prisma-repository';
 import { MockCollectorAdapter } from './adapter/out/collector/mock-collector.adapter';
 import { NifsJellyfishCollector } from './adapter/out/collector/nifs-jellyfish.collector';
 import { KhoaBuoyCollector } from './adapter/out/collector/khoa-buoy.collector';
 import { KmaSeaObsCollector } from './adapter/out/collector/kma-sea-obs.collector';
+import { KmaMarineFcstCollector } from './adapter/out/collector/kma-marine-fcst.collector';
 import { CompositeCollectorAdapter } from './adapter/out/collector/composite-collector.adapter';
 import { SyncObservationsService } from './application/service/sync-observations.service';
+import { SyncForecastsService } from './application/service/sync-forecasts.service';
 import { MapStationsService } from './application/service/map-stations.service';
 import { ListDataSourcesService } from './application/service/list-data-sources.service';
 import { ListObservationsService } from './application/service/list-observations.service';
@@ -28,10 +31,13 @@ import { MAPPING_REPOSITORY } from './application/port/out/mapping-repository.po
 import { OBSERVATION_QUERY } from './application/port/out/observation-query.port';
 import { OBSERVATION_PURGE } from './application/port/out/observation-purge.port';
 import { EXTERNAL_COLLECTOR } from './application/port/out/external-collector.port';
+import { FORECAST_COLLECTOR } from './application/port/out/forecast-collector.port';
+import { FORECAST_REPOSITORY } from './application/port/out/forecast-repository.port';
 import {
   LIST_DATA_SOURCES_USE_CASE,
   LIST_OBSERVATIONS_USE_CASE,
   MAP_STATIONS_USE_CASE,
+  SYNC_FORECASTS_USE_CASE,
   SYNC_OBSERVATIONS_USE_CASE,
 } from './application/port/in/observation-use-cases';
 
@@ -49,6 +55,9 @@ import {
   providers: [
     // 인바운드 포트 → 유스케이스 서비스
     { provide: SYNC_OBSERVATIONS_USE_CASE, useClass: SyncObservationsService },
+    // 예보 수집(기상청 단기 해상예보). 관측 배치에 얹혀 돌지만 유스케이스는 분리한다
+    // (대상: 관측소 vs 해변, 주기: 30분 vs 6시간, 실패 격리).
+    { provide: SYNC_FORECASTS_USE_CASE, useClass: SyncForecastsService },
     { provide: MAP_STATIONS_USE_CASE, useClass: MapStationsService },
     { provide: LIST_DATA_SOURCES_USE_CASE, useClass: ListDataSourcesService },
     { provide: LIST_OBSERVATIONS_USE_CASE, useClass: ListObservationsService },
@@ -70,10 +79,16 @@ import {
     KhoaBuoyCollector,
     KmaSeaObsCollector,
     { provide: EXTERNAL_COLLECTOR, useClass: CompositeCollectorAdapter },
+    // 예보: 기상청 단기 해상예보(fct_afs_do). 기존 KMA_API_KEY 로 동작한다.
+    // 예보구역(제주 앞바다 4구역) 단위로 발표되므로 해변에 직접 붙인다(weather_forecasts).
+    // 키가 없으면 조용히 건너뛰고 위험도는 지속성 계수 폴백으로 돌아간다(mock 폴백 없음 —
+    // 없는 예보를 지어내면 24h/72h 가 거짓 근거를 갖게 된다).
+    { provide: FORECAST_COLLECTOR, useClass: KmaMarineFcstCollector },
+    { provide: FORECAST_REPOSITORY, useClass: WeatherForecastPrismaRepository },
     // 스케줄러 (adapter/in/schedule)
     ObservationScheduler,
     ObservationPurgeScheduler,
   ],
-  exports: [SYNC_OBSERVATIONS_USE_CASE, MAP_STATIONS_USE_CASE],
+  exports: [SYNC_OBSERVATIONS_USE_CASE, SYNC_FORECASTS_USE_CASE, MAP_STATIONS_USE_CASE],
 })
 export class ObservationModule {}
