@@ -80,6 +80,7 @@ model Beach {
   updatedAt          DateTime @updatedAt @map("updated_at") @db.DateTime(0)
 
   observationMappings ObservationMapping[]
+  weatherForecasts    WeatherForecast[]
   jellyfishReports    JellyfishReport[]
   riskScores          RiskScore[]
   operationActions    OperationAction[]
@@ -145,6 +146,7 @@ model DataSource {
 
   stations    ObservationStation[]
   occurrences JellyfishOccurrence[]
+  forecasts   WeatherForecast[]
 
   @@map("data_sources")
 }
@@ -189,6 +191,32 @@ model Observation {
   @@unique([stationId, observedAt], name: "uk_observations_station_time")
   @@index([stationId, observedAt], name: "ix_observations_station_time")
   @@map("observations")
+}
+
+/// 해변별 기상 예보 (RISK-006 24h/72h 예측 입력).
+/// 관측(observations)은 "지금 어떤가", 예보는 "앞으로 어떨 것인가" 다. 성격이 달라 테이블을 나눈다.
+/// 예보는 관측소가 아니라 격자 단위로 발표되므로 해변에 직접 붙인다.
+/// 같은 대상 시각이 3시간마다 다시 발표되므로 UNIQUE(beachId, targetAt) 로 최신 발표만 남긴다.
+model WeatherForecast {
+  id            BigInt   @id @default(autoincrement())
+  beachId       BigInt   @map("beach_id")
+  sourceId      BigInt?  @map("source_id")
+  baseAt        DateTime @map("base_at") @db.DateTime(0)
+  targetAt      DateTime @map("target_at") @db.DateTime(0)
+  waveHeight    Decimal? @map("wave_height") @db.Decimal(4, 2)
+  windDirection Int?     @map("wind_direction") @db.SmallInt
+  windSpeed     Decimal? @map("wind_speed") @db.Decimal(5, 2)
+  airTemp       Decimal? @map("air_temp") @db.Decimal(4, 1)
+  precipitation Decimal? @map("precipitation") @db.Decimal(6, 2)
+  skyCode       String?  @map("sky_code") @db.VarChar(20)
+  collectedAt   DateTime @default(now()) @map("collected_at") @db.DateTime(0)
+
+  beach  Beach       @relation(fields: [beachId], references: [id], onDelete: Cascade)
+  source DataSource? @relation(fields: [sourceId], references: [id], onDelete: SetNull)
+
+  @@unique([beachId, targetAt], name: "uk_weather_forecasts_target")
+  @@index([beachId, targetAt], name: "ix_weather_forecasts_beach_target")
+  @@map("weather_forecasts")
 }
 
 model ObservationMapping {
@@ -596,15 +624,17 @@ model AuditLog {
 // =====================================================================================
 
 model NotificationConsent {
-  id          BigInt    @id @default(autoincrement())
-  userId      BigInt?   @map("user_id")
-  userToken   String?   @map("user_token") @db.VarChar(64)
-  channel     String    @db.VarChar(20) // push/sms/email
-  agreed      Boolean   @default(false)
-  phoneNumber String?   @map("phone_number") @db.VarChar(30)
-  deviceToken String?   @map("device_token") @db.VarChar(255)
-  agreedAt    DateTime? @map("agreed_at") @db.DateTime(0)
-  revokedAt   DateTime? @map("revoked_at") @db.DateTime(0)
+  id                   BigInt    @id @default(autoincrement())
+  userId               BigInt?   @map("user_id")
+  userToken            String?   @map("user_token") @db.VarChar(64)
+  channel              String    @db.VarChar(20) // push/sms/email
+  agreed               Boolean   @default(false)
+  phoneNumber          String?   @map("phone_number") @db.VarChar(30)
+  deviceToken          String?   @map("device_token") @db.VarChar(255)
+  /// Web Push 구독 정보(endpoint/p256dh/auth). 브라우저가 발급하며 endpoint 만 300자를 넘어 deviceToken 에 담기지 않는다.
+  pushSubscriptionJson Json?     @map("push_subscription_json")
+  agreedAt             DateTime? @map("agreed_at") @db.DateTime(0)
+  revokedAt            DateTime? @map("revoked_at") @db.DateTime(0)
 
   user User? @relation(fields: [userId], references: [id], onDelete: Cascade)
 
