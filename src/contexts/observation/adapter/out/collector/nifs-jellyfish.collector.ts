@@ -1,6 +1,7 @@
 import { Injectable, Logger } from '@nestjs/common';
 import { ConfigService } from '@nestjs/config';
 import { PDFParse } from 'pdf-parse';
+import { kstMidnightInstant, toKstDateParts } from '@shared/kernel/kst-date';
 import { DataSource } from '../../../domain/data-source';
 import { OccurrenceReading } from '../../../domain/observation';
 import { NifsReportContext, parseNifsWeeklyReport } from './nifs-report.parser';
@@ -282,14 +283,20 @@ function toListItem(raw: unknown): ListItem | null {
   };
 }
 
+/**
+ * jellyList 의 sdate/edate 용 'YYYYMMDD'. NIFS 는 한국 기관이므로 **KST 달력 날짜**로 만든다.
+ * (로컬 getFullYear/getDate 를 쓰면 UTC 컨테이너에서 KST 새벽 0~9시에 하루 앞선 날짜가 나온다.)
+ */
 function formatYmd(d: Date): string {
-  const y = d.getFullYear();
-  const m = String(d.getMonth() + 1).padStart(2, '0');
-  const day = String(d.getDate()).padStart(2, '0');
-  return `${y}${m}${day}`;
+  const { year, month, day } = toKstDateParts(d);
+  return `${year}${String(month).padStart(2, '0')}${String(day).padStart(2, '0')}`;
 }
 
-/** 'YYYYMMDD' / 'YYYY-MM-DD' 등 숫자만 뽑아 관용적으로 해석한다. */
+/**
+ * 'YYYYMMDD' / 'YYYY-MM-DD' 등 숫자만 뽑아 관용적으로 해석한다.
+ * NIFS 가 주는 날짜는 한국 날짜다 → **KST 자정 인스턴트**(UTC 전날 15:00)로 만든다.
+ * occurred_at 폴백으로 쓰이므로 서버 타임존에 흔들리면 안 된다.
+ */
 function parseNifsDate(raw: unknown): Date | null {
   if (raw === null || raw === undefined) return null;
   const digits = String(raw).replace(/\D/g, '');
@@ -298,7 +305,7 @@ function parseNifsDate(raw: unknown): Date | null {
   const mo = Number(digits.slice(4, 6));
   const d = Number(digits.slice(6, 8));
   if (y < 2000 || y > 2100 || mo < 1 || mo > 12 || d < 1 || d > 31) return null;
-  const dt = new Date(y, mo - 1, d);
+  const dt = kstMidnightInstant({ year: y, month: mo, day: d });
   return Number.isNaN(dt.getTime()) ? null : dt;
 }
 

@@ -13,6 +13,7 @@ import { ApiBearerAuth, ApiOperation, ApiTags } from '@nestjs/swagger';
 import { ApiOkData } from '@shared/http/api-response.decorator';
 import { CurrentUser, Roles } from '@shared/auth/auth.decorators';
 import { AuthUser } from '@shared/auth/auth-user';
+import { parseKstDateKey } from '@shared/kernel/kst-date';
 import {
   GenerateDailyReportUseCase,
   GENERATE_DAILY_REPORT_USE_CASE,
@@ -29,6 +30,10 @@ import { DailyReportResponse } from './dto/daily-report.response';
 /**
  * 관리자 일간 운영 리포트 API (ADM-011, SYS-006, FLOW-ADM-004).
  * createdBy 는 전역 AdminAuthGuard 가 검증한 JWT 주체(@CurrentUser)를 사용한다.
+ *
+ * 날짜: `date=2026-07-13` 은 **KST 달력 날짜**로 해석한다(=KST 07-13 00:00~24:00).
+ * `new Date('2026-07-13')` 은 UTC 자정이라 그대로 쓰면 KST 09:00~익일 09:00 을 보게 되므로
+ * 반드시 parseKstDateKey 로 KST 날짜 키를 만든다. 스케줄러도 같은 키를 쓴다.
  */
 @ApiTags('dailyreport')
 @ApiBearerAuth('bearer')
@@ -59,7 +64,7 @@ export class AdminDailyReportController {
   get(@Query() query: GetDailyReportQueryDto) {
     return this.getDailyReport.get({
       beachId: query.beachId,
-      date: new Date(query.date),
+      date: parseKstDateKey(query.date),
     });
   }
 
@@ -80,7 +85,7 @@ export class AdminDailyReportController {
   generate(@Body() body: GenerateDailyReportRequest, @CurrentUser() user: AuthUser) {
     return this.generateDailyReport.generate({
       beachId: body.beachId,
-      date: new Date(body.date),
+      date: parseKstDateKey(body.date),
       createdBy: user.userId,
     });
   }

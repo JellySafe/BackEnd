@@ -1,12 +1,12 @@
 import { Id } from '@shared/kernel/id';
 import { RiskLevel } from '@shared/kernel/risk-level';
-import { DailyReport } from '../../../domain/daily-report';
+import { DailyReport, reportDateLabel } from '../../../domain/daily-report';
 
 /** 리포트 응답 뷰 (저장본 또는 즉석 집계본 공용). */
 export interface DailyReportView {
   reportId: Id | null; // 미저장 즉석 집계본은 null
   beachId: Id;
-  reportDate: string; // YYYY-MM-DD
+  reportDate: string; // YYYY-MM-DD (KST 달력 날짜)
   maxRiskLevel: RiskLevel | null;
   riskChangeSummary: string | null;
   reportCount: number;
@@ -21,6 +21,7 @@ export interface DailyReportView {
 // ----- ADM-011 일간 리포트 조회 -----
 export interface GetDailyReportQuery {
   beachId: Id;
+  /** KST 날짜 키(그 날짜의 UTC 자정). 어댑터가 parseKstDateKey 로 만든다. */
   date: Date;
 }
 
@@ -33,6 +34,7 @@ export const GET_DAILY_REPORT_USE_CASE = Symbol('GET_DAILY_REPORT_USE_CASE');
 // ----- SYS-006 일간 리포트 생성/재생성 -----
 export interface GenerateDailyReportCommand {
   beachId: Id;
+  /** KST 날짜 키(그 날짜의 UTC 자정). 스케줄러는 kstYesterday() 로 만든다. */
   date: Date;
   createdBy: Id | null;
 }
@@ -60,7 +62,7 @@ export function toDailyReportView(report: DailyReport, persisted: boolean): Dail
   return {
     reportId: s.id ?? null,
     beachId: s.beachId,
-    reportDate: s.reportDate.toISOString().slice(0, 10),
+    reportDate: reportDateLabel(s.reportDate),
     maxRiskLevel: s.maxRiskLevel,
     riskChangeSummary: s.riskChangeSummary,
     reportCount: s.reportCount,

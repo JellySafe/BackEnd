@@ -8,7 +8,11 @@ import { DailyReportAggregation, dayWindow } from '../../../domain/daily-report'
 
 /**
  * 일간 리포트 집계 어댑터 (Kysely).
- * 하루 윈도우 [start, end) 로 risk_scores / jellyfish_reports / operation_actions 를 집계한다.
+ * **KST 하루** 윈도우 [start, end) 로 risk_scores / jellyfish_reports / operation_actions 를 집계한다.
+ *
+ * 윈도우는 UTC 인스턴트다(예: KST 2026-07-13 → 2026-07-12T15:00Z ~ 2026-07-13T15:00Z).
+ * mysql2 풀이 timezone:'Z' 라 JS Date 파라미터는 UTC 벽시계로 직렬화되고,
+ * 대상 컬럼(submitted_at/created_at/generated_at)도 UTC DATETIME 이라 그대로 비교된다.
  */
 @Injectable()
 export class DailyReportKyselyQuery implements DailyReportQueryPort {

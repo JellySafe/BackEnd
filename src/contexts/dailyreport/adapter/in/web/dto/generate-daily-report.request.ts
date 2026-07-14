@@ -9,7 +9,8 @@ export class GenerateDailyReportRequest {
   @ApiProperty({
     example: '2026-07-14',
     format: 'date',
-    description: '리포트를 만들 대상 날짜(YYYY-MM-DD). 화면의 날짜 선택기에서 고른 값.',
+    description:
+      '리포트를 만들 대상 날짜(YYYY-MM-DD, **KST 기준**). 그 날의 KST 00:00~24:00 을 집계한다. 화면의 날짜 선택기에서 고른 값.',
   })
   @IsISO8601()
   date!: string;

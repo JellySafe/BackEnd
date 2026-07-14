@@ -298,7 +298,10 @@ const REAL_REPORT_TEXT = `- \t1 \t-
 
 `;
 
-const CTX = { srcode: '20260709135753010IDT', fallbackDate: new Date(2026, 6, 9) };
+/** KST 2026-07-09 00:00 = UTC 2026-07-08 15:00. 서버 타임존과 무관하게 같은 인스턴트. */
+const KST_2026_07_09 = new Date(Date.UTC(2026, 6, 8, 15, 0, 0));
+
+const CTX = { srcode: '20260709135753010IDT', fallbackDate: KST_2026_07_09 };
 
 describe('NIFS 주간보고 파서 — 실제 PDF 텍스트 (2026-07-09)', () => {
   const readings = parseNifsWeeklyReport(REAL_REPORT_TEXT, CTX);
@@ -344,11 +347,11 @@ describe('NIFS 주간보고 파서 — 실제 PDF 텍스트 (2026-07-09)', () =>
     expect(readings.some((r) => r.species === '두빛보름달해파리')).toBe(false);
   });
 
-  it('occurred_at 은 보고 주간 종료일(2026-07-09)', () => {
+  it('occurred_at 은 보고 주간 종료일의 KST 자정(2026-07-09 00:00 KST = 07-08 15:00 UTC)', () => {
     for (const r of readings) {
-      expect(r.occurredAt.getFullYear()).toBe(2026);
-      expect(r.occurredAt.getMonth()).toBe(6); // 0-based → 7월
-      expect(r.occurredAt.getDate()).toBe(9);
+      // 로컬 getter(getFullYear 등)로 검증하면 실행 머신 TZ 에 따라 통과/실패가 갈린다 →
+      // 인스턴트 자체를 비교해 서버 타임존 비의존성을 못 박는다.
+      expect(r.occurredAt.toISOString()).toBe('2026-07-08T15:00:00.000Z');
     }
   });
 
@@ -410,10 +413,11 @@ describe('구획별 파서', () => {
     expect(parseJejuRatioRow(text)).toEqual({ nomura: 77.8, moon: null, etc: 11.1 });
   });
 
-  it('보고 기간: 2026.07.03.~07.09. (종료일 채택)', () => {
+  it('보고 기간: 2026.07.03.~07.09. (종료일을 KST 자정 인스턴트로 채택)', () => {
     const period = parseReportPeriod(text);
     expect(period?.label).toBe('2026.07.03.~07.09.');
-    expect(period?.end).toEqual(new Date(2026, 6, 9));
+    expect(period?.end).toEqual(KST_2026_07_09);
+    expect(period?.end.toISOString()).toBe('2026-07-08T15:00:00.000Z');
   });
 });
 

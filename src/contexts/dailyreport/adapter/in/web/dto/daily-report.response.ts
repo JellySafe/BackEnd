@@ -11,7 +11,10 @@ export class DailyReportResponse {
   @ApiProperty({ example: 12, description: '해변 식별자' })
   beachId!: number;
 
-  @ApiProperty({ example: '2026-07-10', description: '리포트 대상일(YYYY-MM-DD)' })
+  @ApiProperty({
+    example: '2026-07-10',
+    description: '리포트 대상일(YYYY-MM-DD, KST 기준). 집계 구간은 그날 KST 00:00~24:00.',
+  })
   reportDate!: string;
 
   @ApiProperty({

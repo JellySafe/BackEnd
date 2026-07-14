@@ -1,3 +1,4 @@
+import { kstMidnightInstant } from '@shared/kernel/kst-date';
 import { OccurrenceReading } from '../../../domain/observation';
 import { AlertLevel, DensityLevel } from '../../../domain/observation-enums';
 
@@ -15,7 +16,7 @@ import { AlertLevel, DensityLevel } from '../../../domain/observation-enums';
  *   2) 붙임 3 지역별 출현율표 : `제주 77.8 - 11.1` → 노무라/보름달/기타 제주 출현율
  *   3) 조치사항       : `- 전남·제주(6.22) 예비주의보 신규 발표` → 제주 특보 단계
  *   4) 금후전망       : `○ (노무라입깃해파리) 제주·남해 연안에 지속 유입되어 고밀도 출현 전망`
- *   5) 보고 기간      : `해파리 모니터링 주간보고 2026.07.03.~07.09.` → occurred_at(주간 종료일)
+ *   5) 보고 기간      : `해파리 모니터링 주간보고 2026.07.03.~07.09.` → occurred_at(주간 종료일 **KST 자정**)
  *
  * 견고성 원칙: 어떤 구획이든 못 찾으면 예외를 던지지 않고 해당 정보를 비운다(호출자가 warn).
  * 제주 항목이 하나도 없으면 빈 배열을 돌려준다("제주 출현 없음"도 유효한 사실).
@@ -254,7 +255,14 @@ export function parseJejuRatioRow(normalizedText: string): JejuRatioRow | null {
   return { nomura: cell(m[1]), moon: cell(m[2]), etc: cell(m[3]) };
 }
 
-/** 보고 기간. `2026.07.03.~07.09.` → { end: 2026-07-09, label: '2026.07.03.~07.09.' } */
+/**
+ * 보고 기간. `2026.07.03.~07.09.` → { end: KST 2026-07-09 00:00, label: '2026.07.03.~07.09.' }
+ *
+ * end 는 jellyfish_occurrences.occurred_at(DATETIME, UTC 저장)에 그대로 들어간다.
+ * NIFS 보고서의 날짜는 한국 날짜이므로 **KST 자정 인스턴트**(= UTC 전날 15:00)로 만든다.
+ * `new Date(y, m, d)`(서버 로컬 자정)를 쓰면 UTC 컨테이너에서는 UTC 자정, KST PC 에서는
+ * KST 자정이 되어 서버 타임존에 따라 9시간 달라진다 — 그래서 로컬 생성자를 쓰지 않는다.
+ */
 export function parseReportPeriod(
   normalizedText: string,
 ): { end: Date; label: string } | null {
@@ -271,8 +279,10 @@ export function parseReportPeriod(
   // 연말 걸침(12.28.~01.03.) 이면 종료일은 다음 해다.
   const endYear = eMonth < sMonth ? year + 1 : year;
 
-  const end = new Date(endYear, eMonth - 1, eDay);
-  if (Number.isNaN(end.getTime()) || eMonth < 1 || eMonth > 12 || eDay < 1 || eDay > 31) return null;
+  if (eMonth < 1 || eMonth > 12 || eDay < 1 || eDay > 31) return null;
+  // 조사 종료일의 KST 자정(= UTC 전날 15:00). 서버 타임존과 무관하게 동일하다.
+  const end = kstMidnightInstant({ year: endYear, month: eMonth, day: eDay });
+  if (Number.isNaN(end.getTime())) return null;
 
   const pad = (n: number) => String(n).padStart(2, '0');
   return {
