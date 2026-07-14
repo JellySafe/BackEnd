@@ -71,6 +71,7 @@ export class AdminBeachController {
       facingDirection: body.facingDirection ?? null,
       priority: body.priority,
       vulnerabilityScore: body.vulnerabilityScore,
+      imageUrl: body.imageUrl,
     });
   }
 
@@ -95,6 +96,7 @@ export class AdminBeachController {
       facingDirection: body.facingDirection,
       priority: body.priority,
       vulnerabilityScore: body.vulnerabilityScore,
+      imageUrl: body.imageUrl,
       isActive: body.isActive,
     });
   }

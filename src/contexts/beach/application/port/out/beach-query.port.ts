@@ -17,6 +17,7 @@ export interface BeachListItem {
   lng: number;
   currentRiskLevel: RiskLevel | null; // horizon=now, is_latest 스코어가 없으면 null
   priority: number;
+  imageUrl: string | null; // 미등록이면 null → 프론트가 placeholder 로 대체
 }
 
 /** 관리자 해변 마스터 목록 필터. */
@@ -36,6 +37,7 @@ export interface BeachAdminItem {
   facingDirection: number | null;
   priority: number;
   vulnerabilityScore: number;
+  imageUrl: string | null;
   isActive: boolean;
 }
 

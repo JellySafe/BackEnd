@@ -14,8 +14,12 @@ primary_region = 'nrt'
   NODE_ENV = 'production'
   PORT = '3000'
   SCHEDULER_ENABLED = 'true'
-  # 프론트엔드(Vercel) 도메인만 브라우저에서 API 호출 허용. 미지정 시 모든 origin 허용이라 반드시 명시한다.
-  CORS_ORIGIN = 'https://jellysafe-public.vercel.app,https://jellysafe-admin.vercel.app'
+  # 프론트엔드 도메인만 브라우저에서 API 호출 허용. 미지정 시 모든 origin 허용이라 반드시 명시한다.
+  # `*` 는 호스트 한 세그먼트 안에서만 확장된다(cors-origin.ts).
+  #   - 프로덕션 도메인 2개
+  #   - Vercel 프리뷰(브랜치·커밋마다 도메인이 새로 생기므로 와일드카드 필수)
+  #   - localhost 임의 포트(프론트 로컬 개발이 운영 API 를 바라볼 때)
+  CORS_ORIGIN = 'https://jellysafe-public.vercel.app,https://jellysafe-admin.vercel.app,https://jellysafe-public-*.vercel.app,https://jellysafe-admin-*.vercel.app,http://localhost:*,http://127.0.0.1:*'
 
   # 수집 → 매핑 → 위험도 재산출을 30분마다 한 묶음으로 실행한다.
   OBSERVATION_SYNC_CRON = '0 */30 * * * *'
@@ -24,6 +28,28 @@ primary_region = 'nrt'
   # 90일 지난 산출 이력은 매일 03:40 에 정리한다(현재값 is_latest 행은 보존).
   RISK_HISTORY_RETENTION_DAYS = '90'
   RISK_HISTORY_PURGE_CRON = '0 40 3 * * *'
+
+  # 보관정책. 파기 배치는 트래픽 없는 새벽에 시간을 어긋나게 배치한다
+  # (제보 03:30 / 위험도 03:40 과 겹치지 않게 관측 03:20, 알림 03:50).
+  OBSERVATION_RETENTION_DAYS = '30'
+  OBSERVATION_PURGE_CRON = '0 20 3 * * *'
+  NOTIFICATION_RETENTION_DAYS = '90'
+  NOTIFICATION_PURGE_CRON = '0 50 3 * * *'
+
+  # 한국 전용 서비스다. 로그/크론 시각을 KST 로 읽히게 한다.
+  # 다만 날짜 경계 계산 로직은 이 값에 의존하지 않는다(코드가 KST 오프셋을 명시적으로 다룬다).
+  # 서버 타임존이 바뀌어도 일간 리포트의 하루가 흔들리면 안 되기 때문이다.
+  TZ = 'Asia/Seoul'
+
+  # 제보 사진 저장 위치. 아래 [mounts] 의 영구 볼륨을 가리킨다.
+  # 컨테이너 파일시스템에 두면 재배포마다 사진이 전부 사라진다.
+  UPLOAD_DIR = '/data/uploads'
+
+# 제보 사진용 영구 볼륨. 머신이 재시작·재배포돼도 남는다.
+# 볼륨은 머신에 묶이므로 다중 머신으로 확장할 때는 오브젝트 스토리지로 옮겨야 한다.
+[mounts]
+  source = 'jellysafe_uploads'
+  destination = '/data'
 
 [http_service]
   internal_port = 3000

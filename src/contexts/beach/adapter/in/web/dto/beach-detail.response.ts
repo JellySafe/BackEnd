@@ -10,6 +10,12 @@ export class BeachDetailResponse {
   @ApiProperty({ example: 180, nullable: true }) facingDirection!: number | null;
   @ApiProperty({ example: 1 }) priority!: number;
   @ApiProperty({ example: 50 }) vulnerabilityScore!: number;
+  @ApiProperty({
+    example: 'https://cdn.example.com/beaches/hyeopjae.jpg',
+    nullable: true,
+    description: '해변 대표 사진 URL. 미등록이면 null — 앱에서 기본 placeholder 로 대체한다.',
+  })
+  imageUrl!: string | null;
   @ApiProperty({ example: true }) isActive!: boolean;
   @ApiProperty({ example: '2026-07-10T09:00:00.000Z', nullable: true }) createdAt!: Date | null;
   @ApiProperty({ example: '2026-07-10T09:00:00.000Z', nullable: true }) updatedAt!: Date | null;

@@ -89,4 +89,15 @@ export class CreateBeachRequest {
   @Min(0)
   @Max(100)
   vulnerabilityScore?: number;
+
+  @ApiPropertyOptional({
+    example: 'https://cdn.example.com/beaches/hyeopjae.jpg',
+    maxLength: 500,
+    description:
+      '해변 대표 사진 URL. 미등록이면 null 로 내려가며, 앱은 기본 placeholder 로 대체한다.',
+  })
+  @IsOptional()
+  @IsString()
+  @MaxLength(500)
+  imageUrl?: string;
 }

@@ -10,6 +10,7 @@ export interface BeachProps {
   facingDirection: number | null; // 해변 정면 방위각 0~359 (선택)
   priority: number; // 노출/정렬 우선순위 (작을수록 먼저)
   vulnerabilityScore: number; // 지형 취약도 0~100
+  imageUrl: string | null; // 대표 사진 URL (미등록이면 null)
   isActive: boolean;
   createdAt?: Date;
   updatedAt?: Date;
@@ -24,6 +25,7 @@ export interface NewBeachInput {
   facingDirection?: number | null;
   priority?: number;
   vulnerabilityScore?: number;
+  imageUrl?: string | null;
 }
 
 /** 해변 마스터 수정 입력. undefined 인 필드는 변경하지 않는다. */
@@ -35,6 +37,7 @@ export interface BeachUpdate {
   facingDirection?: number | null;
   priority?: number;
   vulnerabilityScore?: number;
+  imageUrl?: string | null;
   isActive?: boolean;
 }
 
@@ -61,6 +64,7 @@ export class Beach {
       facingDirection: input.facingDirection ?? null,
       priority: input.priority ?? DEFAULT_PRIORITY,
       vulnerabilityScore: input.vulnerabilityScore ?? DEFAULT_VULNERABILITY,
+      imageUrl: input.imageUrl?.trim() || null,
       isActive: true,
     };
     Beach.validate(props);
@@ -84,6 +88,7 @@ export class Beach {
     if (patch.facingDirection !== undefined) next.facingDirection = patch.facingDirection;
     if (patch.priority !== undefined) next.priority = patch.priority;
     if (patch.vulnerabilityScore !== undefined) next.vulnerabilityScore = patch.vulnerabilityScore;
+    if (patch.imageUrl !== undefined) next.imageUrl = patch.imageUrl?.trim() || null;
     if (patch.isActive !== undefined) next.isActive = patch.isActive;
     Beach.validate(next);
     this.props = next;
@@ -113,6 +118,11 @@ export class Beach {
     ) {
       throw new ValidationError('BEACH_FACING_DIRECTION_RANGE', '방위각은 0 ~ 359 범위의 정수여야 합니다.', {
         facingDirection: p.facingDirection,
+      });
+    }
+    if (p.imageUrl !== null && p.imageUrl.length > 500) {
+      throw new ValidationError('BEACH_IMAGE_URL_TOO_LONG', '사진 URL 은 500자를 넘을 수 없습니다.', {
+        length: p.imageUrl.length,
       });
     }
     if (!Number.isInteger(p.priority) || p.priority < 0) {

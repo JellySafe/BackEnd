@@ -8,5 +8,11 @@ export class BeachListItemResponse {
   @ApiProperty({ example: 33.3941 }) lat!: number;
   @ApiProperty({ example: 126.2396 }) lng!: number;
   @ApiProperty({ example: 'danger', nullable: true }) currentRiskLevel!: string | null;
+  @ApiProperty({
+    example: 'https://cdn.example.com/beaches/hyeopjae.jpg',
+    nullable: true,
+    description: '해변 대표 사진 URL. 미등록이면 null — 앱에서 기본 placeholder 로 대체한다.',
+  })
+  imageUrl!: string | null;
   @ApiProperty({ example: 1 }) priority!: number;
 }

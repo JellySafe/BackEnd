@@ -94,6 +94,17 @@ export class UpdateBeachRequest {
   vulnerabilityScore?: number;
 
   @ApiPropertyOptional({
+    example: 'https://cdn.example.com/beaches/hyeopjae.jpg',
+    maxLength: 500,
+    description:
+      '해변 대표 사진 URL. 빈 문자열을 보내면 등록 해제(null)된다. 미등록이면 앱이 placeholder 로 대체한다.',
+  })
+  @IsOptional()
+  @IsString()
+  @MaxLength(500)
+  imageUrl?: string;
+
+  @ApiPropertyOptional({
     example: true,
     description:
       '해변 사용 여부. false 로 내리면 앱 목록·위험도 산출 대상에서 빠진다(삭제 대신 쓰는 비활성화 스위치).',
