@@ -421,11 +421,26 @@ function roundOrNull(value: number | null): number | null {
   return value === null ? null : Math.round(value) % 360;
 }
 
-/** 하늘상태 코드는 원문 그대로 저장한다(DB01~DB04). VARCHAR(20) 을 넘지 않게 자른다. */
+/**
+ * 기상청 하늘상태 코드 → 도메인 값.
+ *
+ * 원문 코드(DB01~DB04)를 그대로 저장하지 않는다. 이 프로젝트는 상태 컬럼을
+ * 소문자 도메인 값으로 통일하고 DB CHECK 로 값 목록을 강제한다(벤더 코드가 DB 로 새면
+ * 나중에 다른 예보 제공자를 붙일 때 값 체계가 둘로 갈라진다).
+ *
+ * 정의 외 코드는 null 로 둔다 — 모르는 값을 지어내지 않는다.
+ */
+const SKY_CODES: Record<string, string> = {
+  DB01: 'clear', // 맑음
+  DB02: 'partly_cloudy', // 구름조금
+  DB03: 'mostly_cloudy', // 구름많음
+  DB04: 'cloudy', // 흐림
+};
+
 function sky(text: string | undefined): string | null {
-  const v = text?.trim();
+  const v = text?.trim().toUpperCase();
   if (!v || v.length === 0 || v === '-') return null;
-  return v.slice(0, 20);
+  return SKY_CODES[v] ?? null;
 }
 
 /** 테스트 전용 export (순수 파싱/변환 로직 검증). */

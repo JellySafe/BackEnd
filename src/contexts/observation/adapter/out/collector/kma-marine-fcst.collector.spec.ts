@@ -61,9 +61,9 @@ describe('parseMarineForecast — 실제 응답 파싱', () => {
     expect(rows[5].windDirection).toBe(247);
   });
 
-  it('하늘상태는 원문 코드 그대로 저장한다(DB03/DB04)', () => {
-    expect(rows[0].skyCode).toBe('DB03');
-    expect(rows[1].skyCode).toBe('DB04');
+  it('하늘상태 원문 코드(DB01~DB04)를 도메인 값으로 바꾼다', () => {
+    expect(rows[0].skyCode).toBe('mostly_cloudy');
+    expect(rows[1].skyCode).toBe('cloudy');
   });
 
   it('예보문(WF)에 쉼표가 섞여도 앞쪽 수치 컬럼은 흔들리지 않는다', () => {
@@ -72,7 +72,7 @@ describe('parseMarineForecast — 실제 응답 파싱', () => {
     );
     expect(withComma).toHaveLength(1);
     expect(withComma[0].waveHeight).toBeCloseTo(1.75);
-    expect(withComma[0].skyCode).toBe('DB04');
+    expect(withComma[0].skyCode).toBe('cloudy');
   });
 
   it('형식이 어긋난 응답(빈 문자열/HTML/짧은 행)에도 예외 없이 빈 배열을 준다', () => {
