@@ -30,8 +30,8 @@ describe('RiskEngine.calculate (SYS-003 / RULE_FORMULA)', () => {
         }),
       );
       expect(res.score).toBe(45);
-      expect(res.baseLevel).toBe('caution'); // 31~55
-      expect(res.level).toBe('caution');
+      expect(res.baseLevel).toBe('danger'); // 45~75 (v2 에서 danger 컷오프를 56 → 45 로 내렸다)
+      expect(res.level).toBe('danger');
     });
 
     it('합계가 100 을 넘으면 SCORE_CAP(100) 으로 제한', () => {

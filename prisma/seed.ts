@@ -259,8 +259,12 @@ const RULES_V2: Rule[] = [
   //    좋아진다고 말한다. 그건 src 수정이 필요해 이번 개정에 넣지 않았다 — risk-rules-v2.md 의 제안 참조.
   //    **구간을 옮기면 이 네 행도 같이 고쳐야 한다.**
   { ruleCode: 'LEVEL_SAFE', ruleCategory: 'level_threshold', ruleName: '안전 0~30', conditionJson: { min: 0, max: 30 } },
-  { ruleCode: 'LEVEL_CAUTION', ruleCategory: 'level_threshold', ruleName: '주의 31~55', conditionJson: { min: 31, max: 55 } },
-  { ruleCode: 'LEVEL_DANGER', ruleCategory: 'level_threshold', ruleName: '위험 56~75', conditionJson: { min: 56, max: 75 } },
+  // v2: danger 컷오프 56 → 45. 백테스트에서 56 은 고밀도 출현 주의 11.5% 만 잡았다(재현율).
+  //     45 로 내리면 재현율 69.2% 로 오르는데 오경보율은 0.0% 그대로다. 놓침만 준다.
+  //     ⚠️ 이 구간은 엔진이 읽지 않는다(risk-level.ts 에 하드코딩). 화면 표시용이라
+  //        코드와 어긋나면 관리자 화면이 거짓말을 한다. 반드시 함께 맞출 것.
+  { ruleCode: 'LEVEL_CAUTION', ruleCategory: 'level_threshold', ruleName: '주의 31~44', conditionJson: { min: 31, max: 44 } },
+  { ruleCode: 'LEVEL_DANGER', ruleCategory: 'level_threshold', ruleName: '위험 45~75', conditionJson: { min: 45, max: 75 } },
   { ruleCode: 'LEVEL_SEVERE', ruleCategory: 'level_threshold', ruleName: '심각 76~100', conditionJson: { min: 76, max: 100 } },
 
   // ──────────────────────────────────────────────── 최소 단계 보장 (min_level) — RISK-002

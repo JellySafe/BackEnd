@@ -12,8 +12,9 @@ describe('risk-level (RISK-001/002)', () => {
       [0, 'safe'],
       [30, 'safe'],
       [31, 'caution'],
-      [55, 'caution'],
-      [56, 'danger'],
+      [44, 'caution'],
+      [45, 'danger'],
+      [55, 'danger'],
       [75, 'danger'],
       [76, 'severe'],
       [100, 'severe'],
@@ -34,8 +35,8 @@ describe('risk-level (RISK-001/002)', () => {
     it('소수 점수는 반올림 후 구간 판정 (30.6 → 31 → caution)', () => {
       expect(riskLevelFromScore(30.4)).toBe('safe');
       expect(riskLevelFromScore(30.6)).toBe('caution');
-      expect(riskLevelFromScore(55.4)).toBe('caution');
-      expect(riskLevelFromScore(55.6)).toBe('danger');
+      expect(riskLevelFromScore(44.4)).toBe('caution');
+      expect(riskLevelFromScore(44.6)).toBe('danger');
     });
   });
 

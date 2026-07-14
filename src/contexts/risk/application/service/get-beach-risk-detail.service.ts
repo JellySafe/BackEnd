@@ -122,7 +122,17 @@ export class GetBeachRiskDetailService implements GetBeachRiskDetailUseCase {
         horizon: card.horizon,
         riskLevel: card.riskLevel,
         riskScore: card.riskScore,
-        factors: factors.slice(0, PUBLIC_FACTOR_LIMIT).map((f) => f.detail ?? f.name),
+        // 룰 이름(name)과 구체적 근거(detail)를 나눠서 준다.
+        // 예전에는 `f.detail ?? f.name` 으로 문자열 하나에 뭉개 보냈다. 화면은 "위험 원인" 을
+        // 제목 + 설명으로 그리는데 제목 자리에 근거 문장이 통째로 들어가고 설명은 비었다.
+        // 두 값은 성격이 다르다 — name 은 룰의 이름("인근 해역 해파리 속보"),
+        // detail 은 그 시점의 실제 수치("인근 해역 속보 3건"). 합치면 되돌릴 수 없다.
+        factors: factors.slice(0, PUBLIC_FACTOR_LIMIT).map((f) => ({
+          code: f.code,
+          name: f.name,
+          detail: f.detail,
+          scoreDelta: f.delta,
+        })),
         dataConfidence: card.confidence,
         generatedAt: card.generatedAt,
       });

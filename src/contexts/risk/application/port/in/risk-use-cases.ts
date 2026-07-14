@@ -31,6 +31,23 @@ export interface RiskFactorTag {
   sourceReportId: Id | null;
 }
 
+/**
+ * 공개 화면의 위험 원인 하나.
+ *
+ * name(룰 이름)과 detail(그 시점의 실제 근거)을 **나눠서** 준다.
+ * 예전에는 `detail ?? name` 으로 문자열 하나에 뭉개 보냈는데, 화면은 원인을 제목+설명으로
+ * 그리기 때문에 제목 자리에 근거 문장이 통째로 들어가고 설명이 비었다. 합치면 되돌릴 수 없다.
+ */
+export interface PublicRiskFactorView {
+  code: string;
+  /** 룰 이름. 예: "인근 해역 해파리 속보" — 화면의 제목/칩 */
+  name: string;
+  /** 그 시점의 구체적 근거. 예: "인근 해역 속보 3건" — 화면의 설명 */
+  detail: string | null;
+  /** 이 요인이 더한 점수 */
+  scoreDelta: number;
+}
+
 export interface RiskCardView {
   horizon: RiskHorizon;
   riskLevel: RiskLevel;
@@ -56,7 +73,7 @@ export interface PublicRiskPointView {
   horizon: RiskHorizon;
   riskLevel: RiskLevel;
   riskScore: number;
-  factors: string[]; // 요약 원인 3~5개
+  factors: PublicRiskFactorView[]; // 요약 원인 3~5개
   dataConfidence: DataConfidence;
   generatedAt: Date;
 }
@@ -73,7 +90,7 @@ export interface PublicBeachRiskView {
   horizon: RiskHorizon;
   riskLevel: RiskLevel;
   riskScore: number;
-  factors: string[]; // 요약 원인 3~5개
+  factors: PublicRiskFactorView[]; // 요약 원인 3~5개
   guideText: string;
   dataConfidence: DataConfidence;
   generatedAt: Date | null;
