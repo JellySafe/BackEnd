@@ -1,6 +1,10 @@
 import { Module } from '@nestjs/common';
+import { APP_GUARD } from '@nestjs/core';
 import { ConfigModule } from '@nestjs/config';
 import { ScheduleModule } from '@nestjs/schedule';
+import { ThrottlerModule } from '@nestjs/throttler';
+import { ApiThrottlerGuard } from './shared/http/api-throttler.guard';
+import { THROTTLERS } from './shared/http/rate-limit.config';
 import { PrismaModule } from './shared/persistence/prisma/prisma.module';
 import { KyselyModule } from './shared/persistence/kysely/kysely.module';
 import { AuthModule } from './shared/auth/auth.module';
@@ -23,11 +27,18 @@ import { SecondaryModule } from './contexts/secondary/secondary.module';
  * 컨텍스트 간 연결:
  *  - ReportModule 은 RiskModule(RISK_RECALC)을 import 해 검수 확인완료 시 위험도 재산출을 트리거한다.
  *  - 그 외 컨텍스트는 서로 독립적이며 같은 DB 를 공유한다(경계는 논리적).
+ *
+ * 전역 가드는 셋이다(등록 순서 무관 — 각자 자기 경로만 검사한다):
+ *  - ApiThrottlerGuard(여기)   : IP 레이트 리밋. /system, /health, /docs 제외.
+ *  - AdminAuthGuard(AuthModule): /admin/* JWT.
+ *  - SystemAuthGuard(AuthModule): /system/* x-system-key.
  */
 @Module({
   imports: [
     ConfigModule.forRoot({ isGlobal: true, validate: validateEnv }),
     ScheduleModule.forRoot(),
+    // 레이트 리밋. 단일 머신 운영이므로 기본 인메모리 스토리지를 쓴다(수치는 rate-limit.config.ts).
+    ThrottlerModule.forRoot({ throttlers: THROTTLERS }),
     PrismaModule,
     KyselyModule,
     AuthModule,
@@ -44,5 +55,6 @@ import { SecondaryModule } from './contexts/secondary/secondary.module';
     UserModule,
     SecondaryModule,
   ],
+  providers: [{ provide: APP_GUARD, useClass: ApiThrottlerGuard }],
 })
 export class AppModule {}

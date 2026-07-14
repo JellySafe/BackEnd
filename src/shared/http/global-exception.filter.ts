@@ -132,6 +132,8 @@ export class GlobalExceptionFilter implements ExceptionFilter {
         return 'CONFLICT';
       case 422:
         return 'UNPROCESSABLE';
+      case 429:
+        return 'TOO_MANY_REQUESTS';
       default:
         return `HTTP_${status}`;
     }

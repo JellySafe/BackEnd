@@ -1,3 +1,4 @@
+import { resolve } from 'node:path';
 import { ConfigService } from '@nestjs/config';
 
 /**
@@ -10,6 +11,10 @@ export class AppConfig {
     return this.config.get<string>('NODE_ENV') ?? 'development';
   }
 
+  get isProduction(): boolean {
+    return this.nodeEnv === 'production';
+  }
+
   get port(): number {
     return Number(this.config.get('PORT') ?? 3000);
   }
@@ -20,6 +25,37 @@ export class AppConfig {
 
   get riskRuleVersion(): string {
     return this.config.get<string>('RISK_RULE_VERSION') ?? 'v1';
+  }
+
+  /**
+   * 제보 이미지 업로드 디렉터리(절대 경로).
+   *
+   * 업로드 컨트롤러(저장)와 main.ts 의 정적 서빙(`/uploads/*`)이 **같은 값**을 봐야 한다.
+   * 어느 한쪽만 바뀌면 파일은 올라가지만 열리지 않는다(과거에 실제로 그랬다).
+   *
+   * 컨테이너 파일시스템은 재배포마다 초기화되므로 운영에서는 영구 볼륨 마운트 경로를 넣는다.
+   * (Fly: `/data` 에 볼륨 마운트 → UPLOAD_DIR=/data/uploads)
+   * 상대 경로면 프로세스 CWD 기준으로 해석한다(기본값 `./uploads`).
+   */
+  get uploadDir(): string {
+    const raw = (this.config.get<string>('UPLOAD_DIR') ?? '').trim();
+    return resolve(process.cwd(), raw === '' ? './uploads' : raw);
+  }
+
+  /** 업로드된 이미지가 서빙되는 URL 프리픽스. imageUrl 값(`/uploads/파일명`)의 앞부분. */
+  get uploadUrlPrefix(): string {
+    return '/uploads/';
+  }
+
+  /**
+   * `/system/*` 내부 API 호출용 공유 키(헤더 `x-system-key`).
+   *
+   * 미설정이면 `/system/*` 은 **전면 차단**된다(SystemAuthGuard 참고).
+   * 스케줄러는 HTTP 를 타지 않고 유스케이스를 직접 호출하므로 배치는 이 키와 무관하다.
+   */
+  get systemApiKey(): string | null {
+    const raw = (this.config.get<string>('SYSTEM_API_KEY') ?? '').trim();
+    return raw === '' ? null : raw;
   }
 
   get visionAiMode(): 'mock' | 'remote' {
