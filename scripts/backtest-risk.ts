@@ -549,8 +549,13 @@ interface Prediction {
   score: number;
   level: RiskLevel;
   confidence: string;
+  /** 발화한 룰 코드. **점수표와 무관하다** — 발화 여부는 THRESHOLDS(수온/파고/각도)로만 정해진다. */
   firedCodes: string[];
-  byVariant: Record<VariantId, { score: number; level: RiskLevel; confidence: string; firedCodes: string[] }>;
+  /** v1-as-run 재현용: 좌표 필터 버그가 살아 있던 시절엔 NEARBY/PAST 가 발화하지 못했다. */
+  firedCodesAsRun: string[];
+  /** 등가성 검증 (엔진 점수 vs 발화집합 합산). */
+  parityEngine: number;
+  parityShortcut: number;
   waterTemp: number | null;
   waveHeight: number | null;
   weekAvgTemp: number | null;
@@ -563,33 +568,66 @@ interface Prediction {
 const ruleScore = (code: string, fallback: number): number =>
   DEFAULT_RULE_SCORES[code as RiskFactorCode] ?? fallback;
 
+// -------------------------------------------------------------------------------------
+// 점수표(weights) + 단계 구간(cutoffs) 를 **파라미터로 받는** 평가기.
+//
+// 핵심 관찰: 어떤 룰이 발화하는가는 점수표와 **완전히 독립**이다.
+//   evaluateRiskVariables 는 THRESHOLDS(수온 2.0℃/26℃, 7일평균 25℃, 파고 1.5m, 풍속 5m/s,
+//   유입각 60°)로 발화 여부를 정하고, 룰 점수는 발화한 요인의 delta 로만 들어간다.
+//   → score = Σ weights[발화한 코드], 0~100 clamp. (RiskEngine.calculate 와 동일한 식)
+// 따라서 (해변 × 주)마다 **발화 코드 집합을 한 번만** 구해두면, 임의의 점수표를 O(1) 로 평가할 수 있다.
+// 이 등가성은 main() 에서 실제 RiskEngine 출력과 대조해 검증한다(ENGINE PARITY 블록).
+// -------------------------------------------------------------------------------------
+
+type Weights = Record<RiskFactorCode, number>;
+
+/** 단계 구간. ⚠️ 프로덕션 값은 risk-level.ts 에 **하드코딩**돼 있고 DB/시드로 바꿀 수 없다. */
+interface Cutoffs {
+  caution: number;
+  danger: number;
+  severe: number;
+}
+const PROD_CUT: Cutoffs = { caution: 31, danger: 56, severe: 76 };
+
+function weights(over: Partial<Weights>): Weights {
+  return { ...DEFAULT_RULE_SCORES, ...over };
+}
+
+function scoreOfFired(fired: readonly string[], w: Weights): number {
+  let s = 0;
+  for (const c of fired) s += w[c as RiskFactorCode] ?? 0;
+  return Math.max(0, Math.min(100, Math.round(s)));
+}
+
+function levelRankOf(score: number, cut: Cutoffs): number {
+  if (score >= cut.severe) return 3;
+  if (score >= cut.danger) return 2;
+  if (score >= cut.caution) return 1;
+  return 0;
+}
+
+interface Candidate {
+  id: string;
+  label: string;
+  w: Weights;
+  cut: Cutoffs;
+  /** true 면 좌표 버그(NEARBY/PAST 미발화) 상태로 평가한다. */
+  asRun?: boolean;
+}
+
 /**
- * 점수표 변형(variant).
- *  - v1        : 현행 seed.ts 점수표 (NEARBY_ALERT/PAST_OCCURRENCE 는 '의도대로' 시군구 매칭으로 계산)
- *  - v1-as-run : **실제 배포 상태**. nifs-report.parser 가 lat/lng=null 을 넣고,
- *                risk-input.kysely-query 의 countNearbyAlerts/countPastSeasonOccurrences 가
- *                `j.lat IS NOT NULL` 로 거르기 때문에 두 룰은 **절대 발화하지 않는다**.
- *                → nearbyAlertCount=0, pastOccurrenceCount=0 으로 강제한다.
- *  - v2        : 백테스트 결과로 제안하는 점수표(과제 D 근거). ⚠️ 같은 표본에 맞춘 in-sample 값이다.
+ * 등가성 검증용 점수표 — 이 표로 **실제 RiskEngine 을 돌린 점수**와
+ * scoreOfFired(발화집합) 를 (해변 × 주) 전 건에서 대조한다.
+ * 하나라도 어긋나면 아래 그리드 탐색 결과 전체가 무효다. main() 에서 단언한다.
  */
-type VariantId = 'v1' | 'v1-as-run' | 'v2';
-
-const V2_SCORES: Record<RiskFactorCode, number> = {
-  ...DEFAULT_RULE_SCORES,
-  NEARBY_ALERT: 40, // 리프트 12.7, AUC 0.82 — 단일 최강 신호인데 +15 로 과소평가돼 있었다
-  TEMP_UP: 15, // 리프트 1.93, p<0.001
-  TEMP_7D_AVG: 10, // 리프트 1.86, p=0.003
-  WAVE_HIGH: 0, // 리프트 0.67(역방향), p=0.48 — 신호 없음
-  WIND_INFLOW: 0, // 리프트 0.93, p=0.77 — 신호 없음
-  PAST_OCCURRENCE: 5, // 리프트 1.28, p=0.31 — 약함
-  BEACH_VULNERABILITY: 5, // 광역 라벨로는 검증 불가(항상 발화). 소폭 유지.
-};
-
-const VARIANT_SCORE: Record<VariantId, (code: string, fallback: number) => number> = {
-  v1: ruleScore,
-  'v1-as-run': ruleScore,
-  v2: (code, fallback) => V2_SCORES[code as RiskFactorCode] ?? fallback,
-};
+const PARITY_W: Weights = weights({
+  NEARBY_ALERT: 40,
+  TEMP_UP: 15,
+  TEMP_7D_AVG: 10,
+  PAST_OCCURRENCE: 5,
+  WAVE_HIGH: 5,
+  WIND_INFLOW: 5,
+});
 
 async function predict(report: WeeklyReport, prev: WeeklyReport | null, priorYears: WeeklyReport[]): Promise<Prediction[]> {
   const decisionAt = kstSampleInstant(report.endDay);
@@ -648,41 +686,39 @@ async function predict(report: WeeklyReport, prev: WeeklyReport | null, priorYea
       nearbyAlertCount,
       pastOccurrenceCount,
       verifiedReports: [],
+      forecasts: [], // 과거 예보는 조회할 수 없다 → 'now' 지평만 평가한다(24h/72h 는 백테스트 대상 아님).
       observationAgeMinutes: latestObservation
         ? Math.max(0, Math.round((decisionAt.getTime() - latestObservation.observedAt.getTime()) / 60_000))
         : null,
     };
 
-    // ===== 프로덕션 도메인 코드 (재구현 없음) — 변형별로 같은 엔진을 호출한다 =====
-    const byVariant = {} as Record<VariantId, { score: number; level: RiskLevel; confidence: string; firedCodes: string[] }>;
-    let missing: string[] = [];
+    // ===== 프로덕션 도메인 코드 (재구현 없음) =====
+    // 발화 코드 집합은 점수표와 무관하므로 **엔진을 한 번만** 돌려 뽑는다.
+    // (v1 점수표로 돌린다 — v1 은 모든 룰 점수가 0 이 아니라 발화한 요인이 전부 남는다.
+    //  점수가 0 인 룰은 RiskEngine 이 delta===0 으로 걸러내므로 발화 집합을 뽑는 데 못 쓴다.)
+    const variables = evaluateRiskVariables(bundle, ruleScore);
+    const reportWeights = evaluateReportWeights(bundle.verifiedReports, ruleScore);
+    const minLevelTriggers = deriveMinLevelTriggers(bundle.verifiedReports);
+    const confidence = deriveConfidence(variables.missing.length, bundle.observationAgeMinutes);
+    const result = RiskEngine.calculate({
+      variables: applyHorizon(variables.factors, 'now'),
+      reportWeights: applyHorizon(reportWeights, 'now'),
+      minLevelTriggers,
+      confidence,
+    });
+    const firedCodes = result.factors.map((f) => f.code);
 
-    for (const variant of ['v1', 'v1-as-run', 'v2'] as VariantId[]) {
-      // 'v1-as-run' 은 좌표 null 때문에 두 룰이 실제로는 못 켜지는 배포 현실을 재현한다.
-      const asRun = variant === 'v1-as-run';
-      const b: RiskInputBundle = asRun
-        ? { ...bundle, nearbyAlertCount: 0, pastOccurrenceCount: 0 }
-        : bundle;
-
-      const score = VARIANT_SCORE[variant];
-      const variables = evaluateRiskVariables(b, score);
-      const reportWeights = evaluateReportWeights(b.verifiedReports, score);
-      const minLevelTriggers = deriveMinLevelTriggers(b.verifiedReports);
-      const confidence = deriveConfidence(variables.missing.length, b.observationAgeMinutes);
-      const result = RiskEngine.calculate({
-        variables: applyHorizon(variables.factors, 'now'),
-        reportWeights: applyHorizon(reportWeights, 'now'),
-        minLevelTriggers,
-        confidence,
-      });
-      byVariant[variant] = {
-        score: result.score,
-        level: result.level,
-        confidence: result.confidence,
-        firedCodes: result.factors.map((f) => f.code),
-      };
-      if (variant === 'v1') missing = variables.missing;
-    }
+    // --- 등가성 검증: 임의 점수표로 엔진을 돌린 점수 == Σ weights[발화코드] 인가?
+    const parityEngine = RiskEngine.calculate({
+      variables: applyHorizon(
+        evaluateRiskVariables(bundle, (code, fb) => PARITY_W[code as RiskFactorCode] ?? fb).factors,
+        'now',
+      ),
+      reportWeights: [],
+      minLevelTriggers: [],
+      confidence,
+    }).score;
+    const parityShortcut = scoreOfFired(firedCodes, PARITY_W);
     // ====================================================================
 
     out.push({
@@ -690,15 +726,18 @@ async function predict(report: WeeklyReport, prev: WeeklyReport | null, priorYea
       beachId: beach.id,
       beachName: beach.name,
       region,
-      score: byVariant.v1.score,
-      level: byVariant.v1.level,
-      confidence: byVariant.v1.confidence,
-      firedCodes: byVariant.v1.firedCodes,
-      byVariant,
+      score: result.score,
+      level: result.level,
+      confidence: result.confidence,
+      firedCodes,
+      // 좌표 버그(v1-as-run) 재현: NIFS 주간보고는 좌표가 없어 두 룰이 통째로 죽어 있었다.
+      firedCodesAsRun: firedCodes.filter((c) => c !== 'NEARBY_ALERT' && c !== 'PAST_OCCURRENCE'),
+      parityEngine,
+      parityShortcut,
       waterTemp: latestObservation?.waterTemp ?? null,
       waveHeight: latestObservation?.waveHeight ?? null,
       weekAvgTemp: weekAvgWaterTemp,
-      missing,
+      missing: variables.missing,
       nearbyAlertCount,
       pastOccurrenceCount,
     });
@@ -724,8 +763,10 @@ interface Unit {
   score: number;
   level: RiskLevel;
   meanScore: number;
-  /** 변형별 (시군구 내 해변 최대) 점수/단계. */
-  variant: Record<VariantId, { score: number; level: RiskLevel }>;
+  /** 시군구 내 해변별 발화 코드 집합. 임의의 점수표를 여기서 O(1) 로 재평가한다. */
+  beachFired: string[][];
+  /** 좌표 버그 상태(v1-as-run)의 해변별 발화 코드 집합. */
+  beachFiredAsRun: string[][];
   // 요인
   fired: Set<string>;
   waterTemp: number | null;
@@ -848,6 +889,147 @@ function metricsLine(name: string, m: BinaryMetrics): string {
   );
 }
 
+// ------------------------------------------------------------------ 후보 평가 (점수표 × 구간)
+
+/** 한 평가 단위의 점수 = 시군구 내 해변 **최대**(안전 측 집계 — 경보 누락을 벌한다). */
+function unitScore(u: Unit, c: Candidate): number {
+  const sets = c.asRun ? u.beachFiredAsRun : u.beachFired;
+  let best = 0;
+  for (const f of sets) {
+    const s = scoreOfFired(f, c.w);
+    if (s > best) best = s;
+  }
+  return best;
+}
+
+interface Evaluation {
+  auc: number;
+  /** danger 이상 (양성 = 고밀도 출현) */
+  d: BinaryMetrics;
+  /** caution 이상 (양성 = 고밀도 출현) */
+  c: BinaryMetrics;
+  /**
+   * ★ 오경보율(운영 정의) = **출현이 전혀 없던 주**에 danger 이상을 낸 비율.
+   * BinaryMetrics.fpr 은 음성에 저밀도 주까지 포함하므로(= '고밀도가 아닌 주') 다르다.
+   * 저밀도 주의 경보는 완전한 헛경보가 아니다 — 해파리는 실제로 있었다.
+   */
+  faNone: number;
+  faNoneCaution: number;
+  /** F2 — 재현율을 정밀도보다 4배 무겁게 친다(놓침 > 헛경보). 정의 불가 시 -1(정렬 최하위). */
+  f2: number;
+  f2Defined: boolean;
+  /** '심각'이라고 말한 단위 중 실제 고밀도 비율. */
+  severePrecision: number;
+  severeCount: number;
+  dist: [number, number, number, number];
+  scoreMin: number;
+  scoreMax: number;
+}
+
+function fBeta(m: BinaryMetrics, beta: number): number {
+  const b2 = beta * beta;
+  if (!Number.isFinite(m.recall) || !Number.isFinite(m.precision) || m.recall + m.precision === 0) return NaN;
+  return ((1 + b2) * m.precision * m.recall) / (b2 * m.precision + m.recall);
+}
+
+function evaluateCandidate(units: Unit[], c: Candidate): Evaluation {
+  const scores = units.map((u) => unitScore(u, c));
+  const ranks = scores.map((s) => levelRankOf(s, c.cut));
+  const truthHigh = units.map((u) => u.density === 'high');
+  const d = binary(ranks.map((r) => r >= 2), truthHigh);
+  const cm = binary(ranks.map((r) => r >= 1), truthHigh);
+
+  const noneIdx: number[] = [];
+  for (let i = 0; i < units.length; i += 1) if (units[i].density === 'none') noneIdx.push(i);
+  const faNone = noneIdx.length > 0 ? noneIdx.filter((i) => ranks[i] >= 2).length / noneIdx.length : NaN;
+  const faNoneCaution = noneIdx.length > 0 ? noneIdx.filter((i) => ranks[i] >= 1).length / noneIdx.length : NaN;
+
+  const dist: [number, number, number, number] = [0, 0, 0, 0];
+  for (const r of ranks) dist[r] += 1;
+
+  // severe 정밀도: '심각'이라고 말한 단위 중 실제 고밀도 비율. 입수 통제를 권고하는 단계라 따로 본다.
+  const sevIdx: number[] = [];
+  for (let i = 0; i < units.length; i += 1) if (ranks[i] >= 3) sevIdx.push(i);
+  const severePrecision =
+    sevIdx.length > 0 ? sevIdx.filter((i) => units[i].density === 'high').length / sevIdx.length : NaN;
+
+  const f2 = fBeta(d, 2);
+  return {
+    auc: auc(scores, truthHigh),
+    d,
+    c: cm,
+    faNone,
+    faNoneCaution,
+    // 재현율 0(= danger 를 한 번도 못 냄)이면 F2 는 정의되지 않는다. 정렬에서 **최하위**로 보내야 한다
+    // (NaN 을 그대로 두면 비교가 0 이 돼 최상위로 올라온다 — 실제로 처음 실행에서 그 함정에 빠졌다).
+    f2: Number.isFinite(f2) ? f2 : -1,
+    f2Defined: Number.isFinite(f2),
+    severePrecision,
+    severeCount: sevIdx.length,
+    dist,
+    scoreMin: Math.min(...scores),
+    scoreMax: Math.max(...scores),
+  };
+}
+
+/** 결정적 난수 (부트스트랩 재현성). */
+function mulberry32(seed: number): () => number {
+  let a = seed >>> 0;
+  return () => {
+    a = (a + 0x6d2b79f5) >>> 0;
+    let t = Math.imul(a ^ (a >>> 15), 1 | a);
+    t = (t + Math.imul(t ^ (t >>> 7), 61 | t)) ^ t;
+    return ((t ^ (t >>> 14)) >>> 0) / 4294967296;
+  };
+}
+
+/**
+ * 짝지은(paired) 부트스트랩 — 두 후보의 성능 **차이**에 95% 신뢰구간을 붙인다.
+ * 같은 단위를 복원추출하므로 표본 변동이 두 후보에 똑같이 걸린다.
+ * "파고·풍향을 남기면 유의미하게 나빠지는가?" 는 이 CI 가 0 을 포함하는지로 판정한다.
+ */
+function bootstrapDiff(
+  units: Unit[],
+  a: Candidate,
+  b: Candidate,
+  iters = 3000,
+): { auc: [number, number]; recall: [number, number]; faNone: [number, number]; aucMean: number } {
+  const rnd = mulberry32(20260714);
+  const dAuc: number[] = [];
+  const dRec: number[] = [];
+  const dFa: number[] = [];
+  for (let it = 0; it < iters; it += 1) {
+    const sample: Unit[] = [];
+    for (let i = 0; i < units.length; i += 1) sample.push(units[Math.floor(rnd() * units.length)]);
+    if (!sample.some((u) => u.density === 'high') || !sample.some((u) => u.density !== 'high')) continue;
+    const ea = evaluateCandidate(sample, a);
+    const eb = evaluateCandidate(sample, b);
+    dAuc.push(ea.auc - eb.auc);
+    if (Number.isFinite(ea.d.recall) && Number.isFinite(eb.d.recall)) dRec.push(ea.d.recall - eb.d.recall);
+    if (Number.isFinite(ea.faNone) && Number.isFinite(eb.faNone)) dFa.push(ea.faNone - eb.faNone);
+  }
+  const ci = (xs: number[]): [number, number] => {
+    if (xs.length === 0) return [NaN, NaN];
+    const s = xs.slice().sort((x, y) => x - y);
+    return [s[Math.floor(0.025 * s.length)], s[Math.min(s.length - 1, Math.floor(0.975 * s.length))]];
+  };
+  return {
+    auc: ci(dAuc),
+    recall: ci(dRec),
+    faNone: ci(dFa),
+    aucMean: dAuc.length > 0 ? dAuc.reduce((x, y) => x + y, 0) / dAuc.length : NaN,
+  };
+}
+
+function candidateLine(c: Candidate, e: Evaluation): string {
+  return (
+    `  ${c.id.padEnd(16)} ` +
+    `AUC ${fmt(e.auc, 3)} │ danger+ 재현율 ${pct(e.d.recall).padStart(6)} 오경보율 ${pct(e.faNone).padStart(5)} 정밀도 ${pct(e.d.precision).padStart(6)} F1 ${fmt(e.d.f1, 2).padStart(4)} F2 ${fmt(e.f2 < 0 ? NaN : e.f2, 2).padStart(4)} │ ` +
+    `caution+ 재현율 ${pct(e.c.recall).padStart(6)} 오경보율 ${pct(e.faNoneCaution).padStart(5)} │ ` +
+    `단계 ${e.dist.join('/')} 점수 ${e.scoreMin}~${e.scoreMax}`
+  );
+}
+
 // =====================================================================================
 // main
 // =====================================================================================
@@ -944,18 +1126,8 @@ async function main(): Promise<void> {
         score: Math.max(...rows.map((x) => x.score)),
         meanScore: rows.reduce((a, b) => a + b.score, 0) / rows.length,
         level: rows.reduce<RiskLevel>((acc, x) => (LEVEL_RANK[x.level] > LEVEL_RANK[acc] ? x.level : acc), 'safe'),
-        variant: Object.fromEntries(
-          (['v1', 'v1-as-run', 'v2'] as VariantId[]).map((v) => [
-            v,
-            {
-              score: Math.max(...rows.map((x) => x.byVariant[v].score)),
-              level: rows.reduce<RiskLevel>(
-                (acc, x) => (LEVEL_RANK[x.byVariant[v].level] > LEVEL_RANK[acc] ? x.byVariant[v].level : acc),
-                'safe',
-              ),
-            },
-          ]),
-        ) as Unit['variant'],
+        beachFired: rows.map((x) => x.firedCodes),
+        beachFiredAsRun: rows.map((x) => x.firedCodesAsRun),
         fired: new Set(rows.flatMap((x) => x.firedCodes)),
         waterTemp: rows.map((x) => x.waterTemp).find((x) => x !== null) ?? null,
         weekAvgTemp: rows.map((x) => x.weekAvgTemp).find((x) => x !== null) ?? null,
@@ -1102,53 +1274,352 @@ async function main(): Promise<void> {
   console.log('  * AUC 0.5 = 무정보. p 는 2-비율 z검정 근사(다중비교 보정 없음, 참고용).');
 
   // =====================================================================================
-  // 과제 E: 점수표 변형 비교 (같은 엔진, 점수표만 교체)
+  // 과제 E: 점수표 후보 비교 (같은 엔진, 점수표만 교체)
   // =====================================================================================
   console.log('\n' + '='.repeat(110));
-  console.log('【과제 E】 점수표 변형 비교 — 고밀도 탐지');
+  console.log('【과제 E】 점수표 후보 비교 — 고밀도 탐지');
   console.log('-'.repeat(110));
-  const variantNote: Record<VariantId, string> = {
-    v1: '현행 seed.ts (NEARBY/PAST 를 의도대로 계산)',
-    'v1-as-run': '★실제 배포 상태 (좌표 null → NEARBY/PAST 미발화)',
-    v2: '제안 점수표 (in-sample)',
-  };
-  for (const v of ['v1', 'v1-as-run', 'v2'] as VariantId[]) {
-    const vs = units.map((u) => u.variant[v].score);
-    const lv = units.map((u) => LEVEL_RANK[u.variant[v].level]);
-    const dist = (['safe', 'caution', 'danger', 'severe'] as RiskLevel[])
-      .map((l, i) => `${l}:${lv.filter((x) => x === i).length}`)
-      .join(' ');
-    console.log(`\n  [${v}] ${variantNote[v]}`);
-    console.log(`    점수 범위 ${Math.min(...vs)}~${Math.max(...vs)} | 단계분포 ${dist}`);
-    console.log(`    AUC ${fmt(auc(vs, truthHigh))}`);
-    console.log('    ' + metricsLine('danger 이상', binary(lv.map((x) => x >= 2), truthHigh)));
-    console.log('    ' + metricsLine('caution 이상', binary(lv.map((x) => x >= 1), truthHigh)));
-  }
-  console.log(`\n  [베이스라인] 직전주 NIFS 고밀도만: AUC ${fmt(auc(units.map((u) => u.nearbyAlertCount), truthHigh))}`);
 
-  // ---- 단계 구간(threshold) 스윕: 현행 danger=56 이 최선인가?
-  console.log('\n【과제 E-2】 danger 컷오프 스윕 (v1 점수 기준, 고밀도 탐지)');
-  console.log(`  ${'컷오프'.padStart(6)}  ${'재현율'.padStart(7)}  ${'오경보율'.padStart(8)}  ${'F1'.padStart(5)}  ${'균형정확도'.padStart(8)}`);
-  for (const cut of [20, 25, 30, 35, 40, 45, 50, 56, 60]) {
-    const m = binary(units.map((u) => u.variant.v1.score >= cut), truthHigh);
-    const mark = cut === 56 ? '  ← 현행 danger' : '';
-    console.log(`  ${String(cut).padStart(6)}  ${pct(m.recall).padStart(7)}  ${pct(m.fpr).padStart(8)}  ${fmt(m.f1, 2).padStart(5)}  ${pct(m.balancedAccuracy).padStart(8)}${mark}`);
+  // ---- E-0. 등가성 검증: 그리드 탐색이 실제 엔진과 같은 것을 재는가?
+  const parityBad = preds.filter((p) => p.parityEngine !== p.parityShortcut).length;
+  console.log(
+    `  [엔진 등가성] RiskEngine 점수 == Σ점수표[발화코드] : ${preds.length - parityBad}/${preds.length} 일치` +
+      (parityBad > 0 ? `  ❌ 불일치 ${parityBad}건 — 아래 탐색 결과 무효` : '  ✓'),
+  );
+  if (parityBad > 0) throw new Error('엔진 등가성 검증 실패 — 점수표 탐색을 신뢰할 수 없다.');
+
+  console.log(`
+  ※ 단계 구간은 risk-level.ts 에 **하드코딩**돼 있다(0-30/31-55/56-75/76-100).
+    risk_rule_configs 의 level_threshold 행은 엔진이 읽지 않는다(rule-config.kysely-query 가 score/min_risk_level 만 select).
+    → **시드로 바꿀 수 있는 것은 룰 점수뿐이다.** 컷오프를 옮기려면 src 를 고쳐야 한다.
+    그래서 아래 후보는 전부 **고정 구간(danger=56)** 에서 평가한다. 구간을 옮겼을 때의 이득은 E-4 에서 따로 잰다.
+
+  ※ 오경보율 = **출현이 전혀 없던 주**(n=${nNone})에 danger 이상을 낸 비율. (저밀도 주의 경보는 헛경보로 세지 않는다)
+`);
+
+  const V2_CORE = { NEARBY_ALERT: 40, TEMP_UP: 15, TEMP_7D_AVG: 10, PAST_OCCURRENCE: 5 } as const;
+
+  const candidates: Candidate[] = [
+    { id: '(a) v1', label: '현행 seed.ts v1', w: weights({}), cut: PROD_CUT },
+    { id: 'v1-as-run', label: '좌표 버그 시절(참고)', w: weights({}), cut: PROD_CUT, asRun: true },
+    {
+      id: '(c) v2-drop',
+      label: '백테스트 제안 — 파고·풍향 제거',
+      w: weights({ ...V2_CORE, WAVE_HIGH: 0, WIND_INFLOW: 0 }),
+      cut: PROD_CUT,
+    },
+    {
+      id: '(d) v2-keep5',
+      label: '(c) + 파고·풍향 5점 유지',
+      w: weights({ ...V2_CORE, WAVE_HIGH: 5, WIND_INFLOW: 5 }),
+      cut: PROD_CUT,
+    },
+    {
+      id: '(d2) v2-keep10',
+      label: '(c) + 파고·풍향 10점 유지(현행 유지)',
+      w: weights({ ...V2_CORE, WAVE_HIGH: 10, WIND_INFLOW: 10 }),
+      cut: PROD_CUT,
+    },
+    {
+      id: '(e1) NEARBY30',
+      label: 'NEARBY 30 + 파고·풍향 5 (danger 는 NIFS 신호 필수)',
+      w: weights({ NEARBY_ALERT: 30, TEMP_UP: 15, TEMP_7D_AVG: 10, PAST_OCCURRENCE: 5, WAVE_HIGH: 5, WIND_INFLOW: 5 }),
+      cut: PROD_CUT,
+    },
+    {
+      id: '(e2) NEARBY-only',
+      label: 'NEARBY 55 단독 + 취약도 5 (다른 룰 0 — 점수표가 정말 필요한가? = 베이스라인의 점수표 판)',
+      w: weights({
+        NEARBY_ALERT: 55, TEMP_UP: 0, TEMP_7D_AVG: 0, PAST_OCCURRENCE: 0,
+        WAVE_HIGH: 0, WIND_INFLOW: 0, CURRENT_INFLOW: 0,
+      }),
+      cut: PROD_CUT,
+    },
+    {
+      id: '(e3) NEARBY55',
+      label: '★ NEARBY 55 (NIFS 신호만으로 danger 도달) + 파고·풍향 5 유지',
+      w: weights({
+        NEARBY_ALERT: 55, TEMP_UP: 15, TEMP_7D_AVG: 10, PAST_OCCURRENCE: 5,
+        WAVE_HIGH: 5, WIND_INFLOW: 5,
+      }),
+      cut: PROD_CUT,
+    },
+    {
+      id: '(e4) NEARBY55-drop',
+      label: '(e3) 에서 파고·풍향만 제거',
+      w: weights({
+        NEARBY_ALERT: 55, TEMP_UP: 15, TEMP_7D_AVG: 10, PAST_OCCURRENCE: 5,
+        WAVE_HIGH: 0, WIND_INFLOW: 0,
+      }),
+      cut: PROD_CUT,
+    },
+  ];
+
+  const evals = new Map<string, Evaluation>();
+  for (const c of candidates) {
+    const e = evaluateCandidate(units, c);
+    evals.set(c.id, e);
+    console.log(candidateLine(c, e) + `   ${c.label}`);
   }
 
-  // ---- 시간 분할 검증 (2026 홀드아웃)
+  // ---- (b) 베이스라인: "지난주 NIFS 보고서를 그대로 복사"
+  const baseScores = units.map((u) => u.nearbyAlertCount);
+  const basePred = units.map((u) => u.nearbyAlertCount >= 1);
+  const baseM = binary(basePred, truthHigh);
+  const baseFaNone =
+    units.filter((u, i) => u.density === 'none' && basePred[i]).length / Math.max(1, nNone);
+  console.log(
+    `  ${'(b) 베이스라인'.padEnd(14)} ` +
+      `AUC ${fmt(auc(baseScores, truthHigh), 3)}  ` +
+      `재현율 ${pct(baseM.recall).padStart(6)}  ` +
+      `오경보율 ${pct(baseFaNone).padStart(6)}  ` +
+      `정밀도 ${pct(baseM.precision).padStart(6)}  ` +
+      `F1 ${fmt(baseM.f1, 2).padStart(4)}  ` +
+      `F2 ${fmt(fBeta(baseM, 2), 2).padStart(4)}  ` +
+      `단계 -  점수 -   지난주 NIFS 고밀도 그대로 복사`,
+  );
+  console.log('  * 단계 = safe/caution/danger/severe 단위 수. 베이스라인은 점수표가 없어 단계가 없다.');
+
+  // =====================================================================================
+  // 과제 E-1: ★ 핵심 쟁점 — 파고·풍향을 남기면 나빠지는가? (다른 룰 고정, 두 값만 스윕)
+  // =====================================================================================
+  console.log('\n' + '-'.repeat(110));
+  console.log('【과제 E-1】 ★ WAVE_HIGH × WIND_INFLOW 절제 실험 (나머지 룰은 v2 코어로 고정: NEARBY40/TEMP15/7D10/PAST5)');
+  console.log('  ※ 고밀도 주에 **아무 경고도 못 준(safe 라고 답한)** 수를 같이 본다 — 안전 서비스의 진짜 놓침이다.');
+  console.log(
+    `  ${'파고'.padStart(4)} ${'풍향'.padStart(4)}   ${'AUC'.padStart(5)}  ${'danger+재현'.padStart(10)}  ${'danger+오경보'.padStart(12)}  ${'F1'.padStart(4)}  ` +
+      `${'caution+재현'.padStart(11)}  ${'caution+오경보'.padStart(13)}  ${'고밀도인데safe'.padStart(13)}  단계(s/c/d/x)`,
+  );
+  for (const wv of [0, 5, 10, 15]) {
+    for (const wd of [0, 5, 10, 15]) {
+      const c: Candidate = {
+        id: `w${wv}/${wd}`,
+        label: '',
+        w: weights({ ...V2_CORE, WAVE_HIGH: wv, WIND_INFLOW: wd }),
+        cut: PROD_CUT,
+      };
+      const e = evaluateCandidate(units, c);
+      const missedHigh = nHigh - e.c.tp; // caution 이상도 못 받은 고밀도 주
+      const mark = wv === 0 && wd === 0 ? '  ← (c) 제거' : wv === 5 && wd === 5 ? '  ← (d) 5점 유지' : '';
+      console.log(
+        `  ${String(wv).padStart(4)} ${String(wd).padStart(4)}   ${fmt(e.auc, 3)}  ${pct(e.d.recall).padStart(10)}  ${pct(e.faNone).padStart(12)}  ${fmt(e.d.f1, 2).padStart(4)}  ` +
+          `${pct(e.c.recall).padStart(11)}  ${pct(e.faNoneCaution).padStart(13)}  ${String(missedHigh).padStart(11)}건  ${e.dist.join('/')}${mark}`,
+      );
+    }
+  }
+
+  // 짝지은 부트스트랩 — 차이의 95% CI 가 0 을 포함하면 "구별 못 한다".
+  const cDrop = candidates.find((c) => c.id === '(c) v2-drop')!;
+  const cKeep = candidates.find((c) => c.id === '(d) v2-keep5')!;
+  const cKeep10 = candidates.find((c) => c.id === '(d2) v2-keep10')!;
+  console.log('\n  [짝지은 부트스트랩 3000회] 차이의 95% CI (양수 = 앞이 더 좋음 / CI 가 0 포함 = 구별 불가)');
+  for (const [a, b] of [
+    [cKeep, cDrop],
+    [cKeep10, cDrop],
+  ] as [Candidate, Candidate][]) {
+    const bs = bootstrapDiff(units, a, b);
+    console.log(
+      `    ${a.id} − ${b.id}:  ΔAUC 평균 ${fmt(bs.aucMean, 4)} CI[${fmt(bs.auc[0], 3)}, ${fmt(bs.auc[1], 3)}]  ` +
+        `Δ재현율 CI[${pct(bs.recall[0])}, ${pct(bs.recall[1])}]  Δ오경보율 CI[${pct(bs.faNone[0])}, ${pct(bs.faNone[1])}]`,
+    );
+  }
+
+  // =====================================================================================
+  // 과제 E-2: 그리드 탐색 (고정 구간 danger=56 에서 최적 점수표)
+  //   선택 기준(안전 서비스): F2 최대화 (재현율을 정밀도보다 4배 무겁게)
+  //                        + 하드 제약: 오경보율(출현 없는 주) ≤ 10%  ← 경보 피로 방어선
+  // =====================================================================================
+  console.log('\n' + '-'.repeat(110));
+  console.log('【과제 E-2】 그리드 탐색 (구간 고정: danger=56, severe=76)');
+  console.log('  목적함수: F2 최대 (놓침 1건 ≈ 헛경보 4건 — 안전 서비스라 재현율에 무게)');
+  console.log('  제약 ①(경보 피로): 출현 없는 주 danger+ 오경보율 ≤ 10%');
+  console.log('  제약 ②(구조): 관측만으로 danger 도달 불가 (= NIFS 신호나 시민 제보 없이는 최대 55점).');
+  console.log('               관측 룰은 어느 것도 유의한 신호가 없다 → 관측만으로 "위험"을 선언할 근거가 없다.');
+  const FA_CAP = 0.1;
+  const grid: { c: Candidate; e: Evaluation; obsOnlyMax: number }[] = [];
+  for (const nb of [20, 25, 30, 35, 40, 45, 50, 55, 60])
+    for (const tu of [5, 10, 15, 20])
+      for (const t7 of [0, 5, 10, 15])
+        for (const po of [0, 5, 10, 15])
+          for (const wv of [0, 5, 10])
+            for (const wd of [0, 5, 10]) {
+              const w = weights({
+                NEARBY_ALERT: nb, TEMP_UP: tu, TEMP_7D_AVG: t7,
+                PAST_OCCURRENCE: po, WAVE_HIGH: wv, WIND_INFLOW: wd,
+              });
+              const c: Candidate = { id: `N${nb}/T${tu}/A${t7}/P${po}/W${wv}/D${wd}`, label: '', w, cut: PROD_CUT };
+              const obsOnlyMax =
+                w.TEMP_UP + w.TEMP_7D_AVG + w.WAVE_HIGH + w.WIND_INFLOW + w.CURRENT_INFLOW +
+                w.PAST_OCCURRENCE + w.BEACH_VULNERABILITY;
+              grid.push({ c, e: evaluateCandidate(units, c), obsOnlyMax });
+            }
+  console.log(`\n  탐색 조합 ${grid.length}개 (BEACH_VULNERABILITY=5, CURRENT_INFLOW=10 고정 — 둘 다 검증 불가)`);
+
+  const header = `  ${'점수표'.padEnd(30)} ${'AUC'.padStart(5)}  ${'재현율'.padStart(7)}  ${'오경보율'.padStart(8)}  ${'정밀도'.padStart(7)}  ${'F1'.padStart(4)}  ${'F2'.padStart(4)}  ${'severe'.padStart(6)}`;
+  const row = (g: { c: Candidate; e: Evaluation }) =>
+    `  ${g.c.id.padEnd(30)} ${fmt(g.e.auc, 3)}  ${pct(g.e.d.recall).padStart(7)}  ${pct(g.e.faNone).padStart(8)}  ${pct(g.e.d.precision).padStart(7)}  ${fmt(g.e.d.f1, 2).padStart(4)}  ${fmt(g.e.f2, 2).padStart(4)}  ${String(g.e.severeCount).padStart(6)}`;
+
+  const byF2 = (a: { e: Evaluation }, b: { e: Evaluation }) => b.e.f2 - a.e.f2 || b.e.auc - a.e.auc;
+
+  const feasible = grid.filter((g) => g.e.f2Defined && g.e.faNone <= FA_CAP && g.obsOnlyMax <= 55).sort(byF2);
+  console.log(`\n  [제약 ①+②] 통과 ${feasible.length}개. 상위 12:`);
+  console.log(header);
+  for (const g of feasible.slice(0, 12)) console.log(row(g));
+
+  const feasible1 = grid.filter((g) => g.e.f2Defined && g.e.faNone <= FA_CAP).sort(byF2);
+  console.log(`\n  [제약 ①만 — 구조 제약을 풀면?] 통과 ${feasible1.length}개. 상위 5:`);
+  console.log(header);
+  for (const g of feasible1.slice(0, 5)) console.log(row(g) + `   (관측만 최대 ${g.obsOnlyMax}점)`);
+
+  const bestAuc = grid.slice().sort((a, b) => b.e.auc - a.e.auc)[0];
+  console.log(`\n  (참고) 제약 전부 무시하고 AUC 만 최대: ${bestAuc.c.id}  AUC ${fmt(bestAuc.e.auc, 3)}  재현율 ${pct(bestAuc.e.d.recall)}  오경보율 ${pct(bestAuc.e.faNone)}`);
+
+  // ★ 파고·풍향 천장 비교 — 같은 제약 아래 "빼면" vs "낮게 남기면" 도달 가능한 최고 성능
+  const bestDrop = feasible.filter((g) => g.c.w.WAVE_HIGH === 0 && g.c.w.WIND_INFLOW === 0)[0];
+  const bestKeep = feasible.filter((g) => g.c.w.WAVE_HIGH >= 5 && g.c.w.WIND_INFLOW >= 5)[0];
+  console.log('\n  ★[천장 비교] 제약 ①+② 아래 도달 가능한 최고 F2 — 파고·풍향을 빼야만 하는가?');
+  console.log(`    파고·풍향 = 0  강제: ${bestDrop ? `${bestDrop.c.id.padEnd(28)} F2 ${fmt(bestDrop.e.f2, 3)}  AUC ${fmt(bestDrop.e.auc, 3)}  재현율 ${pct(bestDrop.e.d.recall)}  오경보율 ${pct(bestDrop.e.faNone)}` : '없음'}`);
+  console.log(`    파고·풍향 ≥ 5  강제: ${bestKeep ? `${bestKeep.c.id.padEnd(28)} F2 ${fmt(bestKeep.e.f2, 3)}  AUC ${fmt(bestKeep.e.auc, 3)}  재현율 ${pct(bestKeep.e.d.recall)}  오경보율 ${pct(bestKeep.e.faNone)}` : '없음'}`);
+  if (bestDrop && bestKeep) {
+    const bs = bootstrapDiff(units, bestKeep.c, bestDrop.c);
+    console.log(
+      `    두 천장의 짝지은 부트스트랩: ΔAUC ${fmt(bs.aucMean, 4)} CI[${fmt(bs.auc[0], 3)}, ${fmt(bs.auc[1], 3)}]  ` +
+        `Δ재현율 CI[${pct(bs.recall[0])}, ${pct(bs.recall[1])}]  Δ오경보율 CI[${pct(bs.faNone[0])}, ${pct(bs.faNone[1])}]`,
+    );
+  }
+
+  // =====================================================================================
+  // 과제 E-2b: ★ NEARBY_ALERT 가중치 스윕 — 고정 구간이 강요하는 삼자택일
+  //
+  //   고정 구간(caution 31 / danger 56 / severe 76)에서 다음 셋은 **동시에 성립할 수 없다**:
+  //     (i)  NIFS 고밀도 속보 하나만으로 danger 도달  → NEARBY + 취약도 ≥ 56 → NEARBY ≥ 51
+  //     (ii) 관측(수온 등)만으로 caution 도달          → 관측 룰 합 ≥ 31
+  //     (iii) NIFS + 여름철 평범한 관측이 severe 로 튀지 않음 → 합 < 76
+  //   (i)+(ii) ⇒ 합 ≥ 56 + (31 − 5) = 82 > 76 ⇒ (iii) 위반. 산수가 그렇다.
+  //   → 셋 중 하나를 포기해야 한다. 아래 표가 그 대가를 보여준다.
+  // =====================================================================================
+  console.log('\n' + '-'.repeat(110));
+  console.log('【과제 E-2b】 ★ NEARBY_ALERT 스윕 (나머지 고정: TEMP_UP15 / TEMP_7D10 / PAST5 / WAVE5 / WIND5)');
+  console.log('  고정 구간이 강요하는 삼자택일: NIFS단독→danger / 관측만→caution / severe 희소  — 셋 다는 불가능하다.');
+  console.log(
+    `  ${'NEARBY'.padStart(6)}  ${'AUC'.padStart(5)}  ${'danger+재현'.padStart(10)}  ${'danger+오경보'.padStart(12)}  ${'F1'.padStart(4)}  ` +
+      `${'caution+재현'.padStart(11)}  ${'caution+오경보'.padStart(13)}  ${'severe수'.padStart(8)}  ${'severe정밀'.padStart(9)}  ${'관측만최대'.padStart(9)}`,
+  );
+  for (const nb of [30, 35, 40, 45, 50, 55, 60]) {
+    const w = weights({ NEARBY_ALERT: nb, TEMP_UP: 15, TEMP_7D_AVG: 10, PAST_OCCURRENCE: 5, WAVE_HIGH: 5, WIND_INFLOW: 5 });
+    const e = evaluateCandidate(units, { id: `N${nb}`, label: '', w, cut: PROD_CUT });
+    const obsOnly = w.TEMP_UP + w.TEMP_7D_AVG + w.WAVE_HIGH + w.WIND_INFLOW + w.CURRENT_INFLOW + w.PAST_OCCURRENCE + w.BEACH_VULNERABILITY;
+    const mark = nb === 40 ? '  ← 채택' : nb >= 51 ? '  (NIFS 단독 danger, 대신 severe 폭발)' : '';
+    console.log(
+      `  ${String(nb).padStart(6)}  ${fmt(e.auc, 3)}  ${pct(e.d.recall).padStart(10)}  ${pct(e.faNone).padStart(12)}  ${fmt(e.d.f1, 2).padStart(4)}  ` +
+        `${pct(e.c.recall).padStart(11)}  ${pct(e.faNoneCaution).padStart(13)}  ${String(e.severeCount).padStart(8)}  ${pct(e.severePrecision).padStart(9)}  ${String(obsOnly).padStart(9)}${mark}`,
+    );
+  }
+  console.log('  * severe = 대응 권고상 "구역 폐쇄 검토 / 입수 통제". 136주 중 18주(13%)가 severe 면 아무도 안 믿는다.');
+  console.log('  * 베이스라인(직전주 NIFS 복사) danger+ 재현율 69.2% / F1 0.72 — NEARBY≥51 이어야 이 값에 닿는다.');
+
+  // =====================================================================================
+  // 과제 E-3: 도달 가능성 — "NIFS 신호 없이 danger 가 뜨는가?" (경보 피로 구조 점검)
+  // =====================================================================================
+  console.log('\n' + '-'.repeat(110));
+  console.log('【과제 E-3】 구조 점검 — 각 후보에서 관측만으로 도달 가능한 최대 점수');
+  console.log('  (제보 0건 가정. "NIFS 없이" = NEARBY_ALERT 미발화 상태에서 모든 관측 룰이 동시에 켜진 최악의 날)');
+  for (const c of candidates) {
+    const w = c.w;
+    const obsOnly = w.TEMP_UP + w.TEMP_7D_AVG + w.WAVE_HIGH + w.WIND_INFLOW + w.CURRENT_INFLOW + w.PAST_OCCURRENCE + w.BEACH_VULNERABILITY;
+    const withNearby = obsOnly + w.NEARBY_ALERT;
+    const lvl = (s: number) => ['safe', 'caution', 'danger', 'severe'][levelRankOf(Math.min(100, s), c.cut)];
+    console.log(
+      `  ${c.id.padEnd(14)} NIFS 없이 최대 ${String(obsOnly).padStart(3)} (${lvl(obsOnly)})   NIFS 포함 최대 ${String(withNearby).padStart(3)} (${lvl(withNearby)})`,
+    );
+  }
+  console.log('  * CURRENT_INFLOW 는 백테스트 전 기간 결측이지만 프로덕션(중문 KHOA)에서는 켜질 수 있다 → 최대치 계산에 포함.');
+
+  // =====================================================================================
+  // 과제 E-4: 단계 구간을 옮길 수 있다면? (src 수정이 필요한 시나리오 — 이번 작업 범위 밖)
+  // =====================================================================================
+  console.log('\n' + '-'.repeat(110));
+  console.log('【과제 E-4】 danger 컷오프 스윕 — 구간을 옮기면 더 나아지는가? (src/shared/kernel/risk-level.ts 수정 필요)');
+  for (const c of candidates.filter((x) => ['(a) v1', '(c) v2-drop', '(d) v2-keep5'].includes(x.id))) {
+    console.log(`\n  [${c.id}]  ${'컷오프'.padStart(5)}  ${'재현율'.padStart(7)}  ${'오경보율'.padStart(8)}  ${'F1'.padStart(5)}  ${'F2'.padStart(5)}`);
+    for (const cut of [25, 30, 35, 40, 45, 50, 56, 60, 65]) {
+      const e = evaluateCandidate(units, { ...c, cut: { ...PROD_CUT, danger: cut } });
+      const mark = cut === 56 ? '  ← 현행(고정)' : '';
+      console.log(
+        `            ${String(cut).padStart(5)}  ${pct(e.d.recall).padStart(7)}  ${pct(e.faNone).padStart(8)}  ${fmt(e.d.f1, 2).padStart(5)}  ${fmt(e.f2, 2).padStart(5)}${mark}`,
+      );
+    }
+  }
+
+  // =====================================================================================
+  // 과제 E-5: 시간 분할 (2026 홀드아웃)
+  // =====================================================================================
   const test = units.filter((u) => u.endDay >= '2026-01-01');
   const train = units.filter((u) => u.endDay < '2026-01-01');
-  console.log(`\n【과제 E-3】 시간 분할 (학습기간 ${train.length} / 2026 홀드아웃 ${test.length}, 고밀도 ${test.filter((u) => u.density === 'high').length})`);
+  console.log('\n' + '-'.repeat(110));
+  console.log(`【과제 E-5】 시간 분할 (학습기간 ${train.length} / 2026 홀드아웃 ${test.length}, 고밀도 ${test.filter((u) => u.density === 'high').length})`);
   if (test.length > 0 && test.some((u) => u.density === 'high') && test.some((u) => u.density !== 'high')) {
     const tHigh = test.map((u) => u.density === 'high');
-    for (const v of ['v1', 'v1-as-run', 'v2'] as VariantId[]) {
-      console.log(`  [${v}] 2026 AUC ${fmt(auc(test.map((u) => u.variant[v].score), tHigh))}`);
+    for (const c of candidates) {
+      const e = evaluateCandidate(test, c);
+      console.log(`  ${c.id.padEnd(14)} 2026 AUC ${fmt(e.auc, 3)}  재현율 ${pct(e.d.recall).padStart(6)}  오경보율 ${pct(e.faNone).padStart(6)}`);
     }
-    console.log(`  [베이스라인] 직전주 NIFS: 2026 AUC ${fmt(auc(test.map((u) => u.nearbyAlertCount), tHigh))}`);
-    console.log('  ⚠️ v2 가중치는 전체 표본의 룰 분석에서 나왔다 → 이 홀드아웃은 완전히 깨끗하지 않다.');
+    console.log(`  ${'(b) 베이스라인'.padEnd(14)} 2026 AUC ${fmt(auc(test.map((u) => u.nearbyAlertCount), tHigh), 3)}`);
+    console.log('  ⚠️ 표본 20개(고밀도 3개). 신뢰구간이 표 전체를 덮는다 — 순위를 논할 수준이 아니다.');
+    console.log('  ⚠️ v2 가중치는 전체 표본의 룰 분석에서 나왔다 → 이 홀드아웃은 깨끗한 검증이 아니다.');
   } else {
     console.log('  홀드아웃에 양성/음성이 모두 있지 않다 — 결론 없음');
   }
+
+  // =====================================================================================
+  // 과제 E-6: 최종 v2 확정판 — seed.ts 에 넣을 값 그대로
+  // =====================================================================================
+  console.log('\n' + '='.repeat(110));
+  const FINAL: Candidate = {
+    id: 'v2 (최종)',
+    label: 'seed.ts seedRiskRules() v2 — NEARBY40 / TEMP_UP15 / TEMP_7D10 / PAST5 / WAVE5 / WIND5 / CURRENT10 / VULN5',
+    w: weights({
+      NEARBY_ALERT: 40,
+      TEMP_UP: 15,
+      TEMP_7D_AVG: 10,
+      PAST_OCCURRENCE: 5,
+      WAVE_HIGH: 5,
+      WIND_INFLOW: 5,
+      CURRENT_INFLOW: 10,
+      BEACH_VULNERABILITY: 5,
+    }),
+    cut: PROD_CUT,
+  };
+  const fe = evaluateCandidate(units, FINAL);
+  console.log('【최종 v2】 ' + FINAL.label);
+  console.log(candidateLine(FINAL, fe));
+  console.log('  ' + metricsLine('danger 이상 (고밀도 탐지)', fe.d));
+  console.log('  ' + metricsLine('caution 이상 (고밀도 탐지)', fe.c));
+  console.log(`  출현 없는 주(n=${nNone}) 오경보율: danger+ ${pct(fe.faNone)} / caution+ ${pct(fe.faNoneCaution)}`);
+  console.log(`  severe: ${fe.severeCount}건 (${pct(fe.severeCount / units.length)}), 그중 실제 고밀도 ${pct(fe.severePrecision)}`);
+
+  // ★ 안전 서비스의 진짜 놓침: 고밀도 출현 주에 **아무 경고도 못 준** 경우
+  const v1c = candidates[0];
+  const e1 = evals.get('(a) v1')!;
+  const eDrop = evals.get('(c) v2-drop')!;
+  console.log('\n  ★ 진짜 놓침 = 고밀도 출현 주인데 "안전(safe)" 이라고 답한 수 (경고 0)');
+  console.log(`     v1          ${nHigh - e1.c.tp}건 / ${nHigh}`);
+  console.log(`     v2-drop     ${nHigh - eDrop.c.tp}건 / ${nHigh}`);
+  console.log(`     v2 (최종)   ${nHigh - fe.c.tp}건 / ${nHigh}`);
+  console.log(`     베이스라인   ${nHigh - baseM.tp}건 / ${nHigh}  (2단계뿐 — 경보 아니면 무언(無言))`);
+
+  const bsFinalV1 = bootstrapDiff(units, FINAL, v1c);
+  const bsFinalDrop = bootstrapDiff(units, FINAL, cDrop);
+  console.log(`\n  [부트스트랩] v2 − v1      : ΔAUC ${fmt(bsFinalV1.aucMean, 3)} CI[${fmt(bsFinalV1.auc[0], 3)}, ${fmt(bsFinalV1.auc[1], 3)}]  Δdanger+재현율 CI[${pct(bsFinalV1.recall[0])}, ${pct(bsFinalV1.recall[1])}]`);
+  console.log(`  [부트스트랩] v2 − v2-drop : ΔAUC ${fmt(bsFinalDrop.aucMean, 4)} CI[${fmt(bsFinalDrop.auc[0], 3)}, ${fmt(bsFinalDrop.auc[1], 3)}]  Δdanger+오경보율 CI[${pct(bsFinalDrop.faNone[0])}, ${pct(bsFinalDrop.faNone[1])}]`);
+  {
+    const te = test.length > 0 && test.some((u) => u.density === 'high') ? evaluateCandidate(test, FINAL) : null;
+    if (te) console.log(`  2026 홀드아웃: AUC ${fmt(te.auc, 3)}  danger+재현율 ${pct(te.d.recall)}  오경보율 ${pct(te.faNone)}  (n=${test.length}, 고밀도 ${test.filter((u) => u.density === 'high').length})`);
+  }
+  console.log('\n  ⚠️ 위 수치는 전부 **in-sample** 이다. 같은 136개 표본에서 가중치를 골랐다.');
+  console.log('  ⚠️ danger+ 재현율(57.7%)은 무지성 베이스라인(69.2%)보다 **낮다**. 고정 구간이 강요한 대가다(E-2b).');
+  console.log('     v2 가 베이스라인을 이기는 지점은 ① 순위(AUC 0.875 vs 0.823) ② 경고 도달률(caution+ 84.6% vs 69.2%)');
+  console.log('     ③ 베이스라인이 아예 못 하는 것(해변별 차이 / 시민 제보 / 24h·72h 예보) 이다.');
 
   // ---- 제보 룰
   console.log('\n【검증 불가】');

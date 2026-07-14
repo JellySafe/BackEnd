@@ -87,59 +87,222 @@ async function seedBeaches() {
   console.log(`  ✓ 해변 ${beaches.length}곳 (제주 지정 해수욕장)`);
 }
 
+type Rule = {
+  ruleCode: string;
+  ruleCategory: string;
+  ruleName: string;
+  score?: number;
+  minRiskLevel?: string;
+  conditionJson?: unknown;
+};
+
+/**
+ * v1 — 최초 점수표 (03_Data_AI 기획 초안, 데이터 검증 전 값).
+ *
+ * **지우지 않는다.** 롤백 경로이자 이력이다. RISK_RULE_VERSION=v1 로 되돌릴 수 있어야 한다.
+ * 백테스트 결과 이 표는 고밀도 출현 26주 중 3주만 '위험'으로 잡았다(재현율 11.5%, F1 0.20).
+ * 자세한 내용은 docs/backtest.md, docs/risk-rules-v2.md 참조.
+ */
+const RULES_V1: Rule[] = [
+  // 위험 변수 (risk_variable)
+  { ruleCode: 'TEMP_UP', ruleCategory: 'risk_variable', ruleName: '최근 3일 수온 상승', score: 10, conditionJson: { window_days: 3, delta_c: 1.5 } },
+  { ruleCode: 'TEMP_7D_AVG', ruleCategory: 'risk_variable', ruleName: '최근 7일 평균 수온 높음', score: 5, conditionJson: { window_days: 7, threshold_c: 24 } },
+  { ruleCode: 'WAVE_HIGH', ruleCategory: 'risk_variable', ruleName: '파고 높음', score: 10, conditionJson: { threshold_m: 1.5 } },
+  { ruleCode: 'WIND_INFLOW', ruleCategory: 'risk_variable', ruleName: '해변 방향 유입 풍향', score: 10, conditionJson: { angle_tolerance: 45 } },
+  { ruleCode: 'CURRENT_INFLOW', ruleCategory: 'risk_variable', ruleName: '해변 방향 유입 해류', score: 10, conditionJson: { angle_tolerance: 45 } },
+  { ruleCode: 'PAST_OCCURRENCE', ruleCategory: 'risk_variable', ruleName: '과거 동일 시기 출현 이력', score: 15 },
+  { ruleCode: 'NEARBY_ALERT', ruleCategory: 'risk_variable', ruleName: '인근 해역 해파리 속보', score: 15, conditionJson: { radius_km: 30 } },
+  { ruleCode: 'BEACH_VULNERABILITY', ruleCategory: 'risk_variable', ruleName: '해수욕장 취약도', score: 5 },
+  // 제보 가중치 (report_weight)
+  { ruleCode: 'REPORT_GENERAL', ruleCategory: 'report_weight', ruleName: '일반 해파리 발견 제보', score: 10 },
+  { ruleCode: 'REPORT_MULTIPLE', ruleCategory: 'report_weight', ruleName: '다수 출현 제보', score: 15 },
+  { ruleCode: 'REPORT_TOXIC', ruleCategory: 'report_weight', ruleName: '독성 해파리 의심 제보', score: 25 },
+  { ruleCode: 'REPORT_TOXIC_MULTIPLE', ruleCategory: 'report_weight', ruleName: '독성 의심 + 다수 출현 제보', score: 35 },
+  { ruleCode: 'REPORT_STING', ruleCategory: 'report_weight', ruleName: '쏘임 사고 제보', score: 40 },
+  // 위험 단계 구간 (level_threshold) — RISK-001
+  { ruleCode: 'LEVEL_SAFE', ruleCategory: 'level_threshold', ruleName: '안전 0~30', conditionJson: { min: 0, max: 30 } },
+  { ruleCode: 'LEVEL_CAUTION', ruleCategory: 'level_threshold', ruleName: '주의 31~55', conditionJson: { min: 31, max: 55 } },
+  { ruleCode: 'LEVEL_DANGER', ruleCategory: 'level_threshold', ruleName: '위험 56~75', conditionJson: { min: 56, max: 75 } },
+  { ruleCode: 'LEVEL_SEVERE', ruleCategory: 'level_threshold', ruleName: '심각 76~100', conditionJson: { min: 76, max: 100 } },
+  // 최소 단계 보장 (min_level) — RISK-002
+  { ruleCode: 'MIN_TOXIC_1', ruleCategory: 'min_level', ruleName: '독성 의심 1건 → 최소 주의', minRiskLevel: 'caution' },
+  { ruleCode: 'MIN_TOXIC_HIGH', ruleCategory: 'min_level', ruleName: '독성 의심 + 신뢰도 높음 → 최소 위험', minRiskLevel: 'danger', conditionJson: { confidence_gte: 0.8 } },
+  { ruleCode: 'MIN_TOXIC_STING', ruleCategory: 'min_level', ruleName: '독성 의심 + 쏘임 → 최소 심각', minRiskLevel: 'severe' },
+];
+
+/**
+ * v2 — 백테스트 기반 개정 점수표 (2026-07-14).
+ *
+ * 근거: `scripts/backtest-risk.ts` — 국립수산과학원 주간보고 68건(2024-05~2026-07)을 정답으로,
+ *       평가 단위 = 주 × 시군구 = 136 (고밀도 26 / 저밀도 39 / 없음 71).
+ *       결정 과정과 한계는 **`docs/risk-rules-v2.md` 에 전부 적어 두었다. 그걸 먼저 읽어라.**
+ *
+ * 요약 성능 (in-sample, 136 표본):
+ *   AUC 0.783 → **0.875** / danger+ F1 0.20 → **0.65** / 고밀도인데 '안전'이라 답한 주 9건 → **4건**
+ *
+ * ⚠️ 두 가지를 **반드시** 알고 만져라.
+ *
+ *  1. **단계 구간(56/76)은 이 표로 못 바꾼다.** `src/shared/kernel/risk-level.ts` 의
+ *     `riskLevelFromScore` 에 하드코딩돼 있고, 아래 `level_threshold` 행은 엔진이 읽지도 않는다
+ *     (rule-config.kysely-query 는 score / min_risk_level 만 select 한다). 표시용 문서일 뿐이다.
+ *     → **점수를 고정된 구간에 맞춰 배치했다.** 구간을 옮기면 아래 값도 다시 잡아야 한다.
+ *
+ *  2. `condition_json` 도 엔진이 읽지 않는다. 실제 임계값은 `risk-assessment.ts` 의 `THRESHOLDS` 다.
+ *     v1 의 condition_json 은 코드와 **어긋나 있었다**(delta_c 1.5 vs 실제 2.0, threshold_c 24 vs 실제 25,
+ *     angle_tolerance 45 vs 실제 60). 관리자 화면이 거짓말을 하고 있었다는 뜻이다.
+ *     → v2 에서는 **코드의 실제 값과 일치시켰다.** 코드를 바꾸면 여기도 같이 바꿔라.
+ */
+const RULES_V2: Rule[] = [
+  // ─────────────────────────────────────────────────────────── 위험 변수 (risk_variable)
+  // NEARBY_ALERT 15 → 40.
+  //   리프트 12.69(고밀도 주 69.2% 발화 vs 그 외 5.5%), 단일 룰 AUC 0.819, p<0.001.
+  //   **8개 룰 중 유일하게 압도적인 신호인데 +15 로 과소평가돼 있었다.** 점수표에서 NEARBY 를 빼면
+  //   AUC 가 0.783 → 0.649 로 주저앉는다 — 나머지 신호는 사실상 이 룰 하나다.
+  //   왜 40 이고 45+ 가 아닌가: 45 이상이면 severe(76+) 가 폭발한다(백테스트 E-2b).
+  //     NEARBY 40 → severe 5건(3.7%) / 45 → 14건(10.3%) / 55 → 18건(13.2%).
+  //   severe 는 대응 권고상 "구역 폐쇄 검토 / 입수 통제" 다. 같은 기간 NIFS 자신이 특보를 낸 건
+  //   136 단위 중 6건(4.4%)뿐이다. 3.7% 는 그 눈금과 맞고, 10% 는 아무도 안 믿는다.
+  //   대가: NIFS 속보 **하나만으로는 danger 에 못 간다**(40+취약도5 = 45 = 주의).
+  //         danger 는 "NIFS 속보 + 그 해변의 수온 상승"을 요구한다. danger+ 재현율 57.7% 로,
+  //         무지성 베이스라인(지난주 보고서 복사, 69.2%)보다 낮다. 이건 고정 구간이 강요한 대가다.
+  //         (구간을 danger 45 로 내리면 재현율 69.2% / 오경보 0% 로 베이스라인과 같아진다 — risk-rules-v2.md 참조)
+  { ruleCode: 'NEARBY_ALERT', ruleCategory: 'risk_variable', ruleName: '인근 해역 해파리 속보', score: 40, conditionJson: { radius_km: 30, window_days: 7, fallback: 'region_match_when_no_coords' } },
+
+  // TEMP_UP 10 → 15. 리프트 1.93 (고밀도 80.8% / 그 외 41.8%), 단일 AUC 0.695, p<0.001.
+  //   NEARBY 다음으로 유의한 유일한 신호. 해변마다 최근접 부이가 달라 **해변별 변별력의 실질적 원천**이다
+  //   (NEARBY·PAST·취약도는 시군구/상수라 해변을 가르지 못한다).
+  { ruleCode: 'TEMP_UP', ruleCategory: 'risk_variable', ruleName: '최근 3일 수온 상승', score: 15, conditionJson: { window_days: 3, rise_delta_c: 2.0, or_abs_temp_c: 26.0 } },
+
+  // TEMP_7D_AVG 5 → 10. 리프트 1.86 (69.2% / 37.3%), 단일 AUC 0.660, p=0.003.
+  { ruleCode: 'TEMP_7D_AVG', ruleCategory: 'risk_variable', ruleName: '최근 7일 평균 수온 높음', score: 10, conditionJson: { window_days: 7, threshold_c: 25.0 } },
+
+  // PAST_OCCURRENCE 15 → 5. 리프트 1.28, p=0.31 — **유의하지 않다.** +15 는 과대평가였다.
+  //   게다가 구조적으로 불리하다: 데이터가 2024-05 부터라 2024년 주간에는 '과거 연도'가 아예 없어
+  //   항상 0 이었다(실질적으로 2025~2026 구간에서만 평가됨). 0 으로 지우지 않는 이유는
+  //   계절성 자체는 도메인 상식이고, 5 점이면 단계를 뒤집지 못하는 보조 근거로만 작동하기 때문이다.
+  { ruleCode: 'PAST_OCCURRENCE', ruleCategory: 'risk_variable', ruleName: '과거 동일 시기 출현 이력', score: 5, conditionJson: { season_window_days: 14, min_age_years: 1 } },
+
+  // ★ WAVE_HIGH 10 → 5 (제거하지 않는다).
+  //   백테스트가 잰 것: 리프트 0.67 (고밀도 주에 **오히려 덜** 켜졌다), p=0.48 → 개체군 밀도 예측력 없음.
+  //   그런데 이 룰의 원래 취지는 밀도 예측이 아니라 **해안 노출 위험**(거친 바다가 해파리를 물가로 밀어
+  //   붙여 쏘임이 는다)이다. 정답이 '시군구 주간 출현률'이라 그 가설은 **이 데이터로 검증 자체가 불가능**하다.
+  //   0.67 을 "파고는 무의미하다"로 읽는 건 과잉 해석이다.
+  //   그래서 "빼야 하는가"를 절제 실험으로 직접 쟀다(백테스트 E-1, 16개 조합 + 짝지은 부트스트랩 3000회):
+  //     · danger 단계 성능: 파고·풍향을 0~15 어디에 두든 **완전히 동일**하다.
+  //       (재현율 57.7% / 오경보율 0% / F1 0.65 — Δ재현율 95% CI [0.0%, 0.0%], Δ오경보율 CI [0.0%, 0.0%])
+  //       → 빼도 얻는 게 없고, 남겨도 잃는 게 없다. **데이터는 이 둘을 구별하지 못한다.**
+  //     · caution 단계에서는 남기는 쪽이 낫다: 고밀도 주인데 '안전'이라 답한 건수가 6건 → **4건**으로 준다.
+  //       대가는 출현 없는 주의 caution 오경보 7.0% → 14.1% (5건 → 10건 / 71). caution 은 '모니터링 강화'라
+  //       공개 경보가 아니다. 놓침 2건과 caution 헛경보 5건이면 안전 서비스에선 남기는 쪽이 맞다.
+  //     · AUC 0.868 → 0.875 (ΔAUC 95% CI [-0.010, +0.025] — 0 을 포함하니 개선을 주장하지 않는다).
+  //   왜 하필 5 인가 (10 이 아니라):
+  //     10 이면 관측만으로 도달 가능한 최대가 65점 = **danger** 가 된다. 신호가 없다고 측정된 룰들로
+  //     해파리 근거 0인 날에 '위험'을 선언하는 경로가 열린다. 5 면 관측만으로는 최대 55점 = 주의 천장이다.
+  //     → **5 는 구조 제약을 지키면서 caution 도달률을 최대로 끌어올리는 유일한 값이다.**
+  //   그리고 실용적 이유: 파고·풍향은 기상청 해상예보가 24h/72h 를 **재평가하는 유일한 입구**다
+  //   (risk-horizon.ts FORECAST_BACKED_CODES). 0 으로 만들면 예보 연동이 통째로 죽는다.
+  { ruleCode: 'WAVE_HIGH', ruleCategory: 'risk_variable', ruleName: '파고 높음', score: 5, conditionJson: { threshold_m: 1.5 } },
+
+  // ★ WIND_INFLOW 10 → 5 (제거하지 않는다). 위 WAVE_HIGH 와 완전히 같은 논거.
+  //   백테스트: 리프트 0.93, p=0.77 — 무신호. 다만 **해변 방위각(facing_direction)을 쓰는 유일한 룰**이라
+  //   이걸 빼면 해변별 변별력의 축이 '최근접 부이 수온' 하나만 남는다.
+  //   (BEACH_VULNERABILITY 는 해변별 취약도 값을 실제로 쓰지 않는다 — 아래 주석 참조.)
+  { ruleCode: 'WIND_INFLOW', ruleCategory: 'risk_variable', ruleName: '해변 방향 유입 풍향', score: 5, conditionJson: { angle_tolerance: 60, min_wind_speed_ms: 5.0 } },
+
+  // CURRENT_INFLOW 10 유지. **검증 불가라 유지한다.**
+  //   기상청은 유향·유속을 관측하지 않고 국립해양조사원(중문 TW_0075)은 과거 조회 API 가 없다
+  //   → 백테스트 전 기간 100% 결측이라 신호가 있는지 없는지 **측정 자체를 못 했다.**
+  //   근거 없이 올리지도 내리지도 않는다. 실시간 데이터가 쌓이면 재평가할 것.
+  //   (부작용 주의: 이 룰이 실제로 켜지는 해변은 중문뿐인데, 10점이라 중문만 다른 해변보다 상시 유리해진다.
+  //    관측만으로 도달 가능한 최대 55점 계산에는 이 10점이 포함돼 있다.)
+  { ruleCode: 'CURRENT_INFLOW', ruleCategory: 'risk_variable', ruleName: '해변 방향 유입 해류', score: 10, conditionJson: { angle_tolerance: 60, min_current_speed_ms: 0.3 } },
+
+  // BEACH_VULNERABILITY 5 유지. **검증 불가라 유지한다.**
+  //   정답이 시군구 단위라 해변 간 차이를 검증할 방법이 없다(백테스트 한계 1번).
+  //   ⚠️ 별개로 알아둘 것: 엔진은 `beaches.vulnerability_score`(5~20)를 **점수에 쓰지 않는다.**
+  //      risk-assessment.ts 는 그 값이 0 보다 큰지만 보고 이 룰 점수(=5)를 통째로 더한다.
+  //      즉 12개 해변 전부에 붙는 **상수 오프셋**이고, 해변을 전혀 가르지 못한다. 순위에 영향 없음.
+  //      (고치려면 도메인 코드를 바꿔야 한다 — 이번 개정 범위 밖. risk-rules-v2.md 에 제안으로 남겼다.)
+  { ruleCode: 'BEACH_VULNERABILITY', ruleCategory: 'risk_variable', ruleName: '해수욕장 취약도', score: 5 },
+
+  // ────────────────────────────────────────────────────── 제보 가중치 (report_weight) — 전부 v1 과 동일
+  // **검증 불가라 유지한다.** 서비스가 출시된 적이 없어 과거 시민 제보 데이터가 0건이다.
+  // 백테스트는 verifiedReports=[] 로 돌렸다 → 이 5개 룰은 단 한 번도 평가되지 않았다.
+  // 근거 없이 값을 흔들면 검증된 룰(NEARBY/TEMP)과의 상대 균형만 망가진다.
+  //
+  // 참고 — v2 로 바뀐 뒤의 상대 균형은 오히려 **더 말이 된다**:
+  //   v1: NEARBY(15) < REPORT_TOXIC(25) < REPORT_STING(40)  … 일주일 묵은 광역 속보가 일반 제보(10)와 비슷했다.
+  //   v2: NEARBY(40) = REPORT_STING(40)                     … "지난주 인근 고밀도 확인" ≈ "쏘임 사고 1건" 무게.
+  // 또한 독성/쏘임은 점수와 무관하게 min_level 보장이 단계를 끌어올린다(RISK-002) — 점수 균형이 안전망은 아니다.
+  { ruleCode: 'REPORT_GENERAL', ruleCategory: 'report_weight', ruleName: '일반 해파리 발견 제보', score: 10 },
+  { ruleCode: 'REPORT_MULTIPLE', ruleCategory: 'report_weight', ruleName: '다수 출현 제보', score: 15 },
+  { ruleCode: 'REPORT_TOXIC', ruleCategory: 'report_weight', ruleName: '독성 해파리 의심 제보', score: 25 },
+  { ruleCode: 'REPORT_TOXIC_MULTIPLE', ruleCategory: 'report_weight', ruleName: '독성 의심 + 다수 출현 제보', score: 35 },
+  { ruleCode: 'REPORT_STING', ruleCategory: 'report_weight', ruleName: '쏘임 사고 제보', score: 40 },
+
+  // ────────────────────────────────────────────── 위험 단계 구간 (level_threshold) — RISK-001
+  // ⚠️ 이 행들은 **표시용**이다. 엔진은 risk-level.ts 의 하드코딩 값을 쓴다(위 헤더 주석 1번).
+  //    v1 과 같은 값을 그대로 둔다 — 코드가 그렇게 동작하므로, 다르게 적으면 화면이 거짓말을 하게 된다.
+  //    백테스트는 danger 를 45 로 내리면 재현율 57.7% → 69.2%(오경보율 0% 유지, F1 0.65 → 0.71)로
+  //    좋아진다고 말한다. 그건 src 수정이 필요해 이번 개정에 넣지 않았다 — risk-rules-v2.md 의 제안 참조.
+  //    **구간을 옮기면 이 네 행도 같이 고쳐야 한다.**
+  { ruleCode: 'LEVEL_SAFE', ruleCategory: 'level_threshold', ruleName: '안전 0~30', conditionJson: { min: 0, max: 30 } },
+  { ruleCode: 'LEVEL_CAUTION', ruleCategory: 'level_threshold', ruleName: '주의 31~55', conditionJson: { min: 31, max: 55 } },
+  { ruleCode: 'LEVEL_DANGER', ruleCategory: 'level_threshold', ruleName: '위험 56~75', conditionJson: { min: 56, max: 75 } },
+  { ruleCode: 'LEVEL_SEVERE', ruleCategory: 'level_threshold', ruleName: '심각 76~100', conditionJson: { min: 76, max: 100 } },
+
+  // ──────────────────────────────────────────────── 최소 단계 보장 (min_level) — RISK-002
+  // **검증 불가라 유지한다.** 제보 데이터가 없어 백테스트로 평가되지 않았다(위와 동일한 이유).
+  // ⚠️ 이 행들도 엔진이 읽지 않는다 — deriveMinLevelTriggers 가 도메인 코드에 하드코딩돼 있다.
+  //    v2 에서 관측만으로 severe 에 도달하는 경로를 막았으므로(최대 55점), **severe 는 사실상
+  //    'NIFS 고밀도 + 강한 관측' 이거나 '독성+쏘임 제보' 로만 뜬다.** 이 보장 룰의 중요도가 오히려 커졌다.
+  { ruleCode: 'MIN_TOXIC_1', ruleCategory: 'min_level', ruleName: '독성 의심 1건 → 최소 주의', minRiskLevel: 'caution' },
+  { ruleCode: 'MIN_TOXIC_HIGH', ruleCategory: 'min_level', ruleName: '독성 의심 + 신뢰도 높음 → 최소 위험', minRiskLevel: 'danger', conditionJson: { confidence_gte: 0.8 } },
+  { ruleCode: 'MIN_TOXIC_STING', ruleCategory: 'min_level', ruleName: '독성 의심 + 쏘임 → 최소 심각', minRiskLevel: 'severe' },
+];
+
+/**
+ * 위험도 룰 점수표.
+ *
+ * 버전을 **여러 개 나란히** 심는다. 애플리케이션은 `RISK_RULE_VERSION` 환경변수로 고른다
+ * (AppConfig.riskRuleVersion, 기본 'v1'). v2 를 쓰려면 `RISK_RULE_VERSION=v2` 를 넣어라.
+ * v1 을 지우지 않으므로 환경변수 한 줄로 즉시 롤백된다.
+ */
 async function seedRiskRules() {
-  const version = 'v1';
-  type Rule = {
-    ruleCode: string;
-    ruleCategory: string;
-    ruleName: string;
-    score?: number;
-    minRiskLevel?: string;
-    conditionJson?: unknown;
-  };
-  const rules: Rule[] = [
-    // 위험 변수 (risk_variable)
-    { ruleCode: 'TEMP_UP', ruleCategory: 'risk_variable', ruleName: '최근 3일 수온 상승', score: 10, conditionJson: { window_days: 3, delta_c: 1.5 } },
-    { ruleCode: 'TEMP_7D_AVG', ruleCategory: 'risk_variable', ruleName: '최근 7일 평균 수온 높음', score: 5, conditionJson: { window_days: 7, threshold_c: 24 } },
-    { ruleCode: 'WAVE_HIGH', ruleCategory: 'risk_variable', ruleName: '파고 높음', score: 10, conditionJson: { threshold_m: 1.5 } },
-    { ruleCode: 'WIND_INFLOW', ruleCategory: 'risk_variable', ruleName: '해변 방향 유입 풍향', score: 10, conditionJson: { angle_tolerance: 45 } },
-    { ruleCode: 'CURRENT_INFLOW', ruleCategory: 'risk_variable', ruleName: '해변 방향 유입 해류', score: 10, conditionJson: { angle_tolerance: 45 } },
-    { ruleCode: 'PAST_OCCURRENCE', ruleCategory: 'risk_variable', ruleName: '과거 동일 시기 출현 이력', score: 15 },
-    { ruleCode: 'NEARBY_ALERT', ruleCategory: 'risk_variable', ruleName: '인근 해역 해파리 속보', score: 15, conditionJson: { radius_km: 30 } },
-    { ruleCode: 'BEACH_VULNERABILITY', ruleCategory: 'risk_variable', ruleName: '해수욕장 취약도', score: 5 },
-    // 제보 가중치 (report_weight)
-    { ruleCode: 'REPORT_GENERAL', ruleCategory: 'report_weight', ruleName: '일반 해파리 발견 제보', score: 10 },
-    { ruleCode: 'REPORT_MULTIPLE', ruleCategory: 'report_weight', ruleName: '다수 출현 제보', score: 15 },
-    { ruleCode: 'REPORT_TOXIC', ruleCategory: 'report_weight', ruleName: '독성 해파리 의심 제보', score: 25 },
-    { ruleCode: 'REPORT_TOXIC_MULTIPLE', ruleCategory: 'report_weight', ruleName: '독성 의심 + 다수 출현 제보', score: 35 },
-    { ruleCode: 'REPORT_STING', ruleCategory: 'report_weight', ruleName: '쏘임 사고 제보', score: 40 },
-    // 위험 단계 구간 (level_threshold) — RISK-001
-    { ruleCode: 'LEVEL_SAFE', ruleCategory: 'level_threshold', ruleName: '안전 0~30', conditionJson: { min: 0, max: 30 } },
-    { ruleCode: 'LEVEL_CAUTION', ruleCategory: 'level_threshold', ruleName: '주의 31~55', conditionJson: { min: 31, max: 55 } },
-    { ruleCode: 'LEVEL_DANGER', ruleCategory: 'level_threshold', ruleName: '위험 56~75', conditionJson: { min: 56, max: 75 } },
-    { ruleCode: 'LEVEL_SEVERE', ruleCategory: 'level_threshold', ruleName: '심각 76~100', conditionJson: { min: 76, max: 100 } },
-    // 최소 단계 보장 (min_level) — RISK-002
-    { ruleCode: 'MIN_TOXIC_1', ruleCategory: 'min_level', ruleName: '독성 의심 1건 → 최소 주의', minRiskLevel: 'caution' },
-    { ruleCode: 'MIN_TOXIC_HIGH', ruleCategory: 'min_level', ruleName: '독성 의심 + 신뢰도 높음 → 최소 위험', minRiskLevel: 'danger', conditionJson: { confidence_gte: 0.8 } },
-    { ruleCode: 'MIN_TOXIC_STING', ruleCategory: 'min_level', ruleName: '독성 의심 + 쏘임 → 최소 심각', minRiskLevel: 'severe' },
+  const versions: Array<{ version: string; rules: Rule[] }> = [
+    { version: 'v1', rules: RULES_V1 },
+    { version: 'v2', rules: RULES_V2 },
   ];
-  for (const r of rules) {
-    await prisma.riskRuleConfig.upsert({
-      where: { uk_risk_rule_configs_code_version: { ruleCode: r.ruleCode, version } },
-      update: {},
-      create: {
-        ruleCode: r.ruleCode,
-        ruleCategory: r.ruleCategory,
-        ruleName: r.ruleName,
-        score: r.score ?? null,
-        minRiskLevel: r.minRiskLevel ?? null,
-        conditionJson: (r.conditionJson ?? undefined) as never,
-        version,
-        active: true,
-      },
-    });
+
+  for (const { version, rules } of versions) {
+    for (const r of rules) {
+      await prisma.riskRuleConfig.upsert({
+        where: { uk_risk_rule_configs_code_version: { ruleCode: r.ruleCode, version } },
+        // 점수표는 재시드 시 코드값으로 수렴해야 한다(update:{} 면 한번 심은 값이 영원히 고정된다).
+        // v2 를 튜닝해 다시 심을 때 DB 가 따라오지 않으면 시드 파일이 거짓말을 하게 된다.
+        update: {
+          ruleCategory: r.ruleCategory,
+          ruleName: r.ruleName,
+          score: r.score ?? null,
+          minRiskLevel: r.minRiskLevel ?? null,
+          conditionJson: (r.conditionJson ?? undefined) as never,
+          active: true,
+        },
+        create: {
+          ruleCode: r.ruleCode,
+          ruleCategory: r.ruleCategory,
+          ruleName: r.ruleName,
+          score: r.score ?? null,
+          minRiskLevel: r.minRiskLevel ?? null,
+          conditionJson: (r.conditionJson ?? undefined) as never,
+          version,
+          active: true,
+        },
+      });
+    }
+    console.log(`  ✓ 위험도 룰 ${rules.length}건 (version=${version})`);
   }
-  console.log(`  ✓ 위험도 룰 ${rules.length}건 (version=${version})`);
+  console.log(`    → 적용 버전은 RISK_RULE_VERSION 환경변수로 고른다 (기본 v1, 백테스트 권장 v2)`);
 }
 
 async function seedRecommendations() {
