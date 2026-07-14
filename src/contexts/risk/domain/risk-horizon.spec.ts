@@ -43,12 +43,27 @@ describe('applyHorizon', () => {
     }
   });
 
-  it('원인 설명에 예측 시점을 덧붙여 "언제 기준 값인지"를 스스로 밝힌다', () => {
-    const out = applyHorizon([f('TEMP_UP', 10, '현재 수온 27.4℃')], '24h');
-    expect(out[0].detail).toBe('현재 수온 27.4℃ (24시간 후 예상)');
-    expect(applyHorizon([f('TEMP_UP', 10, '현재 수온 27.4℃')], 'now')[0].detail).toBe(
-      '현재 수온 27.4℃',
-    );
+  it('지평을 되풀이하지 않고, 그 요인이 시간에 따라 어떻게 작용하는지만 덧붙인다', () => {
+    // 화면이 이미 "24시간 후" 탭으로 지평을 말하고 있다. 원인마다 또 "(24시간 후 예상)" 을
+    // 붙이면 모든 줄이 같은 접미사를 달아 지평별 차이가 묻힌다.
+    const decaying = applyHorizon([f('TEMP_UP', 10, '현재 수온 27.4℃')], '24h');
+    expect(decaying[0].detail).toBe('현재 수온 27.4℃ (시간이 지나며 영향 감소)');
+
+    const amplifying = applyHorizon([f('NEARBY_ALERT', 15, '인근 해역 속보 2건')], '72h');
+    expect(amplifying[0].detail).toBe('인근 해역 속보 2건 (시간이 지날수록 유입 가능성 증가)');
+  });
+
+  it('시간이 지나도 그대로인 근거에는 아무 말도 덧붙이지 않는다', () => {
+    // "과거 출현 기록 3건 (72시간 후 예상)" 같은 문장은 성립하지 않는다.
+    // 과거 기록과 취약도는 예측 대상이 아니라 불변 사실이다.
+    for (const h of ['now', '24h', '72h'] as const) {
+      expect(applyHorizon([f('PAST_OCCURRENCE', 15, '과거 출현 기록 3건')], h)[0].detail).toBe(
+        '과거 출현 기록 3건',
+      );
+      expect(applyHorizon([f('BEACH_VULNERABILITY', 5, '취약도 지수 10')], h)[0].detail).toBe(
+        '취약도 지수 10',
+      );
+    }
   });
 
   it('카탈로그에 없는 코드는 점수를 임의로 깎지 않는다', () => {

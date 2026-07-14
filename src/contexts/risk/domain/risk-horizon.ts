@@ -38,18 +38,30 @@ const HORIZON_WEIGHT: Record<RiskFactorCode, Partial<Record<RiskHorizon, number>
   REPORT_STING: { now: 1, '6h': 0.9, '24h': 0.7, '72h': 0.4 },
 };
 
-/** 지평별 설명 접미사. 원인 태그가 "왜 이 시점에 이 값인지"를 스스로 설명하게 한다. */
-const HORIZON_SUFFIX: Record<RiskHorizon, string> = {
-  now: '',
-  '6h': ' (6시간 후 예상)',
-  '24h': ' (24시간 후 예상)',
-  '72h': ' (72시간 후 예상)',
-};
-
 function weightOf(code: string, horizon: RiskHorizon): number {
   const row = HORIZON_WEIGHT[code as RiskFactorCode];
   // 카탈로그에 없는 코드는 보수적으로 그대로 유지한다(점수를 임의로 깎지 않는다).
   return row?.[horizon] ?? 1;
+}
+
+/**
+ * 요인 설명에 붙일 지평 효과 주석.
+ *
+ * 예전에는 모든 요인 뒤에 "(72시간 후 예상)" 을 기계적으로 붙였다. 두 가지가 잘못이었다.
+ *
+ *  1. **화면이 이미 지평을 말하고 있다.** 상세 화면은 현재/24시간 후/72시간 후 탭으로 나뉜다.
+ *     원인마다 지평을 또 반복하면 네 줄이 전부 같은 접미사를 달아, 정작 지평별로 달라진
+ *     내용(점수·요인 구성)이 묻히고 "같은 내용 복붙" 처럼 보인다. 실제 사용자 피드백이다.
+ *  2. **말이 안 되는 문장이 나온다.** "과거 출현 기록 3건 (72시간 후 예상)" — 과거 기록은
+ *     예측 대상이 아니다. "현재 수온 24.7℃ ... (72시간 후 예상)" — 현재인지 미래인지 모순이다.
+ *
+ * 그래서 지평을 되풀이하지 않고, **그 요인이 시간이 지나며 어떻게 작용하는지**만 적는다.
+ * 값이 그대로인 요인(과거 이력·취약도 같은 시간 불변 사실)에는 아무것도 붙지 않는다.
+ */
+function horizonNote(weight: number): string {
+  if (weight === 1) return ''; // 시간이 지나도 그대로인 근거 → 덧붙일 말이 없다
+  if (weight > 1) return ' (시간이 지날수록 유입 가능성 증가)';
+  return ' (시간이 지나며 영향 감소)';
 }
 
 /**
@@ -61,16 +73,16 @@ export function applyHorizon(
   factors: FactorContribution[],
   horizon: RiskHorizon,
 ): FactorContribution[] {
-  const suffix = HORIZON_SUFFIX[horizon] ?? '';
   const out: FactorContribution[] = [];
 
   for (const f of factors) {
-    const delta = Math.round(f.delta * weightOf(f.code, horizon));
+    const weight = weightOf(f.code, horizon);
+    const delta = Math.round(f.delta * weight);
     if (delta === 0) continue; // 이 지평에서는 근거로 삼을 수 없는 요인
     out.push({
       ...f,
       delta,
-      detail: f.detail ? `${f.detail}${suffix}` : f.detail,
+      detail: f.detail ? `${f.detail}${horizonNote(weight)}` : f.detail,
     });
   }
 
