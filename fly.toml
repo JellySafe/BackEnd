@@ -17,6 +17,14 @@ primary_region = 'nrt'
   # 프론트엔드(Vercel) 도메인만 브라우저에서 API 호출 허용. 미지정 시 모든 origin 허용이라 반드시 명시한다.
   CORS_ORIGIN = 'https://jellysafe-public.vercel.app,https://jellysafe-admin.vercel.app'
 
+  # 수집 → 매핑 → 위험도 재산출을 30분마다 한 묶음으로 실행한다.
+  OBSERVATION_SYNC_CRON = '0 */30 * * * *'
+  # 위험도 재산출 전용 크론은 끈다. 위 배치가 이미 재산출하므로 켜두면 중복 적재만 된다.
+  RISK_RECALC_CRON = 'off'
+  # 90일 지난 산출 이력은 매일 03:40 에 정리한다(현재값 is_latest 행은 보존).
+  RISK_HISTORY_RETENTION_DAYS = '90'
+  RISK_HISTORY_PURGE_CRON = '0 40 3 * * *'
+
 [http_service]
   internal_port = 3000
   force_https = true
