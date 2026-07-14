@@ -58,10 +58,12 @@ import {
     { provide: RECOMMENDATION_QUERY, useClass: RecommendationKyselyQuery },
   ],
   // 다른 컨텍스트가 해변 마스터/권고를 참조할 수 있도록 조회 유스케이스를 노출한다.
+  // BEACH_QUERY: report 컨텍스트가 해변 좌표를 읽어 최근접 해변 자동 배정(REPORT-005)에 쓴다.
   exports: [
     GET_BEACH_USE_CASE,
     LIST_BEACHES_USE_CASE,
     LIST_RECOMMENDATIONS_USE_CASE,
+    BEACH_QUERY,
   ],
 })
 export class BeachModule {}

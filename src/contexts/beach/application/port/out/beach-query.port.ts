@@ -42,6 +42,18 @@ export interface BeachAdminItem {
 }
 
 /**
+ * 좌표 조회용 최소 해변 정보 (REPORT-005 최근접 배정 / 관리자 지도 표시).
+ * 활성 여부까지 그대로 넘겨서, "활성 해변만 후보" 규칙을 호출 측 도메인이 판단하게 한다.
+ */
+export interface BeachLocationItem {
+  beachId: Id;
+  name: string;
+  lat: number;
+  lng: number;
+  isActive: boolean;
+}
+
+/**
  * 해변 목록 조회 아웃바운드 포트. (Kysely 어댑터가 구현)
  * 위험도 조인 + 검색/필터 + 페이지네이션 등 복잡 조회를 담당한다.
  */
@@ -51,6 +63,15 @@ export interface BeachQueryPort {
 
   /** 관리자 해변 마스터 목록(페이지네이션). */
   listAdmin(filter: BeachAdminListFilter, page: PageRequest): Promise<Page<BeachAdminItem>>;
+
+  /**
+   * 해변 마스터의 좌표만 전부(비활성 포함) 반환한다. priority→id 순.
+   *
+   * 비활성까지 주는 이유: 최근접 배정에서 "활성 해변만 후보" 라는 규칙은 도메인 규칙이고,
+   * 도메인(nearest-beach.ts)에서 걸러야 단위 테스트로 덮을 수 있다. SQL 에서 미리 걸러버리면
+   * 그 규칙이 테스트 불가능한 어댑터 안으로 숨는다. 해변 마스터는 십여 건 규모라 전건 로드 비용이 없다.
+   */
+  listLocations(): Promise<BeachLocationItem[]>;
 }
 
 export const BEACH_QUERY = Symbol('BEACH_QUERY');

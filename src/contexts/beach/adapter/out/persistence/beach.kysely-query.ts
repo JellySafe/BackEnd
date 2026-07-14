@@ -7,6 +7,7 @@ import {
   BeachAdminListFilter,
   BeachListFilter,
   BeachListItem,
+  BeachLocationItem,
   BeachQueryPort,
 } from '../../../application/port/out/beach-query.port';
 
@@ -55,6 +56,30 @@ export class BeachKyselyQuery implements BeachQueryPort {
       currentRiskLevel: (row.currentRiskLevel as RiskLevel | null) ?? null,
       priority: Number(row.priority),
       imageUrl: row.imageUrl ?? null,
+    }));
+  }
+
+  /** 좌표만 필요한 소비자(REPORT-005 최근접 배정, 관리자 지도)용. 비활성 포함 전건. */
+  async listLocations(): Promise<BeachLocationItem[]> {
+    const rows = await this.db
+      .selectFrom('beaches as b')
+      .select([
+        'b.id as beachId',
+        'b.name as name',
+        'b.lat as lat',
+        'b.lng as lng',
+        'b.is_active as isActive',
+      ])
+      .orderBy('b.priority', 'asc')
+      .orderBy('b.id', 'asc')
+      .execute();
+
+    return rows.map((row) => ({
+      beachId: Number(row.beachId),
+      name: row.name,
+      lat: Number(row.lat),
+      lng: Number(row.lng),
+      isActive: Number(row.isActive) === 1,
     }));
   }
 
