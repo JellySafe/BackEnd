@@ -1,4 +1,45 @@
+import { mkdirSync, writeFileSync } from 'node:fs';
+import { join, resolve } from 'node:path';
 import { PrismaClient } from '@prisma/client';
+
+/**
+ * 데모 제보용 플레이스홀더 사진.
+ *
+ * 예전에는 `https://demo.jellysafe.local/uploads/reports/demo-01.jpg` 같은 **존재하지 않는 URL** 을
+ * 넣었다. 관리자 검수 화면은 사진 기반인데 전부 깨진 이미지로 떴다. 프론트에서 실제로 막혔다.
+ *
+ * 실제로 열리는 파일을 업로드 디렉터리에 만들어 두고 그걸 가리킨다.
+ * SVG 를 쓰는 이유: 외부 라이브러리 없이 텍스트로 생성할 수 있고, 이미지 안에 "데모" 라고
+ * 적어둘 수 있어 실제 제보 사진과 헷갈리지 않는다.
+ *
+ * 업로드 디렉터리는 운영에서 영구 볼륨(UPLOAD_DIR=/data/uploads)이다. 로컬은 ./uploads.
+ */
+const DEMO_PLACEHOLDER_FILE = 'demo-placeholder.svg';
+
+function demoPlaceholderUrl(): string {
+  return `/uploads/${DEMO_PLACEHOLDER_FILE}`;
+}
+
+function ensureDemoPlaceholder(): void {
+  const dir = resolve(process.cwd(), (process.env.UPLOAD_DIR ?? './uploads').trim());
+  const svg = `<svg xmlns="http://www.w3.org/2000/svg" width="480" height="360" viewBox="0 0 480 360">
+  <rect width="480" height="360" fill="#dbeafe"/>
+  <circle cx="240" cy="150" r="52" fill="#93c5fd"/>
+  <path d="M188 150 q52 -70 104 0 q-26 18 -52 18 q-26 0 -52 -18z" fill="#60a5fa"/>
+  <text x="240" y="250" font-family="sans-serif" font-size="26" fill="#1e3a8a" text-anchor="middle">데모 제보 사진</text>
+  <text x="240" y="286" font-family="sans-serif" font-size="16" fill="#3b82f6" text-anchor="middle">실제 제보가 아닙니다</text>
+</svg>`;
+  try {
+    mkdirSync(dir, { recursive: true });
+    writeFileSync(join(dir, DEMO_PLACEHOLDER_FILE), svg, 'utf8');
+    console.log(`  ✓ 데모 플레이스홀더 사진 생성 (${join(dir, DEMO_PLACEHOLDER_FILE)})`);
+  } catch (err) {
+    // 파일을 못 써도 시드 자체는 계속한다. 다만 사진은 깨져 보인다.
+    console.warn(
+      `  ! 플레이스홀더 사진 생성 실패 — 데모 제보 사진이 깨져 보인다: ${err instanceof Error ? err.message : String(err)}`,
+    );
+  }
+}
 
 /**
  * 데모 데이터 시드 (관리자 대시보드 시연용).
@@ -424,8 +465,8 @@ async function seedReports(): Promise<void> {
         reporterToken: token, // 익명 제보
         lat: Number(beach.lat) + jitter,
         lng: Number(beach.lng) - jitter,
-        imageUrl: `https://demo.jellysafe.local/uploads/reports/demo-${seq}.jpg`,
-        thumbnailUrl: `https://demo.jellysafe.local/uploads/reports/demo-${seq}_thumb.jpg`,
+        imageUrl: demoPlaceholderUrl(),
+        thumbnailUrl: null,
         reportType: spec.reportType,
         status: spec.status,
         aiResult: spec.aiResult,
@@ -511,6 +552,7 @@ async function seedOperationActions(): Promise<void> {
 
 async function main() {
   console.log('JellySafe 데모 데이터 시드 시작...');
+  ensureDemoPlaceholder();
   const stationIdByCode = await seedStations();
   await seedMappings(stationIdByCode);
   await seedObservations(stationIdByCode);
