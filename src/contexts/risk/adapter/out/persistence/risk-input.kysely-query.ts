@@ -7,6 +7,7 @@ import {
   RiskInputBundle,
   VerifiedReportInput,
 } from '../../../domain/risk-assessment';
+import { ForecastPoint } from '../../../domain/risk-forecast';
 import {
   ActiveBeachRef,
   CollectOptions,
@@ -14,6 +15,16 @@ import {
 } from '../../../application/port/out/risk-input.port';
 
 const DAY_MS = 24 * 60 * 60 * 1000;
+const HOUR_MS = 60 * 60 * 1000;
+
+/**
+ * 예보 조회 창.
+ *  - 뒤(과거): 12시간. 해상예보 한 행은 12시간 **구간**이라, 지금 진행 중인 구간의 시작은
+ *    최대 12시간 전이다. 이걸 자르면 24h 지평이 걸치는 구간을 놓칠 수 있다.
+ *  - 앞(미래): 96시간. 가장 먼 지평(72h)을 12시간 구간 여유까지 덮는다.
+ */
+const FORECAST_LOOKBACK_HOURS = 12;
+const FORECAST_LOOKAHEAD_HOURS = 96;
 
 function numOrNull(v: unknown): number | null {
   if (v === null || v === undefined) return null;
@@ -22,11 +33,31 @@ function numOrNull(v: unknown): number | null {
 }
 
 /**
- * 해변 좌표에서 반경 N km 안에 있는 출현(jellyfish_occurrences j) 조건.
- * POINT 인자 순서는 (경도, 위도)다 — 뒤집으면 지구 반대편을 재게 되므로 주의.
+ * 출현 기록이 이 해변 "인근" 인지 판정한다.
+ *
+ * 출현 데이터는 두 종류이고 정밀도가 다르다.
+ *
+ *  - **좌표가 있는 것** (제보 유래, 지점 관측) → 반경 N km 로 판정한다.
+ *  - **좌표가 없는 것** (국립수산과학원 주간보고) → 시군구(region) 일치로 판정한다.
+ *    NIFS 주간보고는 "제주시 고밀도 / 서귀포시 저밀도" 처럼 **광역 단위로만** 발표한다.
+ *    지점 좌표가 애초에 존재하지 않는다.
+ *
+ * 예전에는 `lat IS NOT NULL` 로 좌표 없는 행을 통째로 걸렀다. 그 결과
+ * **실제 NIFS 데이터가 위험도 계산에서 전부 버려지고 있었다.** mock 수집기는 좌표를
+ * 만들어 넣어서 개발 중에는 룰이 발화하는 것처럼 보였고, 그래서 오래 들키지 않았다.
+ * 백테스트로 드러났다 — NEARBY_ALERT(+15)와 PAST_OCCURRENCE(+15)가 실데이터로는
+ * 절대 발화하지 못해, 도달 가능한 최대 점수가 55점(= '주의' 천장)에 묶여 있었다.
+ * 시민 제보 없이는 '위험'/'심각' 이 수학적으로 불가능했다.
+ *
+ * 좌표가 없다고 "인근이 아니다" 라고 단정하는 것은 데이터의 성격을 잘못 읽은 것이다.
+ * 같은 시군구의 광역 출현 경보는 그 해변에 대한 유효한 근거다.
  */
-function withinRadius(lat: number, lng: number, radiusKm: number) {
-  return sql<boolean>`ST_Distance_Sphere(POINT(${lng}, ${lat}), POINT(j.lng, j.lat)) <= ${sql.lit(radiusKm * 1000)}`;
+function nearBeach(lat: number, lng: number, radiusKm: number, region: string) {
+  return sql<boolean>`(
+    (j.lat IS NOT NULL AND j.lng IS NOT NULL
+      AND ST_Distance_Sphere(POINT(${lng}, ${lat}), POINT(j.lng, j.lat)) <= ${sql.lit(radiusKm * 1000)})
+    OR (j.lat IS NULL AND j.region = ${region})
+  )`;
 }
 
 /**
@@ -116,19 +147,31 @@ export class RiskInputKyselyQuery implements RiskInputPort {
       .filter((n): n is number => n !== null);
 
     // 인근 해역 속보 / 과거 동일 시기 이력.
+    // 좌표가 있는 출현은 반경으로, 좌표가 없는 출현(NIFS 광역 주간보고)은 시군구 일치로 센다.
     // 좌표가 없는 해변(이론상 없음)은 거리 계산이 불가능하므로 0 으로 둔다 — 없는 근거를 지어내지 않는다.
     const [nearbyAlertCount, pastOccurrenceCount] =
       beachLat === null || beachLng === null
         ? [0, 0]
         : await Promise.all([
-            this.countNearbyAlerts(beachLat, beachLng, options.nearbyRadiusKm, nearbyAgo),
+            this.countNearbyAlerts(
+              beachLat,
+              beachLng,
+              options.nearbyRadiusKm,
+              beach.region,
+              nearbyAgo,
+            ),
             this.countPastSeasonOccurrences(
               beachLat,
               beachLng,
               options.nearbyRadiusKm,
+              beach.region,
               options.pastSeasonWindowDays,
             ),
           ]);
+
+    // 향후 기상 예보 (weather_forecasts). 24h/72h 지평의 파고·풍향을 예보값으로 재평가한다.
+    // 예보가 없으면 빈 배열 → 도메인이 지속성 계수 폴백으로 되돌아간다.
+    const forecasts = await this.findForecasts(beachId, now);
 
     // 확인완료(verified/reflected) 제보
     const reportRows = await this.db
@@ -164,7 +207,40 @@ export class RiskInputKyselyQuery implements RiskInputPort {
       pastOccurrenceCount,
       verifiedReports,
       observationAgeMinutes,
+      forecasts,
     };
+  }
+
+  /**
+   * 해변의 향후 예보(파고·풍향·풍속). 예보는 관측소가 아니라 **해변에 직접** 붙는다
+   * (예보구역 단위 발표라 관측소 매핑을 거치지 않는다).
+   *
+   * 조회 창은 [now-12h, now+96h] — 12시간 구간 예보라 진행 중인 구간의 시작이 과거일 수 있고,
+   * 가장 먼 지평(72h)에 구간 여유를 더해야 하기 때문이다. 어느 구간을 쓸지는 도메인이 고른다
+   * (risk-forecast.ts#pickForecast — "대상 시각을 포함하는 12시간 구간").
+   */
+  private async findForecasts(beachId: Id, now: number): Promise<ForecastPoint[]> {
+    const rows = await this.db
+      .selectFrom('weather_forecasts as f')
+      .where('f.beach_id', '=', beachId)
+      .where('f.target_at', '>=', new Date(now - FORECAST_LOOKBACK_HOURS * HOUR_MS))
+      .where('f.target_at', '<=', new Date(now + FORECAST_LOOKAHEAD_HOURS * HOUR_MS))
+      .select([
+        'f.target_at as targetAt',
+        'f.wave_height as waveHeight',
+        'f.wind_direction as windDirection',
+        'f.wind_speed as windSpeed',
+      ])
+      .orderBy('f.target_at', 'asc')
+      .execute();
+
+    // 좌표·수치 컬럼은 DECIMAL 이라 드라이버가 문자열로 준다 → 숫자로 바꿔야 임계 비교가 된다.
+    return rows.map((r) => ({
+      targetAt: new Date(r.targetAt),
+      waveHeight: numOrNull(r.waveHeight),
+      windDirection: numOrNull(r.windDirection),
+      windSpeed: numOrNull(r.windSpeed),
+    }));
   }
 
   /**
@@ -177,15 +253,14 @@ export class RiskInputKyselyQuery implements RiskInputPort {
     lat: number,
     lng: number,
     radiusKm: number,
+    region: string,
     since: Date,
   ): Promise<number> {
     const row = await this.db
       .selectFrom('jellyfish_occurrences as j')
-      .where('j.lat', 'is not', null)
-      .where('j.lng', 'is not', null)
       .where('j.occurred_at', '>=', since)
       .where('j.alert_level', 'in', ['attention', 'caution', 'warning'])
-      .where(withinRadius(lat, lng, radiusKm))
+      .where(nearBeach(lat, lng, radiusKm, region))
       .select((eb) => eb.fn.countAll<number>().as('cnt'))
       .executeTakeFirst();
     return Number(row?.cnt ?? 0);
@@ -202,6 +277,7 @@ export class RiskInputKyselyQuery implements RiskInputPort {
     lat: number,
     lng: number,
     radiusKm: number,
+    region: string,
     windowDays: number,
   ): Promise<number> {
     // DAYOFYEAR 차이를 연말/연초를 넘어서도 올바르게 재려면 365 를 감안한 순환 거리를 써야 한다.
@@ -212,11 +288,9 @@ export class RiskInputKyselyQuery implements RiskInputPort {
 
     const row = await this.db
       .selectFrom('jellyfish_occurrences as j')
-      .where('j.lat', 'is not', null)
-      .where('j.lng', 'is not', null)
       .where(sql<boolean>`j.occurred_at < CURDATE() - INTERVAL 1 YEAR + INTERVAL ${sql.lit(windowDays)} DAY`)
       .where(sql<boolean>`${seasonalGap} <= ${sql.lit(windowDays)}`)
-      .where(withinRadius(lat, lng, radiusKm))
+      .where(nearBeach(lat, lng, radiusKm, region))
       .select((eb) => eb.fn.countAll<number>().as('cnt'))
       .executeTakeFirst();
     return Number(row?.cnt ?? 0);
