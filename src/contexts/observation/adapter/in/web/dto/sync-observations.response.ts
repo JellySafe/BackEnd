@@ -28,4 +28,13 @@ export class SyncObservationsResponse {
     description: '후보 관측소가 없어 매핑하지 못한 (해변, 관측유형) 조합 수',
   })
   unmapped!: number;
+
+  @ApiProperty({
+    example: 108,
+    description: '기상청 해상예보에서 받아온 예보 행 수 (24h/72h 위험도 산출 입력)',
+  })
+  forecastsFetched!: number;
+
+  @ApiProperty({ example: 108, description: '실제로 저장/갱신된 예보 행 수' })
+  forecastsSaved!: number;
 }

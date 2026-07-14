@@ -4,6 +4,8 @@ import { ApiOkData } from '@shared/http/api-response.decorator';
 import {
   MapStationsUseCase,
   MAP_STATIONS_USE_CASE,
+  SyncForecastsUseCase,
+  SYNC_FORECASTS_USE_CASE,
   SyncObservationsUseCase,
   SYNC_OBSERVATIONS_USE_CASE,
 } from '../../../application/port/in/observation-use-cases';
@@ -23,6 +25,7 @@ export class SystemObservationController {
   constructor(
     @Inject(SYNC_OBSERVATIONS_USE_CASE) private readonly sync: SyncObservationsUseCase,
     @Inject(MAP_STATIONS_USE_CASE) private readonly map: MapStationsUseCase,
+    @Inject(SYNC_FORECASTS_USE_CASE) private readonly forecasts: SyncForecastsUseCase,
   ) {}
 
   @ApiOperation({
@@ -45,6 +48,12 @@ export class SystemObservationController {
   async syncAll(): Promise<SyncObservationsResponse> {
     const sync = await this.sync.syncAll();
     const map = await this.map.mapAll();
-    return { ...sync, ...map };
+    // 기상 예보(해상예보)도 함께 받는다. 크론은 이미 이 세 단계를 이어서 돌린다.
+    // 수동 트리거만 예보를 빠뜨리면 "수집했는데 예보가 없다"는 상태가 되어,
+    // 24h/72h 가 조용히 지속성 계수 폴백으로 되돌아간다(실제로 그랬다).
+    // force=true — 수동 트리거는 "지금 당장 최신을 받아라"는 뜻이다. 크론의
+    // "최신 발표를 이미 갖고 있으면 건너뛴다" 최적화를 적용하면 트리거가 아무것도 안 한다.
+    const forecast = await this.forecasts.syncAll(true);
+    return { ...sync, ...map, forecastsFetched: forecast.fetched, forecastsSaved: forecast.saved };
   }
 }
