@@ -1,6 +1,10 @@
 import { Id } from '@shared/kernel/id';
 import { RiskLevel } from '@shared/kernel/risk-level';
 import { DailyReport, reportDateLabel } from '../../../domain/daily-report';
+import {
+  DailyRiskFactor,
+  RiskTrendPoint,
+} from '../out/daily-report-query.port';
 
 /** 리포트 응답 뷰 (저장본 또는 즉석 집계본 공용). */
 export interface DailyReportView {
@@ -16,6 +20,10 @@ export interface DailyReportView {
   memo: string | null;
   summaryJson: unknown | null;
   persisted: boolean;
+  /** 그날의 위험도 산출 이력(시간순). 화면의 "위험도 변화" 그래프 원자료. */
+  riskTrend?: RiskTrendPoint[];
+  /** 그날 가장 위험했던 시점의 위험 요인. 화면의 "주요 위험 원인". */
+  topFactors?: DailyRiskFactor[];
 }
 
 // ----- ADM-011 일간 리포트 조회 -----

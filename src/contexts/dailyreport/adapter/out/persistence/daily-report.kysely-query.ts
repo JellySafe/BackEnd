@@ -3,7 +3,11 @@ import { sql } from 'kysely';
 import { KyselyService } from '@shared/persistence/kysely/kysely.service';
 import { Id } from '@shared/kernel/id';
 import { RiskLevel, isRiskLevel, maxRiskLevel } from '@shared/kernel/risk-level';
-import { DailyReportQueryPort } from '../../../application/port/out/daily-report-query.port';
+import {
+  DailyReportQueryPort,
+  DailyRiskFactor,
+  RiskTrendPoint,
+} from '../../../application/port/out/daily-report-query.port';
 import { DailyReportAggregation, dayWindow } from '../../../domain/daily-report';
 
 /**
@@ -72,5 +76,65 @@ export class DailyReportKyselyQuery implements DailyReportQueryPort {
       stingCount: Number(reportRow?.stingCount ?? 0),
       actionCount: Number(actionRow?.actionCount ?? 0),
     };
+  }
+
+  async riskTrend(beachId: Id, reportDate: Date): Promise<RiskTrendPoint[]> {
+    const { start, end } = dayWindow(reportDate);
+
+    const rows = await this.db
+      .selectFrom('risk_scores')
+      .select(['risk_level as riskLevel', 'risk_score as riskScore', 'generated_at as generatedAt'])
+      .where('beach_id', '=', beachId)
+      .where('horizon', '=', 'now')
+      .where('generated_at', '>=', start)
+      .where('generated_at', '<', end)
+      .orderBy('generated_at', 'asc')
+      .execute();
+
+    return rows
+      .filter((r) => isRiskLevel(r.riskLevel))
+      .map((r) => ({
+        generatedAt: new Date(r.generatedAt),
+        riskLevel: r.riskLevel as RiskLevel,
+        riskScore: Number(r.riskScore),
+      }));
+  }
+
+  async topFactors(beachId: Id, reportDate: Date): Promise<DailyRiskFactor[]> {
+    const { start, end } = dayWindow(reportDate);
+
+    // 그날 가장 위험했던 시점의 산출을 고른다. 점수가 같으면 나중 산출을 쓴다(더 신선한 근거).
+    const peak = await this.db
+      .selectFrom('risk_scores')
+      .select('id')
+      .where('beach_id', '=', beachId)
+      .where('horizon', '=', 'now')
+      .where('generated_at', '>=', start)
+      .where('generated_at', '<', end)
+      .orderBy('risk_score', 'desc')
+      .orderBy('generated_at', 'desc')
+      .executeTakeFirst();
+
+    if (!peak) return [];
+
+    const rows = await this.db
+      .selectFrom('risk_factors')
+      .select([
+        'factor_code as code',
+        'factor_name as name',
+        'factor_detail as detail',
+        'score_delta as scoreDelta',
+      ])
+      .where('risk_score_id', '=', peak.id)
+      .orderBy('score_delta', 'desc')
+      .orderBy('display_order', 'asc')
+      .execute();
+
+    return rows.map((r) => ({
+      code: r.code,
+      name: r.name,
+      detail: r.detail ?? null,
+      scoreDelta: Number(r.scoreDelta),
+    }));
   }
 }
