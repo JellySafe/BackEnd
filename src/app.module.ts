@@ -11,6 +11,7 @@ import { AuthModule } from './shared/auth/auth.module';
 import { HealthModule } from './shared/health/health.module';
 import { validateEnv } from './shared/config/env.validation';
 import { BeachModule } from './contexts/beach/beach.module';
+import { SpeciesModule } from './contexts/species/species.module';
 import { RiskModule } from './contexts/risk/risk.module';
 import { ReportModule } from './contexts/report/report.module';
 import { OperationModule } from './contexts/operation/operation.module';
@@ -47,6 +48,7 @@ import { SecondaryModule } from './contexts/secondary/secondary.module';
     RiskModule,
     ReportModule,
     BeachModule,
+    SpeciesModule,
     OperationModule,
     NotificationModule,
     ObservationModule,

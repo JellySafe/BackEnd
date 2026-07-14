@@ -9,6 +9,7 @@ import { PrismaClient } from '@prisma/client';
  *   - 위험도 룰 점수표 (03_Data_AI): 위험 변수 / 제보 가중치 / 위험 단계 구간 / 최소 단계 보장
  *   - 위험 단계별 대응 권고 (ADM-006)
  *   - 안전/고지 문구 (G-006, DISCLAIMER-001)
+ *   - 해파리 종 정보 14종 (도감 — 사진/학명/독성 등급. 출처: 국립수산과학원)
  *   - 알림 문구 템플릿 (ADM-010)
  *   - 데이터 소스 (SYS-001, MVP 샘플)
  *
@@ -394,6 +395,167 @@ async function seedGuides() {
   console.log(`  ✓ 안내/고지 문구 ${guides.length}건 (응급대처법 포함 — 출처: 국립수산과학원)`);
 }
 
+/**
+ * 해파리 종 정보 (도감, jellyfish_species).
+ *
+ * 사용자에게 "노무라입깃해파리 출현 중" 이라고만 알려주면 **그게 뭔지 모른다.**
+ * 사진·특징·독성 등급이 있어야 "내가 본 게 이거구나" 가 되고, 제보 정확도도 오른다.
+ *
+ * ## 출처 (전부 국립수산과학원)
+ *  · 종 목록·학명·사진 : https://www.nifs.go.kr/portal/me/jelyC/actionJelyFishInfo.do
+ *                        사진 = https://www.nifs.go.kr/portal/cmmn/images/jely/j{N}.jpg
+ *  · 독성 등급         : 해파리 모니터링 주간보고 (2026-07-09 자)
+ *  · 특징/출현시기/증상 : 국립수산과학원 해파리 응급처치 자료 — **6종만** 서술이 있다.
+ *
+ * ## 채우지 않은 칸은 비워 둔다
+ * 나머지 8종은 특징·출현시기 원문이 없다. **지어내지 않고 null 로 둔다.**
+ * 독성 등급도 주간보고에 등급이 실린 7종만 채운다 — 나머지는 "무해" 가 아니라 **미공표(null)** 다.
+ * (작은부레관해파리·작은상자해파리는 위험한 종으로 알려져 있으나, 기관이 등급을 발표한 문서를
+ *  확인하지 못했다. 등급을 추정해 넣으면 기관 발표인 것처럼 보이게 된다 — 대신 특징/증상 원문을 싣는다.)
+ *
+ * ## 이미지: 링크만 한다
+ * 국립수산과학원 종 사진 페이지에는 공공누리 유형 표시가 없다. 우리 서버로 **복제·재호스팅하지 않고**
+ * 원본 URL 을 링크하며, 출처(imageSource)를 응답에 함께 실어 화면이 반드시 표시하게 한다.
+ * 자체 촬영본이나 라이선스가 명확한 사진이 생기면 imageUrl/imageSource 만 갈아끼우면 된다.
+ * (2026-07-15 기준 14개 URL 전부 HTTP 200 image/jpeg 확인)
+ *
+ * ## ⛔ 종별 응급처치는 넣지 않는다
+ * 응급처치 PDF 에는 종별 처치법(노무라 → 알코올, 유령 → 식초 등)도 있지만, 같은 기관의
+ * **현행 포털 지침과 정면으로 충돌한다**(현행: 바닷물·생리식염수 세척 + 온찜질 45℃, 수돗물 금지.
+ * 알코올·식초 언급 없음 — 자포 발사를 촉진할 수 있다). 응급처치는 static_guides 의 FIRST_AID
+ * 하나로만 관리한다(seedGuides 참조). stingSymptom 은 '증상' 설명이지 처치법이 아니다.
+ */
+const NIFS_IMAGE_BASE = 'https://www.nifs.go.kr/portal/cmmn/images/jely/';
+const NIFS_SPECIES_PAGE = 'https://www.nifs.go.kr/portal/me/jelyC/actionJelyFishInfo.do';
+const NIFS = '국립수산과학원';
+
+type SpeciesSeed = {
+  koreanName: string;
+  scientificName: string;
+  /** strong(강독성)/mild(약독성)/harmless(무해성). 주간보고 미기재 종은 생략 → null. */
+  toxicity?: 'strong' | 'mild' | 'harmless';
+  features?: string;
+  appearanceSeason?: string;
+  stingSymptom?: string;
+  /** 종정보 페이지의 이미지 파일명(j{N}.jpg). */
+  image: string;
+};
+
+const SPECIES: SpeciesSeed[] = [
+  {
+    koreanName: '두빛보름달해파리',
+    scientificName: 'Aurelia limbata',
+    toxicity: 'strong', // 주간보고 2026-07-09 강독성
+    image: 'j1.jpg',
+  },
+  { koreanName: '관해파리류', scientificName: 'Apolemia sp.', image: 'j2.jpg' },
+  { koreanName: '푸른우산관해파리', scientificName: 'Porpita sp.', image: 'j3.jpg' },
+  { koreanName: '오이빗해파리', scientificName: 'Beroe cucumis', image: 'j4.jpg' },
+  { koreanName: '무희나선꼬리해파리', scientificName: 'Spirocodon saltatrix', image: 'j5.jpg' },
+  {
+    koreanName: '기수식용해파리',
+    scientificName: 'Rhopilema esculentum',
+    toxicity: 'mild', // 주간보고 2026-07-09 약독성
+    image: 'j6.jpg',
+  },
+  {
+    koreanName: '보름달물해파리',
+    scientificName: 'Aurelia coerulea',
+    toxicity: 'mild', // 주간보고 2026-07-09 약독성
+    image: 'j7.jpg',
+  },
+  {
+    koreanName: '노무라입깃해파리',
+    scientificName: 'Nemopilema nomurai',
+    toxicity: 'strong',
+    features:
+      '대형해파리로 우산의 직경이 150cm, 무게가 100kg 을 넘는다. 우산은 연한 갈색이고, 구완의 촉수는 진한 갈색을 띤다.',
+    appearanceSeason:
+      '6월말 제주에서 출현, 8월 중순에는 우리나라 전역에서 출현하며 12월 초순까지 서식한다.',
+    stingSymptom: '통증과 홍반을 동반한 채찍 모양의 상처',
+    image: 'j8.jpg',
+  },
+  {
+    koreanName: '커튼원양해파리',
+    scientificName: 'Chrysaora pacifica',
+    toxicity: 'strong',
+    features:
+      '우산은 연한 갈색으로 10cm 미만이고, 우산 중심으로부터 방사형의 진한 갈색 줄무늬가 있다.',
+    appearanceSeason: '봄부터 가을까지 남해안에 분포',
+    image: 'j9.jpg',
+  },
+  {
+    koreanName: '작은부레관해파리',
+    scientificName: 'Physalia physalis',
+    // 주간보고 독성 등급표에 없다 → 추정하지 않고 null. 특징/증상 원문으로 위험을 전달한다.
+    features:
+      '몸 전체가 푸른색이며, 만두 모양의 공기가 들어있는 부레가 물 표면에 떠 있고 부레 아래쪽에는 독성을 지닌 진한 파랑의 촉수가 늘어져 있다.',
+    appearanceSeason: '6~8월, 제주도',
+    stingSymptom: '심한 통증과 홍반을 동반한 채찍 모양의 붉은 선',
+    image: 'j10.jpg',
+  },
+  {
+    koreanName: '야광원양해파리',
+    scientificName: 'Pelagia noctiluca',
+    toxicity: 'strong',
+    features:
+      '우산의 크기는 7~8cm 가량이며 우산 위에 울퉁불퉁한 자포낭이 산재. 분홍색이며 우산 가장자리에 여덟 개의 진한 촉수.',
+    appearanceSeason: '5~7월, 제주·남해안',
+    stingSymptom: '통증, 호흡곤란을 일으킬 수도 있다',
+    image: 'j11.jpg',
+  },
+  {
+    koreanName: '유령해파리',
+    scientificName: 'Cyanea nozakii',
+    // 주간보고는 '유령해파리류' 로 쓴다. 매칭은 speciesNameKey() 가 '류' 를 벗겨 처리한다.
+    toxicity: 'strong',
+    features:
+      '몸체는 연한 우유빛이며, 우산의 크기는 30~50cm. 촉수는 하얀색으로 우산 내부의 잘 발달된 근육 사이에서 수백 개씩 덩어리져 내려온다.',
+    appearanceSeason: '7월부터 11월까지 남해안 일대에 분포',
+    stingSymptom: '통증',
+    image: 'j12.jpg',
+  },
+  { koreanName: '꽃모자갈퀴손해파리', scientificName: 'Gonionemus vertens', image: 'j13.jpg' },
+  {
+    koreanName: '작은상자해파리',
+    scientificName: 'Carybdea brevipedalia',
+    // 응급처치 자료의 '입방해파리'. 주간보고 등급표에 없어 toxicity 는 null.
+    features:
+      '우산은 입방형이며 크기는 3cm 정도. 이른 아침·저녁 또는 흐린 날에 수표면으로 떠오르며 무리를 지어 출현한다. 투명하여 수중에서 쉽게 찾을 수 없다.',
+    appearanceSeason: '7~8월, 남해안 일대',
+    stingSymptom: '통증과 함께 채찍 모양 상처, 주변부위가 빨갛게 부어오름',
+    image: 'j14.jpg',
+  },
+];
+
+async function seedSpecies() {
+  for (const [i, s] of SPECIES.entries()) {
+    // 참조 데이터라 **최신 값이 맞다** → update 에도 전부 넣는다(update:{} 면 한번 심은 값이 영원히 고정된다).
+    // 사진 URL 이 깨지거나 기관이 등급을 새로 발표했을 때 재시드로 수렴해야 한다.
+    const data = {
+      scientificName: s.scientificName,
+      toxicity: s.toxicity ?? null,
+      features: s.features ?? null,
+      appearanceSeason: s.appearanceSeason ?? null,
+      stingSymptom: s.stingSymptom ?? null,
+      imageUrl: `${NIFS_IMAGE_BASE}${s.image}`,
+      imageSource: NIFS, // 이미지가 있으면 출처는 필수다(ck_jellyfish_species_image_source)
+      imageSourceUrl: NIFS_SPECIES_PAGE,
+      displayOrder: i + 1,
+      active: true,
+    };
+    await prisma.jellyfishSpecies.upsert({
+      where: { koreanName: s.koreanName },
+      update: data,
+      create: { koreanName: s.koreanName, ...data },
+    });
+  }
+  const graded = SPECIES.filter((s) => s.toxicity).length;
+  console.log(
+    `  ✓ 해파리 종 정보 ${SPECIES.length}종 (독성 등급 ${graded}종 / 미공표 ${SPECIES.length - graded}종, 이미지 출처: ${NIFS})`,
+  );
+}
+
 async function seedNotificationTemplates() {
   const templates = [
     { templateCode: 'LEVEL_UP_OPERATOR', targetType: 'operator', eventType: 'level_up', title: '위험 단계 상승', body: '{beachName} 위험도가 {riskLevel} 단계로 상승했습니다. 대응 권고를 확인해주세요.' },
@@ -516,6 +678,7 @@ async function main() {
   await seedRiskRules();
   await seedRecommendations();
   await seedGuides();
+  await seedSpecies();
   await seedNotificationTemplates();
   await seedDataSources();
   await seedObservationStations();

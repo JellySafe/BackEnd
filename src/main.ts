@@ -111,6 +111,7 @@ async function bootstrap(): Promise<void> {
     )
     .addTag('risk', '위험도 — 해변별 해파리 위험 단계 조회, 관리자 대시보드, 위험도 산출 트리거')
     .addTag('beach', '해변 — 해변 검색/상세, 해변 마스터 관리, 안내 문구')
+    .addTag('species', '해파리 종 정보 — 종 도감(사진·학명·독성), 현재 출현 중인 종. 출처: 국립수산과학원')
     .addTag('report', '제보 — 사용자의 해파리 목격 제보 접수·이미지 업로드, 관리자 검수')
     .addTag('favorite', '관심 해변 — 즐겨찾기 등록/해제/목록')
     .addTag('notification', '알림 — 사용자 알림함, 관리자 알림 문구 생성·발송')

@@ -124,6 +124,37 @@ model RiskRecommendation {
   @@map("risk_recommendations")
 }
 
+/// 해파리 종 정보(도감). 출현 종을 사진·특징·독성으로 설명하는 참조 데이터다.
+///
+/// jellyfish_occurrences 와 **FK 로 묶지 않는다**: occurrences.species 는 국립수산과학원
+/// 주간보고 PDF 원문 표기라, 도감에 없는 종이 등장해도 수집 배치가 죽으면 안 된다.
+/// 연결은 이름 정규화 매칭(species-name.ts)으로 한다 — 주간보고 '유령해파리류' ↔ 도감 '유령해파리'.
+///
+/// 이미지는 원본(국립수산과학원) URL 을 링크만 한다. 복제·재호스팅하지 않고 출처를 함께 노출한다.
+/// ⛔ 종별 응급처치는 넣지 않는다(현행 통합 지침 static_guides.FIRST_AID 와 충돌). stingSymptom 은 '증상'이다.
+model JellyfishSpecies {
+  id               BigInt   @id @default(autoincrement())
+  koreanName       String   @unique @map("korean_name") @db.VarChar(100)
+  scientificName   String?  @map("scientific_name") @db.VarChar(100)
+  /// strong(강독성)/mild(약독성)/harmless(무해성). 기관 미발표 종은 null — 추정 금지.
+  toxicity         String?  @db.VarChar(20)
+  features         String?  @db.VarChar(1000)
+  appearanceSeason String?  @map("appearance_season") @db.VarChar(300)
+  /// 쏘였을 때의 증상(원문). 처치법이 아니다.
+  stingSymptom     String?  @map("sting_symptom") @db.VarChar(300)
+  imageUrl         String?  @map("image_url") @db.VarChar(500)
+  /// 이미지 출처 표기. 화면에 반드시 함께 노출한다(공공누리 필수 조건).
+  imageSource      String?  @map("image_source") @db.VarChar(200)
+  imageSourceUrl   String?  @map("image_source_url") @db.VarChar(500)
+  displayOrder     Int      @default(0) @map("display_order") @db.SmallInt
+  active           Boolean  @default(true)
+  createdAt        DateTime @default(now()) @map("created_at") @db.DateTime(0)
+  updatedAt        DateTime @updatedAt @map("updated_at") @db.DateTime(0)
+
+  @@index([active, displayOrder], name: "ix_jellyfish_species_active")
+  @@map("jellyfish_species")
+}
+
 // =====================================================================================
 // 2. 데이터 수집 (SYS-001 / SYS-002)
 // =====================================================================================
