@@ -2,7 +2,7 @@ import { Inject, Injectable, Logger, OnModuleInit } from '@nestjs/common';
 import { ConfigService } from '@nestjs/config';
 import { SchedulerRegistry } from '@nestjs/schedule';
 import { CronJob } from 'cron';
-import { AppConfig } from '@shared/config/app.config';
+import { AppConfig, isCronDisabled } from '@shared/config/app.config';
 import {
   MapStationsUseCase,
   MAP_STATIONS_USE_CASE,
@@ -46,6 +46,13 @@ export class ObservationScheduler implements OnModuleInit {
       return;
     }
     const cronTime = this.config.observationSyncCron;
+    // 크론식이 'off'/빈 값이면 잡을 등록하지 않는다.
+    // 이 가드가 없으면 cron 라이브러리가 'off' 를 크론식으로 파싱하려다 CronError(Unknown alias)
+    // 를 던져 앱이 부팅 중에 죽는다. 배치를 끄려다 서비스 전체를 내리는 셈이다.
+    if (isCronDisabled(cronTime)) {
+      this.logger.log('OBSERVATION_SYNC_CRON=' + cronTime + ' → 관측 수집 스케줄러 비활성');
+      return;
+    }
     const job = CronJob.from({
       cronTime,
       onTick: () => {

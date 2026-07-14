@@ -1,4 +1,5 @@
 import { Injectable } from '@nestjs/common';
+import { sql } from 'kysely';
 import { KyselyService } from '@shared/persistence/kysely/kysely.service';
 import { Id } from '@shared/kernel/id';
 import {
@@ -18,6 +19,14 @@ function numOrNull(v: unknown): number | null {
   if (v === null || v === undefined) return null;
   const n = Number(v);
   return Number.isFinite(n) ? n : null;
+}
+
+/**
+ * 해변 좌표에서 반경 N km 안에 있는 출현(jellyfish_occurrences j) 조건.
+ * POINT 인자 순서는 (경도, 위도)다 — 뒤집으면 지구 반대편을 재게 되므로 주의.
+ */
+function withinRadius(lat: number, lng: number, radiusKm: number) {
+  return sql<boolean>`ST_Distance_Sphere(POINT(${lng}, ${lat}), POINT(j.lng, j.lat)) <= ${sql.lit(radiusKm * 1000)}`;
 }
 
 /**
@@ -47,6 +56,8 @@ export class RiskInputKyselyQuery implements RiskInputPort {
       .select([
         'b.id as beachId',
         'b.region as region',
+        'b.lat as lat',
+        'b.lng as lng',
         'b.facing_direction as facingDirection',
         'b.vulnerability_score as vulnerabilityScore',
       ])
@@ -54,6 +65,10 @@ export class RiskInputKyselyQuery implements RiskInputPort {
       .executeTakeFirst();
 
     if (!beach) return null;
+
+    // 좌표는 DECIMAL 이라 드라이버가 문자열로 준다. 거리 계산에 쓰려면 숫자로 바꿔야 한다.
+    const beachLat = numOrNull(beach.lat);
+    const beachLng = numOrNull(beach.lng);
 
     const now = Date.now();
     const weekAgo = new Date(now - 7 * DAY_MS);
@@ -100,23 +115,20 @@ export class RiskInputKyselyQuery implements RiskInputPort {
       .map((r) => numOrNull(r.waterTemp))
       .filter((n): n is number => n !== null);
 
-    // 인근 해역 속보 (같은 지역 + 윈도우 내 + 경보 등급)
-    const nearbyRow = await this.db
-      .selectFrom('jellyfish_occurrences as j')
-      .where('j.region', '=', beach.region)
-      .where('j.occurred_at', '>=', nearbyAgo)
-      .where('j.alert_level', 'in', ['attention', 'caution', 'warning'])
-      .select((eb) => eb.fn.countAll<number>().as('cnt'))
-      .executeTakeFirst();
-    const nearbyAlertCount = Number(nearbyRow?.cnt ?? 0);
-
-    // 과거 동일 지역 출현 이력 (전 기간)
-    const pastRow = await this.db
-      .selectFrom('jellyfish_occurrences as j')
-      .where('j.region', '=', beach.region)
-      .select((eb) => eb.fn.countAll<number>().as('cnt'))
-      .executeTakeFirst();
-    const pastOccurrenceCount = Number(pastRow?.cnt ?? 0);
+    // 인근 해역 속보 / 과거 동일 시기 이력.
+    // 좌표가 없는 해변(이론상 없음)은 거리 계산이 불가능하므로 0 으로 둔다 — 없는 근거를 지어내지 않는다.
+    const [nearbyAlertCount, pastOccurrenceCount] =
+      beachLat === null || beachLng === null
+        ? [0, 0]
+        : await Promise.all([
+            this.countNearbyAlerts(beachLat, beachLng, options.nearbyRadiusKm, nearbyAgo),
+            this.countPastSeasonOccurrences(
+              beachLat,
+              beachLng,
+              options.nearbyRadiusKm,
+              options.pastSeasonWindowDays,
+            ),
+          ]);
 
     // 확인완료(verified/reflected) 제보
     const reportRows = await this.db
@@ -153,6 +165,61 @@ export class RiskInputKyselyQuery implements RiskInputPort {
       verifiedReports,
       observationAgeMinutes,
     };
+  }
+
+  /**
+   * NEARBY_ALERT: 해변 반경 N km 안에서 최근 윈도우 내에 뜬 경보성 출현 건수.
+   *
+   * 좌표가 없는 출현 행은 제외한다(거리를 알 수 없는 건 '인근'이라고 말할 수 없다).
+   * ST_Distance_Sphere 는 미터를 반환한다(MySQL 8, 구면 거리).
+   */
+  private async countNearbyAlerts(
+    lat: number,
+    lng: number,
+    radiusKm: number,
+    since: Date,
+  ): Promise<number> {
+    const row = await this.db
+      .selectFrom('jellyfish_occurrences as j')
+      .where('j.lat', 'is not', null)
+      .where('j.lng', 'is not', null)
+      .where('j.occurred_at', '>=', since)
+      .where('j.alert_level', 'in', ['attention', 'caution', 'warning'])
+      .where(withinRadius(lat, lng, radiusKm))
+      .select((eb) => eb.fn.countAll<number>().as('cnt'))
+      .executeTakeFirst();
+    return Number(row?.cnt ?? 0);
+  }
+
+  /**
+   * PAST_OCCURRENCE: 해변 반경 N km 안에서 **과거 연도의 같은 시기**에 발생한 출현 건수.
+   *
+   * "같은 시기"는 오늘의 월-일 기준 ±windowDays 로 본다. 해파리는 계절성이 강해서
+   * (여름철 북상) 1월의 출현 이력은 7월 위험도의 근거가 되지 못한다.
+   * 올해 발생분은 NEARBY_ALERT 가 이미 세므로 여기서는 1년 이상 지난 것만 센다(이중 계상 방지).
+   */
+  private async countPastSeasonOccurrences(
+    lat: number,
+    lng: number,
+    radiusKm: number,
+    windowDays: number,
+  ): Promise<number> {
+    // DAYOFYEAR 차이를 연말/연초를 넘어서도 올바르게 재려면 365 를 감안한 순환 거리를 써야 한다.
+    const seasonalGap = sql<number>`LEAST(
+      ABS(DAYOFYEAR(j.occurred_at) - DAYOFYEAR(CURDATE())),
+      365 - ABS(DAYOFYEAR(j.occurred_at) - DAYOFYEAR(CURDATE()))
+    )`;
+
+    const row = await this.db
+      .selectFrom('jellyfish_occurrences as j')
+      .where('j.lat', 'is not', null)
+      .where('j.lng', 'is not', null)
+      .where(sql<boolean>`j.occurred_at < CURDATE() - INTERVAL 1 YEAR + INTERVAL ${sql.lit(windowDays)} DAY`)
+      .where(sql<boolean>`${seasonalGap} <= ${sql.lit(windowDays)}`)
+      .where(withinRadius(lat, lng, radiusKm))
+      .select((eb) => eb.fn.countAll<number>().as('cnt'))
+      .executeTakeFirst();
+    return Number(row?.cnt ?? 0);
   }
 
   /**

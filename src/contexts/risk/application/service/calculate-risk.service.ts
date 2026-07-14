@@ -18,6 +18,7 @@ import {
   evaluateReportWeights,
   evaluateRiskVariables,
 } from '../../domain/risk-assessment';
+import { applyHorizon, decayMinLevelTriggers } from '../../domain/risk-horizon';
 import { CalcStatus } from '../../domain/risk-enums';
 
 /** now/24h/72h 산출 (6h 는 2차). */
@@ -27,6 +28,8 @@ const COLLECT_OPTIONS: CollectOptions = {
   reportWindowDays: 3,
   nearbyWindowDays: 7,
   recentTempDays: 3,
+  nearbyRadiusKm: 30, // 룰 NEARBY_ALERT.conditionJson.radius_km 와 동일
+  pastSeasonWindowDays: 14, // 오늘 기준 ±2주에 해당하는 과거 연도 발생만 "동일 시기"로 본다
 };
 
 const CONFIDENCE_ORDER: DataConfidence[] = ['high', 'medium', 'low'];
@@ -94,10 +97,12 @@ export class CalculateRiskService implements CalculateRiskUseCase {
 
         for (const horizon of HORIZONS) {
           const confidence = degradeConfidence(baseConfidence, horizon);
+          // RISK-006: 지평마다 요인 지속성을 다시 평가한다.
+          // 같은 입력을 세 번 넣으면 now/24h/72h 가 똑같은 점수·원인으로 나온다(= 예측이 아니다).
           const result = RiskEngine.calculate({
-            variables: variables.factors,
-            reportWeights,
-            minLevelTriggers,
+            variables: applyHorizon(variables.factors, horizon),
+            reportWeights: applyHorizon(reportWeights, horizon),
+            minLevelTriggers: decayMinLevelTriggers(minLevelTriggers, horizon),
             confidence,
           });
           // 'now' 지평만 단계 상승 알림 대상: 저장 전에 기존 최신 단계를 확보한다(저장 시 최신본이 교체됨).

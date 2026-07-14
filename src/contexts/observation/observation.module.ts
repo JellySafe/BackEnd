@@ -3,7 +3,9 @@ import { RiskModule } from '@contexts/risk/risk.module';
 import { AdminObservationController } from './adapter/in/web/admin-observation.controller';
 import { SystemObservationController } from './adapter/in/web/system-observation.controller';
 import { ObservationScheduler } from './adapter/in/schedule/observation.scheduler';
+import { ObservationPurgeScheduler } from './adapter/in/schedule/observation-purge.scheduler';
 import { DataSourcePrismaRepository } from './adapter/out/persistence/data-source.prisma-repository';
+import { ObservationPurgePrismaRepository } from './adapter/out/persistence/observation-purge.prisma-repository';
 import { StationPrismaRepository } from './adapter/out/persistence/station.prisma-repository';
 import { ObservationPrismaRepository } from './adapter/out/persistence/observation.prisma-repository';
 import { OccurrencePrismaRepository } from './adapter/out/persistence/occurrence.prisma-repository';
@@ -24,6 +26,7 @@ import { OBSERVATION_REPOSITORY } from './application/port/out/observation-repos
 import { OCCURRENCE_REPOSITORY } from './application/port/out/occurrence-repository.port';
 import { MAPPING_REPOSITORY } from './application/port/out/mapping-repository.port';
 import { OBSERVATION_QUERY } from './application/port/out/observation-query.port';
+import { OBSERVATION_PURGE } from './application/port/out/observation-purge.port';
 import { EXTERNAL_COLLECTOR } from './application/port/out/external-collector.port';
 import {
   LIST_DATA_SOURCES_USE_CASE,
@@ -56,6 +59,8 @@ import {
     { provide: OCCURRENCE_REPOSITORY, useClass: OccurrencePrismaRepository },
     { provide: MAPPING_REPOSITORY, useClass: MappingPrismaRepository },
     { provide: OBSERVATION_QUERY, useClass: ObservationKyselyQuery },
+    // 관측 시계열 파기 (30분마다 19개 관측소가 쌓는 행을 보관 기간 지나면 정리)
+    { provide: OBSERVATION_PURGE, useClass: ObservationPurgePrismaRepository },
     // 수집기: 해양 관측은 기상청(KMA) 해양기상종합관측 + 국립해양조사원(KHOA, 유향·유속),
     // 해파리 출현/속보는 국립수산과학원(NIFS) 실 OpenAPI.
     // CompositeCollectorAdapter 가 관측소 코드로 담당 수집기를 고르고,
@@ -67,6 +72,7 @@ import {
     { provide: EXTERNAL_COLLECTOR, useClass: CompositeCollectorAdapter },
     // 스케줄러 (adapter/in/schedule)
     ObservationScheduler,
+    ObservationPurgeScheduler,
   ],
   exports: [SYNC_OBSERVATIONS_USE_CASE, MAP_STATIONS_USE_CASE],
 })

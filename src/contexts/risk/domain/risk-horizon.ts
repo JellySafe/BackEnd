@@ -1,0 +1,116 @@
+import { RiskHorizon, RiskLevel, compareRiskLevel } from '@shared/kernel/risk-level';
+import { FactorContribution, MinLevelTrigger } from './risk-engine';
+import { RiskFactorCode } from './risk-factors';
+
+/**
+ * 지평별 요인 지속성 계수 (RISK-006, v1 휴리스틱).
+ *
+ * 기존 산출은 now/24h/72h 에 **같은 입력을 그대로 재사용**해서 세 지평의 점수·단계·원인이
+ * 완전히 동일했다(신뢰도만 하락). 그건 예측이 아니라 현재값 복사다.
+ *
+ * 아직 기상 예보 API 가 붙어 있지 않으므로, 미래 지평은 "현재 관측이 얼마나 오래 유효한가"로
+ * 근사한다. 요인마다 지속성이 다르다는 게 핵심이다.
+ *
+ *   - 파고/풍향 : 수 시간이면 바뀐다. 예보 없이 72시간 뒤를 말할 수 없다 → 0 (원인에서 제외)
+ *   - 수온      : 관성이 크다. 3일 안에 급변하지 않는다 → 대부분 유지
+ *   - 인근 속보 : 해파리 개체군이 조류를 타고 **다가오는 데 시간이 걸린다** → 미래에 오히려 유효
+ *   - 제보      : 시간이 지나면 그 개체군은 이미 이동했다 → 감쇠
+ *   - 취약도    : 지형 상수 → 불변
+ *
+ * ⚠️ 계수는 도메인 전문가(국립수산과학원) 검증 전 잠정값이다. KMA 예보 API 가 붙으면
+ * 파고/풍향/수온은 이 계수 대신 **예보값으로 재평가**해야 한다.
+ */
+const HORIZON_WEIGHT: Record<RiskFactorCode, Partial<Record<RiskHorizon, number>>> = {
+  // 관측 기반 위험 변수
+  TEMP_UP: { now: 1, '6h': 1, '24h': 0.8, '72h': 0.5 },
+  TEMP_7D_AVG: { now: 1, '6h': 1, '24h': 1, '72h': 1 },
+  WAVE_HIGH: { now: 1, '6h': 0.8, '24h': 0.4, '72h': 0 },
+  WIND_INFLOW: { now: 1, '6h': 0.8, '24h': 0.4, '72h': 0 },
+  CURRENT_INFLOW: { now: 1, '6h': 0.9, '24h': 0.6, '72h': 0.2 },
+  PAST_OCCURRENCE: { now: 1, '6h': 1, '24h': 1, '72h': 1 },
+  NEARBY_ALERT: { now: 1, '6h': 1.1, '24h': 1.2, '72h': 1.3 },
+  BEACH_VULNERABILITY: { now: 1, '6h': 1, '24h': 1, '72h': 1 },
+  // 제보 가중치 — 시간이 지날수록 신호가 약해진다.
+  REPORT_GENERAL: { now: 1, '6h': 0.9, '24h': 0.6, '72h': 0.3 },
+  REPORT_MULTIPLE: { now: 1, '6h': 0.9, '24h': 0.6, '72h': 0.3 },
+  REPORT_TOXIC: { now: 1, '6h': 0.9, '24h': 0.7, '72h': 0.4 },
+  REPORT_TOXIC_MULTIPLE: { now: 1, '6h': 0.9, '24h': 0.7, '72h': 0.4 },
+  REPORT_STING: { now: 1, '6h': 0.9, '24h': 0.7, '72h': 0.4 },
+};
+
+/** 지평별 설명 접미사. 원인 태그가 "왜 이 시점에 이 값인지"를 스스로 설명하게 한다. */
+const HORIZON_SUFFIX: Record<RiskHorizon, string> = {
+  now: '',
+  '6h': ' (6시간 후 예상)',
+  '24h': ' (24시간 후 예상)',
+  '72h': ' (72시간 후 예상)',
+};
+
+function weightOf(code: string, horizon: RiskHorizon): number {
+  const row = HORIZON_WEIGHT[code as RiskFactorCode];
+  // 카탈로그에 없는 코드는 보수적으로 그대로 유지한다(점수를 임의로 깎지 않는다).
+  return row?.[horizon] ?? 1;
+}
+
+/**
+ * 요인 기여도를 지평에 맞게 재평가한다.
+ * 계수를 곱한 뒤 반올림하고, 0 이 된 요인은 목록에서 제거한다.
+ * → 72시간 뒤 카드에는 파고/풍향이 아예 나타나지 않는다(예보 없이 말할 수 없으므로).
+ */
+export function applyHorizon(
+  factors: FactorContribution[],
+  horizon: RiskHorizon,
+): FactorContribution[] {
+  const suffix = HORIZON_SUFFIX[horizon] ?? '';
+  const out: FactorContribution[] = [];
+
+  for (const f of factors) {
+    const delta = Math.round(f.delta * weightOf(f.code, horizon));
+    if (delta === 0) continue; // 이 지평에서는 근거로 삼을 수 없는 요인
+    out.push({
+      ...f,
+      delta,
+      detail: f.detail ? `${f.detail}${suffix}` : f.detail,
+    });
+  }
+
+  return out;
+}
+
+/**
+ * 최소 단계 보장(RISK-002)의 지평별 적용.
+ *
+ * 독성/쏘임 제보는 즉시 대응이 목적이므로 now·6h·24h 에는 그대로 적용한다
+ * (개체군이 하루 만에 사라지지 않는다). 다만 72시간 뒤까지 같은 강제 단계를 유지하면
+ * 한 번의 쏘임 사고가 사흘 내내 '심각'을 고정시켜 알림 피로도와 과잉 통제를 부른다.
+ * → 72h 는 한 단계 낮춰 적용하고, caution 이 더 내려갈 곳이 없으면 트리거를 해제한다.
+ */
+export function decayMinLevelTriggers(
+  triggers: MinLevelTrigger[],
+  horizon: RiskHorizon,
+): MinLevelTrigger[] {
+  if (horizon !== '72h') return triggers;
+
+  const DOWN: Record<RiskLevel, RiskLevel | null> = {
+    severe: 'danger',
+    danger: 'caution',
+    caution: null, // 더 낮출 수 없다 → 강제 보장 해제(점수만으로 판정)
+    safe: null,
+  };
+
+  const decayed: MinLevelTrigger[] = [];
+  for (const t of triggers) {
+    const level = DOWN[t.level];
+    if (level !== null) decayed.push({ ruleCode: t.ruleCode, level });
+  }
+  return decayed;
+}
+
+/** 여러 트리거 중 가장 높은 단계 (테스트/디버깅 편의). */
+export function highestTrigger(triggers: MinLevelTrigger[]): RiskLevel | null {
+  let top: RiskLevel | null = null;
+  for (const t of triggers) {
+    if (top === null || compareRiskLevel(t.level, top) > 0) top = t.level;
+  }
+  return top;
+}

@@ -1,0 +1,57 @@
+name: CI
+
+on:
+  push:
+    branches: [release, main]
+  pull_request:
+
+# 같은 브랜치/PR 에 연속 푸시하면 이전 실행은 취소한다(러너 낭비 방지).
+concurrency:
+  group: ci-${{ github.workflow }}-${{ github.ref }}
+  cancel-in-progress: true
+
+jobs:
+  build:
+    name: typecheck · lint · test · build
+    runs-on: ubuntu-latest
+
+    env:
+      # Prisma 는 `prisma generate` 단계에서도 datasource url 을 파싱한다.
+      # 스키마 검증만 하고 접속은 하지 않으므로 형식만 맞는 더미 값이면 충분하다.
+      # (schema.prisma 의 datasource db { url = env("DATABASE_URL") })
+      DATABASE_URL: mysql://ci:ci@127.0.0.1:3306/ci
+
+    steps:
+      - uses: actions/checkout@v4
+
+      - name: Setup Node
+        uses: actions/setup-node@v4
+        with:
+          # Dockerfile(node:22-slim)과 맞춘다. package.json 에 engines 필드는 없다.
+          node-version: '22'
+          cache: npm
+
+      - name: Install dependencies
+        run: npm ci
+
+      # Prisma Client 가 없으면 @prisma/client 타입이 비어 tsc 가 깨진다.
+      # 반드시 타입체크/빌드보다 먼저 돌아야 한다.
+      - name: Generate Prisma Client
+        run: npx prisma generate
+
+      - name: Typecheck
+        run: npx tsc --noEmit
+
+      # lint 단계는 일부러 넣지 않았다. package.json 에 "lint" 스크립트는 있지만
+      #   1) eslint v9 가 요구하는 eslint.config.js 가 이 저장소에 없어 지금 실행하면 그대로 실패하고,
+      #   2) 스크립트에 `--fix` 가 붙어 있어 CI 에서 소스를 고쳐 쓰게 된다.
+      # eslint.config.js 를 추가해 lint 가 통과하게 되면 아래 두 줄을 살리면 된다.
+      #   - name: Lint
+      #     run: npx eslint "{src,test}/**/*.ts"
+
+      # 단위 테스트(jest)는 전부 DB 없이 도는 순수/모킹 테스트다.
+      - name: Test
+        run: npm test -- --ci
+
+      - name: Build
+        run: npm run build

@@ -5,7 +5,9 @@ import {
   NotificationTemplateController,
 } from './adapter/in/web/admin-notification.controller';
 import { PublicAlertController } from './adapter/in/web/public-alert.controller';
+import { NotificationPurgeScheduler } from './adapter/in/schedule/notification-purge.scheduler';
 import { NotificationPrismaRepository } from './adapter/out/persistence/notification.prisma-repository';
+import { NotificationPurgePrismaRepository } from './adapter/out/persistence/notification-purge.prisma-repository';
 import { NotificationKyselyQuery } from './adapter/out/persistence/notification.kysely-query';
 import { TemplateKyselyQuery } from './adapter/out/persistence/template.kysely-query';
 import { BeachRiskKyselyQuery } from './adapter/out/persistence/beach-risk.kysely-query';
@@ -19,6 +21,7 @@ import { SendNotificationService } from './application/service/send-notification
 import { ListAdminNotificationsService } from './application/service/list-admin-notifications.service';
 import { NOTIFICATION_REPOSITORY } from './application/port/out/notification-repository.port';
 import { NOTIFICATION_QUERY } from './application/port/out/notification-query.port';
+import { NOTIFICATION_PURGE } from './application/port/out/notification-purge.port';
 import { TEMPLATE_QUERY } from './application/port/out/template-query.port';
 import { BEACH_RISK_QUERY } from './application/port/out/beach-risk-query.port';
 import {
@@ -65,6 +68,10 @@ import {
     { provide: TEMPLATE_QUERY, useClass: TemplateKyselyQuery },
     // ADM-010 문구 {riskLevel} 자동 채움: 해변 현재 위험도(risk_scores) 읽기 전용 조회.
     { provide: BEACH_RISK_QUERY, useClass: BeachRiskKyselyQuery },
+    // 알림 파기 (발송 이력이 계속 쌓이므로 보관 기간 지나면 정리)
+    { provide: NOTIFICATION_PURGE, useClass: NotificationPurgePrismaRepository },
+    // 스케줄러 (adapter/in/schedule)
+    NotificationPurgeScheduler,
   ],
   // 다른 컨텍스트가 알림 생성/확산 시 사용하는 인바운드 포트 토큰을 공개한다.
   exports: [CREATE_NOTIFICATION_USE_CASE, NOTIFY_BEACH_SUBSCRIBERS_USE_CASE],
