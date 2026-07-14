@@ -209,13 +209,25 @@ const RULES_V2: Rule[] = [
   //   (BEACH_VULNERABILITY 는 해변별 취약도 값을 실제로 쓰지 않는다 — 아래 주석 참조.)
   { ruleCode: 'WIND_INFLOW', ruleCategory: 'risk_variable', ruleName: '해변 방향 유입 풍향', score: 5, conditionJson: { angle_tolerance: 60, min_wind_speed_ms: 5.0 } },
 
-  // CURRENT_INFLOW 10 유지. **검증 불가라 유지한다.**
+  // CURRENT_INFLOW 10 → 5. **검증 불가 + 센서 배치 인공물 제거.**
   //   기상청은 유향·유속을 관측하지 않고 국립해양조사원(중문 TW_0075)은 과거 조회 API 가 없다
   //   → 백테스트 전 기간 100% 결측이라 신호가 있는지 없는지 **측정 자체를 못 했다.**
-  //   근거 없이 올리지도 내리지도 않는다. 실시간 데이터가 쌓이면 재평가할 것.
-  //   (부작용 주의: 이 룰이 실제로 켜지는 해변은 중문뿐인데, 10점이라 중문만 다른 해변보다 상시 유리해진다.
-  //    관측만으로 도달 가능한 최대 55점 계산에는 이 10점이 포함돼 있다.)
-  { ruleCode: 'CURRENT_INFLOW', ruleCategory: 'risk_variable', ruleName: '해변 방향 유입 해류', score: 10, conditionJson: { angle_tolerance: 60, min_current_speed_ms: 0.3 } },
+  //
+  //   처음엔 "근거 없이 올리지도 내리지도 않는다"며 10 으로 뒀는데, 운영에 올리자마자 문제가 터졌다.
+  //   제주 해역에서 유향·유속을 재는 부이는 중문 앞바다 하나뿐이고, 그 유향이 중문의 방위각과
+  //   맞아떨어져 **이 룰이 켜지는 해변은 사실상 중문 하나뿐**이다(같은 부이를 쓰는 화순조차
+  //   방위각이 달라 안 켜진다). 그 결과:
+  //
+  //     중문 severe 80점 (해파리 속보 1건)  ← '입수 통제'
+  //     협재 danger 70점 (해파리 속보 3건)
+  //
+  //   해파리 근거가 더 적은 해변이 **센서가 하나 더 있다는 이유로** 더 위험하다고 나온다.
+  //   이건 위험 신호가 아니라 관측망 배치의 인공물이다.
+  //
+  //   검증 안 된 다른 관측 룰(WAVE_HIGH, WIND_INFLOW)은 5 로 낮췄으면서 이것만 10 으로 두는 것도
+  //   일관성이 없다. 인식론적 지위가 같다 — 셋 다 "신호가 있는지 모른다".
+  //   같은 5 로 맞춘다. 실시간 유속 데이터가 쌓여 검증 가능해지면 그때 재평가한다.
+  { ruleCode: 'CURRENT_INFLOW', ruleCategory: 'risk_variable', ruleName: '해변 방향 유입 해류', score: 5, conditionJson: { angle_tolerance: 60, min_current_speed_ms: 0.3 } },
 
   // BEACH_VULNERABILITY 5 유지. **검증 불가라 유지한다.**
   //   정답이 시군구 단위라 해변 간 차이를 검증할 방법이 없다(백테스트 한계 1번).
