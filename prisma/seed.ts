@@ -336,16 +336,62 @@ async function seedRecommendations() {
   console.log(`  ✓ 대응 권고 ${recs.length}건`);
 }
 
+/**
+ * 해파리 쏘임 응급처치 문구 (G-006).
+ *
+ * ⚠️ **응급처치 정보는 틀리면 사람이 다친다.** 임의로 쓰거나 요약하지 마라.
+ *
+ * 출처: 국립수산과학원 「해파리 응급대처법」
+ *       https://www.nifs.go.kr/portal/pcon0000066/systA/actionConts.do (2026-07-14 확인)
+ *
+ * 왜 이 출처인가 — 국립수산과학원에는 응급처치 자료가 **두 개 있고 서로 충돌한다.**
+ *
+ *   · 게시판 첨부 PDF(구 자료): 종별로 **알코올·식초·암모니아수**로 닦으라고 안내한다.
+ *   · 현행 포털 페이지: 종 구분 없이 **바닷물·생리식염수** 세척 + **온찜질 45℃**,
+ *     그리고 **수돗물 금지**(독침 발사가 증가한다)를 명시한다.
+ *
+ * 알코올·식초는 자포(독침) 발사를 오히려 촉진할 수 있다는 것이 최근 지침의 방향이다.
+ * 옛 PDF 를 그대로 넣으면 **현행 지침과 반대되는 응급처치를 안내하게 된다.**
+ * 그래서 **현행 포털 페이지만** 채택했다. 종별 안내는 넣지 않는다.
+ *
+ * 공공데이터포털에는 응급처치 데이터셋이 없다(해파리 출현 정보와 속보 조치사항만 있다).
+ * 즉 이 문구는 API 로 자동 갱신되지 않는다 — 국립수산과학원이 지침을 바꾸면
+ * **사람이 확인해서 여기를 고쳐야 한다.** 관리자 화면에서 수정할 수 있게 static_guides 에 둔다.
+ */
+const FIRST_AID_BODY = [
+  '해파리에 쏘이면 즉시 물 밖으로 나오세요.',
+  '',
+  '[약하게 쏘인 경우]',
+  '1. 쏘인 부위에 남아있는 촉수를 바닷물 또는 생리식염수로 신속히 제거하고 충분히 세척합니다.',
+  '2. 통증이 남아있으면 온찜질(45℃ 내외)로 통증을 완화합니다.',
+  '3. 상처 부위가 충분히 진정되었는지 확인합니다.',
+  '',
+  '[심각한 증상이 나타나는 경우]',
+  '호흡 곤란 · 의식 불명 · 전신 통증 등의 증상을 보이면',
+  '즉시 119에 신고하고 의료진의 도움을 요청하세요(필요시 심폐소생술).',
+  '이후 병원으로 이송해 응급치료를 받아야 합니다.',
+  '',
+  '[반드시 지킬 것]',
+  '· 수돗물로 씻지 마세요. 해파리 독침 발사가 증가해 피해가 커집니다.',
+  '· 물에 들어갈 때는 피부 노출을 최소화하세요.',
+  '',
+  '출처: 국립수산과학원 「해파리 응급대처법」 (2026-07-14 확인)',
+].join('\n');
+
 async function seedGuides() {
   const guides = [
     { guideCode: 'DISCLAIMER_PUBLIC', targetType: 'public', title: '위험도 참고 정보 안내', body: 'JellySafe 위험도는 참고 정보이며, 현장 안전요원 및 운영기관의 최종 안내가 우선합니다.', displayOrder: 1 },
     { guideCode: 'DISCLAIMER_ADMIN', targetType: 'admin', title: '운영 판단 안내', body: 'AI 판별 결과는 관리자 확인 전 확정 데이터가 아닙니다. 운영기관 기준에 따라 최종 조치하세요.', displayOrder: 1 },
     { guideCode: 'SAFETY_SEVERE', targetType: 'public', riskLevel: 'severe', title: '심각 단계 안전 안내', body: '입수를 자제하고 대체 해변 이용을 권장합니다. 쏘임 시 즉시 안전요원에게 알리세요.', displayOrder: 2 },
+    { guideCode: 'FIRST_AID', targetType: 'public', title: '해파리 접촉피해 응급대처법', body: FIRST_AID_BODY, displayOrder: 3 },
   ];
   for (const g of guides) {
-    await prisma.staticGuide.upsert({ where: { guideCode: g.guideCode }, update: {}, create: g });
+    // 응급처치 문구는 update 에도 넣는다. 지침이 바뀌었는데 재시드해도 옛 문구가 남아 있으면
+    // 사람이 다칠 수 있다(다른 시드와 달리 update:{} 가 아니다).
+    const update = g.guideCode === 'FIRST_AID' ? { title: g.title, body: g.body } : {};
+    await prisma.staticGuide.upsert({ where: { guideCode: g.guideCode }, update, create: g });
   }
-  console.log(`  ✓ 안내/고지 문구 ${guides.length}건`);
+  console.log(`  ✓ 안내/고지 문구 ${guides.length}건 (응급대처법 포함 — 출처: 국립수산과학원)`);
 }
 
 async function seedNotificationTemplates() {
