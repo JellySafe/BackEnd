@@ -8,6 +8,10 @@ import { toDomain, toPersistence } from './daily-report.mapper';
 /**
  * 일간 리포트 영속성 어댑터 (Prisma).
  * uk(beach_id, report_date) 기준 upsert 와 단순 조회를 담당한다.
+ *
+ * report_date 는 MySQL DATE 다. Prisma 는 JS Date 의 **UTC 연/월/일**만 취하므로
+ * 키는 KST 달력 날짜의 **UTC 자정**(normalizeReportDate 산출물)이어야 한다.
+ * KST 자정 인스턴트(전날 15:00Z)를 넣으면 하루 밀린 날짜로 저장된다(실측 확인).
  */
 @Injectable()
 export class DailyReportPrismaRepository implements DailyReportRepositoryPort {

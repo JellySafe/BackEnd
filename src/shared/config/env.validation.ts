@@ -36,6 +36,23 @@ class EnvSchema {
   @IsIn(['mock', 'remote'])
   VISION_AI_MODE?: string;
 
+  /**
+   * 제보 이미지 저장 경로. 미설정 시 `./uploads`(CWD 기준).
+   * 운영은 영구 볼륨 마운트 경로(예: /app/uploads) — 컨테이너 FS 에 두면 재배포마다 사라진다.
+   */
+  @IsOptional()
+  @IsString()
+  UPLOAD_DIR?: string;
+
+  /**
+   * `/system/*` 내부 API 호출 키(헤더 x-system-key).
+   * 선택값이지만 **미설정 시 /system/* 은 전면 차단(401)** 된다(fail-closed, SystemAuthGuard 참고).
+   * 부팅 자체를 막지 않는 이유: 스케줄러 배치는 HTTP 를 타지 않으므로 키 없이도 서비스는 정상이다.
+   */
+  @IsOptional()
+  @IsString()
+  SYSTEM_API_KEY?: string;
+
   @IsOptional()
   @IsIn(['true', 'false'])
   SCHEDULER_ENABLED?: string;

@@ -24,6 +24,10 @@ export type Beach = {
     facing_direction: number | null;
     priority: Generated<number>;
     vulnerability_score: Generated<number>;
+    /**
+     * 해변 대표 사진 URL. 미등록이면 null → 프론트가 placeholder 로 대체한다.
+     */
+    image_url: string | null;
     is_active: Generated<number>;
     created_at: Generated<Timestamp>;
     updated_at: Timestamp;
@@ -112,6 +116,31 @@ export type JellyfishReport = {
     reflected_at: Timestamp | null;
     purge_scheduled_at: Timestamp | null;
 };
+export type JellyfishSpecies = {
+    id: Generated<number>;
+    korean_name: string;
+    scientific_name: string | null;
+    /**
+     * strong(강독성)/mild(약독성)/harmless(무해성). 기관 미발표 종은 null — 추정 금지.
+     */
+    toxicity: string | null;
+    features: string | null;
+    appearance_season: string | null;
+    /**
+     * 쏘였을 때의 증상(원문). 처치법이 아니다.
+     */
+    sting_symptom: string | null;
+    image_url: string | null;
+    /**
+     * 이미지 출처 표기. 화면에 반드시 함께 노출한다(공공누리 필수 조건).
+     */
+    image_source: string | null;
+    image_source_url: string | null;
+    display_order: Generated<number>;
+    active: Generated<number>;
+    created_at: Generated<Timestamp>;
+    updated_at: Timestamp;
+};
 export type MlModel = {
     id: Generated<number>;
     model_name: string;
@@ -135,6 +164,7 @@ export type Notification = {
     risk_level: string | null;
     event_type: string;
     template_id: number | null;
+    title: string | null;
     message: string;
     dedup_key: string | null;
     cooldown_until: Timestamp | null;
@@ -149,6 +179,10 @@ export type NotificationConsent = {
     agreed: Generated<number>;
     phone_number: string | null;
     device_token: string | null;
+    /**
+     * Web Push 구독 정보(endpoint/p256dh/auth). 브라우저가 발급하며 endpoint 만 300자를 넘어 deviceToken 에 담기지 않는다.
+     */
+    push_subscription_json: unknown | null;
     agreed_at: Timestamp | null;
     revoked_at: Timestamp | null;
 };
@@ -408,6 +442,20 @@ export type VisionResult = {
     requested_at: Generated<Timestamp>;
     processed_at: Timestamp | null;
 };
+export type WeatherForecast = {
+    id: Generated<number>;
+    beach_id: number;
+    source_id: number | null;
+    base_at: Timestamp;
+    target_at: Timestamp;
+    wave_height: string | null;
+    wind_direction: number | null;
+    wind_speed: string | null;
+    air_temp: string | null;
+    precipitation: string | null;
+    sky_code: string | null;
+    collected_at: Generated<Timestamp>;
+};
 export type DB = {
     audit_logs: AuditLog;
     beaches: Beach;
@@ -417,6 +465,7 @@ export type DB = {
     favorite_beaches: FavoriteBeach;
     jellyfish_occurrences: JellyfishOccurrence;
     jellyfish_reports: JellyfishReport;
+    jellyfish_species: JellyfishSpecies;
     ml_models: MlModel;
     notification_consents: NotificationConsent;
     notification_dispatches: NotificationDispatch;
@@ -442,4 +491,5 @@ export type DB = {
     subscriptions: Subscription;
     users: User;
     vision_results: VisionResult;
+    weather_forecasts: WeatherForecast;
 };

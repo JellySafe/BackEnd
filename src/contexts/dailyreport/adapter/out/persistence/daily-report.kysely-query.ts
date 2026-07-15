@@ -3,12 +3,20 @@ import { sql } from 'kysely';
 import { KyselyService } from '@shared/persistence/kysely/kysely.service';
 import { Id } from '@shared/kernel/id';
 import { RiskLevel, isRiskLevel, maxRiskLevel } from '@shared/kernel/risk-level';
-import { DailyReportQueryPort } from '../../../application/port/out/daily-report-query.port';
+import {
+  DailyReportQueryPort,
+  DailyRiskFactor,
+  RiskTrendPoint,
+} from '../../../application/port/out/daily-report-query.port';
 import { DailyReportAggregation, dayWindow } from '../../../domain/daily-report';
 
 /**
  * 일간 리포트 집계 어댑터 (Kysely).
- * 하루 윈도우 [start, end) 로 risk_scores / jellyfish_reports / operation_actions 를 집계한다.
+ * **KST 하루** 윈도우 [start, end) 로 risk_scores / jellyfish_reports / operation_actions 를 집계한다.
+ *
+ * 윈도우는 UTC 인스턴트다(예: KST 2026-07-13 → 2026-07-12T15:00Z ~ 2026-07-13T15:00Z).
+ * mysql2 풀이 timezone:'Z' 라 JS Date 파라미터는 UTC 벽시계로 직렬화되고,
+ * 대상 컬럼(submitted_at/created_at/generated_at)도 UTC DATETIME 이라 그대로 비교된다.
  */
 @Injectable()
 export class DailyReportKyselyQuery implements DailyReportQueryPort {
@@ -68,5 +76,65 @@ export class DailyReportKyselyQuery implements DailyReportQueryPort {
       stingCount: Number(reportRow?.stingCount ?? 0),
       actionCount: Number(actionRow?.actionCount ?? 0),
     };
+  }
+
+  async riskTrend(beachId: Id, reportDate: Date): Promise<RiskTrendPoint[]> {
+    const { start, end } = dayWindow(reportDate);
+
+    const rows = await this.db
+      .selectFrom('risk_scores')
+      .select(['risk_level as riskLevel', 'risk_score as riskScore', 'generated_at as generatedAt'])
+      .where('beach_id', '=', beachId)
+      .where('horizon', '=', 'now')
+      .where('generated_at', '>=', start)
+      .where('generated_at', '<', end)
+      .orderBy('generated_at', 'asc')
+      .execute();
+
+    return rows
+      .filter((r) => isRiskLevel(r.riskLevel))
+      .map((r) => ({
+        generatedAt: new Date(r.generatedAt),
+        riskLevel: r.riskLevel as RiskLevel,
+        riskScore: Number(r.riskScore),
+      }));
+  }
+
+  async topFactors(beachId: Id, reportDate: Date): Promise<DailyRiskFactor[]> {
+    const { start, end } = dayWindow(reportDate);
+
+    // 그날 가장 위험했던 시점의 산출을 고른다. 점수가 같으면 나중 산출을 쓴다(더 신선한 근거).
+    const peak = await this.db
+      .selectFrom('risk_scores')
+      .select('id')
+      .where('beach_id', '=', beachId)
+      .where('horizon', '=', 'now')
+      .where('generated_at', '>=', start)
+      .where('generated_at', '<', end)
+      .orderBy('risk_score', 'desc')
+      .orderBy('generated_at', 'desc')
+      .executeTakeFirst();
+
+    if (!peak) return [];
+
+    const rows = await this.db
+      .selectFrom('risk_factors')
+      .select([
+        'factor_code as code',
+        'factor_name as name',
+        'factor_detail as detail',
+        'score_delta as scoreDelta',
+      ])
+      .where('risk_score_id', '=', peak.id)
+      .orderBy('score_delta', 'desc')
+      .orderBy('display_order', 'asc')
+      .execute();
+
+    return rows.map((r) => ({
+      code: r.code,
+      name: r.name,
+      detail: r.detail ?? null,
+      scoreDelta: Number(r.scoreDelta),
+    }));
   }
 }

@@ -1,6 +1,6 @@
 import { Inject, Injectable, Logger } from '@nestjs/common';
 import { Id } from '@shared/kernel/id';
-import { DataConfidence, RiskHorizon, compareRiskLevel } from '@shared/kernel/risk-level';
+import { RiskHorizon, compareRiskLevel } from '@shared/kernel/risk-level';
 import { NotFoundError } from '@shared/kernel/domain-error';
 import {
   CalculateRiskCommand,
@@ -15,9 +15,13 @@ import { RiskEngine } from '../../domain/risk-engine';
 import {
   deriveConfidence,
   deriveMinLevelTriggers,
+  deriveNearbyMinTriggers,
+  evaluateForecastVariables,
   evaluateReportWeights,
   evaluateRiskVariables,
 } from '../../domain/risk-assessment';
+import { applyHorizon, decayMinLevelTriggers, degradeConfidence } from '../../domain/risk-horizon';
+import { pickForecast } from '../../domain/risk-forecast';
 import { CalcStatus } from '../../domain/risk-enums';
 
 /** now/24h/72h 산출 (6h 는 2차). */
@@ -27,16 +31,9 @@ const COLLECT_OPTIONS: CollectOptions = {
   reportWindowDays: 3,
   nearbyWindowDays: 7,
   recentTempDays: 3,
+  nearbyRadiusKm: 30, // 룰 NEARBY_ALERT.conditionJson.radius_km 와 동일
+  pastSeasonWindowDays: 14, // 오늘 기준 ±2주에 해당하는 과거 연도 발생만 "동일 시기"로 본다
 };
-
-const CONFIDENCE_ORDER: DataConfidence[] = ['high', 'medium', 'low'];
-
-/** horizon 이 멀수록 예측 불확실성으로 신뢰도를 한 단계씩 낮춘다. */
-function degradeConfidence(base: DataConfidence, horizon: RiskHorizon): DataConfidence {
-  const steps = horizon === 'now' ? 0 : horizon === '24h' ? 1 : 2;
-  const idx = Math.min(CONFIDENCE_ORDER.indexOf(base) + steps, CONFIDENCE_ORDER.length - 1);
-  return CONFIDENCE_ORDER[idx];
-}
 
 /**
  * SYS-003 위험도 산출 (POST /system/risk/calculate).
@@ -55,6 +52,9 @@ export class CalculateRiskService implements CalculateRiskUseCase {
   ) {}
 
   async calculate(command: CalculateRiskCommand): Promise<CalculateRiskResult> {
+    // 산출 기준 시각. 배치 도중 자정/예보 구간을 넘겨 해변마다 다른 예보 구간이 잡히는 일이
+    // 없도록 한 번만 찍어 전 해변·전 지평에 같은 기준을 쓴다(24h/72h 대상 시각의 기준점).
+    const calculatedAt = new Date();
     const version = process.env.RISK_RULE_VERSION || 'v1';
     const rules = await this.ruleConfig.loadActive(version);
     const scoreMap = new Map<string, number>();
@@ -89,15 +89,30 @@ export class CalculateRiskService implements CalculateRiskUseCase {
 
         const variables = evaluateRiskVariables(bundle, ruleScore);
         const reportWeights = evaluateReportWeights(bundle.verifiedReports, ruleScore);
-        const minLevelTriggers = deriveMinLevelTriggers(bundle.verifiedReports);
+        // 제보 기반(독성·쏘임) + 인근 출현 기반(밀도 무관 최소 '주의') 최소 단계 보장을 합친다.
+        const minLevelTriggers = [
+          ...deriveMinLevelTriggers(bundle.verifiedReports),
+          ...deriveNearbyMinTriggers(bundle.nearbyAlert),
+        ];
         const baseConfidence = deriveConfidence(variables.missing.length, bundle.observationAgeMinutes);
 
         for (const horizon of HORIZONS) {
-          const confidence = degradeConfidence(baseConfidence, horizon);
+          // RISK-006: 지평마다 요인을 다시 평가한다.
+          // 같은 입력을 세 번 넣으면 now/24h/72h 가 똑같은 점수·원인으로 나온다(= 예측이 아니다).
+          //
+          // 24h/72h 에 해당 시각의 **기상 예보**가 있으면 파고·풍향을 예보값으로 재평가한다
+          // (현재값 × 지속성 계수가 아니라). 예보가 없으면 계수 폴백으로 되돌아간다.
+          // 수온은 예보가 없어(어떤 API 도 수온 예보를 주지 않는다) 여전히 계수 근사다.
+          const forecast = pickForecast(bundle.forecasts, horizon, calculatedAt);
+          const forecastFactors =
+            forecast === null ? null : evaluateForecastVariables(bundle.beach, forecast, ruleScore);
+
+          const confidence = degradeConfidence(baseConfidence, horizon, forecast !== null);
+
           const result = RiskEngine.calculate({
-            variables: variables.factors,
-            reportWeights,
-            minLevelTriggers,
+            variables: applyHorizon(variables.factors, horizon, forecastFactors),
+            reportWeights: applyHorizon(reportWeights, horizon),
+            minLevelTriggers: decayMinLevelTriggers(minLevelTriggers, horizon),
             confidence,
           });
           // 'now' 지평만 단계 상승 알림 대상: 저장 전에 기존 최신 단계를 확보한다(저장 시 최신본이 교체됨).
@@ -140,7 +155,7 @@ export class CalculateRiskService implements CalculateRiskUseCase {
     const errorMessage = failed > 0 ? `${failed}개 해변 산출 실패` : null;
     await this.persistence.finishCalculation(calculationId, status, affected, errorMessage);
 
-    return { calculationId: calculationUid, affectedBeachCount: affected, generatedAt: new Date() };
+    return { calculationId: calculationUid, affectedBeachCount: affected, generatedAt: calculatedAt };
   }
 
   private async resolveBeachIds(beachId: Id | null): Promise<Id[]> {

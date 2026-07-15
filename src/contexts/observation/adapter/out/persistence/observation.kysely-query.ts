@@ -1,6 +1,9 @@
 import { Injectable } from '@nestjs/common';
+import { ConfigService } from '@nestjs/config';
 import { KyselyService } from '@shared/persistence/kysely/kysely.service';
 import { SourceType, SyncStatus } from '../../../domain/observation-enums';
+import { decodeSyncMessage, evaluateSyncHealth } from '../../../domain/sync-health';
+import { ObservationConfig } from '../../../observation.config';
 import {
   BeachLocation,
   DataSourceStatusView,
@@ -20,7 +23,14 @@ function num(v: string | null): number | null {
  */
 @Injectable()
 export class ObservationKyselyQuery implements ObservationQueryPort {
-  constructor(private readonly db: KyselyService) {}
+  private readonly config: ObservationConfig;
+
+  constructor(
+    private readonly db: KyselyService,
+    configService: ConfigService,
+  ) {
+    this.config = new ObservationConfig(configService);
+  }
 
   async listDataSources(): Promise<DataSourceStatusView[]> {
     const rows = await this.db
@@ -41,19 +51,49 @@ export class ObservationKyselyQuery implements ObservationQueryPort {
       .orderBy('d.id', 'asc')
       .execute();
 
-    return rows.map((r) => ({
-      id: Number(r.id),
-      sourceCode: r.sourceCode,
-      name: r.name,
-      provider: r.provider ?? null,
-      sourceType: r.sourceType as SourceType,
-      isSample: Boolean(r.isSample),
-      isActive: Boolean(r.isActive),
-      syncIntervalMinutes: r.syncIntervalMinutes === null ? null : Number(r.syncIntervalMinutes),
-      lastSyncedAt: r.lastSyncedAt === null ? null : new Date(r.lastSyncedAt),
-      lastSyncStatus: (r.lastSyncStatus as SyncStatus | null) ?? null,
-      lastSyncMessage: r.lastSyncMessage ?? null,
-    }));
+    // 건강 판정은 순수 함수(domain/sync-health)에 맡긴다. 배치가 last_sync_message 앞에
+    // 심어 둔 태그에서 연속 0건/연속 실패 누적치를 복원해 함께 판정한다.
+    const now = new Date();
+    const thresholds = this.config.syncHealthThresholds;
+
+    return rows.map((r) => {
+      const sourceType = r.sourceType as SourceType;
+      const isActive = Boolean(r.isActive);
+      const syncIntervalMinutes =
+        r.syncIntervalMinutes === null ? null : Number(r.syncIntervalMinutes);
+      const lastSyncedAt = r.lastSyncedAt === null ? null : new Date(r.lastSyncedAt);
+      const lastSyncStatus = (r.lastSyncStatus as SyncStatus | null) ?? null;
+      const rawMessage = r.lastSyncMessage ?? null;
+
+      const health = evaluateSyncHealth({
+        sourceType,
+        isActive,
+        syncIntervalMinutes,
+        lastSyncedAt,
+        lastSyncStatus,
+        lastSyncMessage: rawMessage,
+        now,
+        thresholds,
+      });
+
+      // 내부 태그는 화면에 노출하지 않는다. 사람이 읽는 문구만 남긴다.
+      const text = decodeSyncMessage(rawMessage).text;
+
+      return {
+        ...health,
+        id: Number(r.id),
+        sourceCode: r.sourceCode,
+        name: r.name,
+        provider: r.provider ?? null,
+        sourceType,
+        isSample: Boolean(r.isSample),
+        isActive,
+        syncIntervalMinutes,
+        lastSyncedAt,
+        lastSyncStatus,
+        lastSyncMessage: text === '' ? null : text,
+      };
+    });
   }
 
   async listObservations(

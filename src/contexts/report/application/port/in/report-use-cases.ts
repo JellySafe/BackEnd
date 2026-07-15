@@ -1,7 +1,7 @@
 import { Id } from '@shared/kernel/id';
 import { Page, PageRequest } from '@shared/kernel/pagination';
 import { AiResult, RejectReason, ReportStatus, ReportType, ReviewStatus } from '../../../domain/report-enums';
-import { ReportListFilter, ReportListItem } from '../out/report-query.port';
+import { ReportDetail, ReportListFilter, ReportListItem } from '../out/report-query.port';
 
 // ----- USR-004 제보 작성 -----
 export interface SubmitReportCommand {
@@ -17,10 +17,26 @@ export interface SubmitReportCommand {
   consentLogIds: Id[]; // PRIV-001 동의 로그 연결
 }
 
+/**
+ * 해변이 어떻게 정해졌는지 (REPORT-005).
+ *  - `user` : 사용자가 해변을 직접 골랐다(요청의 beachId 를 그대로 존중).
+ *  - `auto` : 좌표만 왔고, 최근접 활성 해변이 반경 상한 이내라 자동 배정했다.
+ *  - `none` : 좌표가 반경 상한 밖이라 배정하지 않았다(beach_id NULL, 위험도 미반영).
+ *
+ * 스키마 변경 없이 접수 시점에 계산되는 값이라 응답에만 싣는다(DB 에 저장하지 않는다).
+ */
+export type BeachAssignment = 'user' | 'auto' | 'none';
+
 export interface SubmitReportResult {
   reportId: Id;
   status: ReportStatus;
   aiStatus: 'pending';
+  /** 최종 배정된 해변. 자동 배정 실패 시 null. */
+  beachId: Id | null;
+  beachName: string | null;
+  beachAssignment: BeachAssignment;
+  /** 자동 배정된 경우 제보 좌표 ↔ 해변 중심점 거리(km). 그 외 null. */
+  beachDistanceKm: number | null;
 }
 
 export interface SubmitReportUseCase {
@@ -48,6 +64,13 @@ export interface ListReportsUseCase {
   list(filter: ReportListFilter, page: PageRequest): Promise<Page<ReportListItem>>;
 }
 export const LIST_REPORTS_USE_CASE = Symbol('LIST_REPORTS_USE_CASE');
+
+// ----- ADM-008 관리자 제보 상세 -----
+export interface GetReportDetailUseCase {
+  /** 검수 화면용 상세. 사진 + 제보 좌표 + 해변 좌표를 함께 준다. */
+  getDetail(reportId: Id): Promise<ReportDetail>;
+}
+export const GET_REPORT_DETAIL_USE_CASE = Symbol('GET_REPORT_DETAIL_USE_CASE');
 
 // ----- ADM-009 제보 검수 -----
 export interface ReviewReportCommand {

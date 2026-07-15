@@ -27,13 +27,21 @@ export class GetDailyReportService implements GetDailyReportUseCase {
   ) {}
 
   async get(query: GetDailyReportQuery): Promise<DailyReportView> {
+    // 추이·원인은 저장 여부와 무관하게 risk_scores 원본에서 매번 그린다.
+    // 집계 수치는 리포트 생성 시점에 굳지만(운영자가 확정한 값), 그래프는 원자료에서
+    // 다시 그리는 게 맞다. 리포트 행에 시계열을 복제해 둘 이유가 없다.
+    const [riskTrend, topFactors] = await Promise.all([
+      this.query.riskTrend(query.beachId, query.date),
+      this.query.topFactors(query.beachId, query.date),
+    ]);
+
     const existing = await this.repository.findByBeachAndDate(query.beachId, query.date);
     if (existing) {
-      return toDailyReportView(existing, true);
+      return { ...toDailyReportView(existing, true), riskTrend, topFactors };
     }
 
     const agg = await this.query.aggregate(query.beachId, query.date);
     const transient = DailyReport.fromAggregation(query.beachId, query.date, agg, null, new Date());
-    return toDailyReportView(transient, false);
+    return { ...toDailyReportView(transient, false), riskTrend, topFactors };
   }
 }

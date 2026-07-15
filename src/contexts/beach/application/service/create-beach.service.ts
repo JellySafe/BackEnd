@@ -24,6 +24,7 @@ export class CreateBeachService implements CreateBeachUseCase {
       facingDirection: command.facingDirection ?? null,
       priority: command.priority,
       vulnerabilityScore: command.vulnerabilityScore,
+      imageUrl: command.imageUrl ?? null,
     });
     const saved = await this.repository.save(beach);
     return toBeachDetail(saved);

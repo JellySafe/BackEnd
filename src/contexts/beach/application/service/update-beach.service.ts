@@ -30,6 +30,7 @@ export class UpdateBeachService implements UpdateBeachUseCase {
       facingDirection: command.facingDirection,
       priority: command.priority,
       vulnerabilityScore: command.vulnerabilityScore,
+      imageUrl: command.imageUrl,
       isActive: command.isActive,
     });
     const saved = await this.repository.update(beach);

@@ -19,6 +19,11 @@ export class DataSourcePrismaRepository implements DataSourceRepositoryPort {
     return rows.map(dataSourceToDomain);
   }
 
+  async findByCode(sourceCode: string): Promise<DataSource | null> {
+    const row = await this.prisma.dataSource.findUnique({ where: { sourceCode } });
+    return row === null ? null : dataSourceToDomain(row);
+  }
+
   async update(source: DataSource): Promise<void> {
     const id = source.id;
     if (id === undefined) {

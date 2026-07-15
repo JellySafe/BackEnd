@@ -19,6 +19,24 @@ export interface SyncObservationsUseCase {
 }
 export const SYNC_OBSERVATIONS_USE_CASE = Symbol('SYNC_OBSERVATIONS_USE_CASE');
 
+// ----- SYS-001 기상 예보 수집 (기상청 단기 해상예보) -----
+export interface SyncForecastsResult {
+  beaches: number; // 예보를 붙인 활성 해변 수
+  fetched: number; // 수집기가 내놓은 예보 행 수
+  saved: number; // 실제로 upsert 된 행 수
+  /** 이미 최신 발표를 갖고 있어(또는 키 미설정) API 를 부르지 않았는가. */
+  skipped: boolean;
+}
+
+export interface SyncForecastsUseCase {
+  /**
+   * 활성 해변의 기상 예보를 수집·저장한다.
+   * @param force true 면 최신 발표 보유 여부와 무관하게 강제로 조회한다(수동 트리거/디버깅).
+   */
+  syncAll(force?: boolean, now?: Date): Promise<SyncForecastsResult>;
+}
+export const SYNC_FORECASTS_USE_CASE = Symbol('SYNC_FORECASTS_USE_CASE');
+
 // ----- SYS-002 관측소-해수욕장 매핑 -----
 export interface MapStationsResult {
   beaches: number; // 처리한 활성 해변 수

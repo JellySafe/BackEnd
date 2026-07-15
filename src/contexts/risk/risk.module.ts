@@ -18,6 +18,9 @@ import { RiskPrismaRepository } from './adapter/out/persistence/risk.prisma-repo
 import { RiskKyselyQuery } from './adapter/out/persistence/risk.kysely-query';
 import { RiskAlertAdapter } from './adapter/out/risk-alert.adapter';
 import { RiskRecalcScheduler } from './adapter/in/schedule/risk-recalc.scheduler';
+import { RiskHistoryPurgeScheduler } from './adapter/in/schedule/risk-history-purge.scheduler';
+import { RiskHistoryPurgePrismaRepository } from './adapter/out/persistence/risk-history-purge.prisma-repository';
+import { RISK_HISTORY_PURGE } from './application/port/out/risk-history-purge.port';
 import { RULE_CONFIG } from './application/port/out/rule-config.port';
 import { RISK_INPUT } from './application/port/out/risk-input.port';
 import { RISK_PERSISTENCE } from './application/port/out/risk-persistence.port';
@@ -55,6 +58,8 @@ import {
     { provide: RISK_INPUT, useClass: RiskInputKyselyQuery },
     { provide: RISK_PERSISTENCE, useClass: RiskPrismaRepository },
     { provide: RISK_QUERY, useClass: RiskKyselyQuery },
+    // 산출 이력 파기 (30분마다 쌓이는 risk_scores/risk_factors 를 보관 기간 지나면 정리)
+    { provide: RISK_HISTORY_PURGE, useClass: RiskHistoryPurgePrismaRepository },
     // report 의 재산출 포트 구현 (RECALC_BATCH 트리거)
     { provide: RISK_RECALC, useClass: RiskRecalcAdapter },
     // observation 배치의 재산출 트리거 포트 구현 (data_sync 트리거)
@@ -63,6 +68,7 @@ import {
     { provide: RISK_ALERT, useClass: RiskAlertAdapter },
     // 주기적 위험도 재산출 스케줄러 (RISK_RECALC_CRON, triggerType='schedule')
     RiskRecalcScheduler,
+    RiskHistoryPurgeScheduler,
   ],
   exports: [RISK_RECALC, RISK_RECALC_TRIGGER, CALCULATE_RISK_USE_CASE],
 })

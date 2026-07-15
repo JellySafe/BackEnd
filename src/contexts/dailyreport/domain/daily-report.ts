@@ -1,21 +1,35 @@
 import { Id } from '@shared/kernel/id';
 import { ValidationError } from '@shared/kernel/domain-error';
 import { RiskLevel } from '@shared/kernel/risk-level';
+import { kstDayWindow, toKstDateKey, toKstDateString } from '@shared/kernel/kst-date';
 
 /**
- * report_date(DATE) 정규화 — 시각을 UTC 자정 0시로 맞춘다.
- * DB 는 DATE 타입이라 시각 성분이 없다. 조회/저장 키가 흔들리지 않도록 통일한다.
+ * report_date(DATE) 정규화 — **KST 달력 날짜 키**(그 날짜의 UTC 자정)로 맞춘다.
+ *
+ * daily_reports.report_date 는 MySQL DATE 이고, Prisma 는 JS Date 의 **UTC 연/월/일만** 취한다.
+ * 따라서 키는 UTC 자정이어야 한다(실측 근거는 @shared/kernel/kst-date 참고).
+ * 단 그 연/월/일은 **KST 기준 달력 날짜**여야 한다 — 임의 시각을 넣어도 KST 날짜로 접힌다.
+ * 날짜 키를 다시 넣어도 같은 키가 나온다(멱등).
  */
 export function normalizeReportDate(date: Date): Date {
-  return new Date(Date.UTC(date.getUTCFullYear(), date.getUTCMonth(), date.getUTCDate()));
+  return toKstDateKey(date);
 }
 
-/** 집계 하루의 시각 윈도우 [start, end). 제보/대응/위험도 조회에 사용. */
+/**
+ * 집계 하루의 시각 윈도우 [start, end) — **KST 하루**(00:00~24:00)를 UTC 인스턴트로.
+ * 제보(submitted_at)/대응(created_at)/위험도(generated_at) 는 모두 UTC DATETIME 이므로
+ * 이 윈도우로 비교해야 운영자가 보는 하루와 집계 구간이 일치한다.
+ *
+ * 예) 2026-07-13 → [2026-07-12T15:00:00Z, 2026-07-13T15:00:00Z)
+ *     = KST 07-13 00:00 ~ 07-14 00:00
+ */
 export function dayWindow(reportDate: Date): { start: Date; end: Date } {
-  const start = normalizeReportDate(reportDate);
-  const end = new Date(start.getTime());
-  end.setUTCDate(end.getUTCDate() + 1);
-  return { start, end };
+  return kstDayWindow(reportDate);
+}
+
+/** 리포트 날짜 라벨(YYYY-MM-DD, KST 기준). */
+export function reportDateLabel(reportDate: Date): string {
+  return toKstDateString(reportDate);
 }
 
 /** SYS-006 집계 결과 (Kysely 쿼리 어댑터가 산출). */
@@ -122,7 +136,7 @@ export class DailyReport {
     now: Date,
   ): Record<string, unknown> {
     return {
-      reportDate: reportDate.toISOString().slice(0, 10),
+      reportDate: reportDateLabel(reportDate),
       maxRiskLevel: agg.maxRiskLevel,
       firstRiskLevel: agg.firstRiskLevel,
       lastRiskLevel: agg.lastRiskLevel,

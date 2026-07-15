@@ -2,6 +2,7 @@ import { Module } from '@nestjs/common';
 import { RiskModule } from '@contexts/risk/risk.module';
 import { NotificationModule } from '@contexts/notification/notification.module';
 import { UserModule } from '@contexts/user/user.module';
+import { BeachModule } from '@contexts/beach/beach.module';
 import { PublicReportController } from './adapter/in/web/public-report.controller';
 import { AdminReportController } from './adapter/in/web/admin-report.controller';
 import { ReportUploadController } from './adapter/in/web/report-upload.controller';
@@ -12,9 +13,11 @@ import { ReportPurgePrismaRepository } from './adapter/out/persistence/report-pu
 import { MockVisionAiAdapter } from './adapter/out/ai/mock-vision-ai.adapter';
 import { NotificationTriggerAdapter } from './adapter/out/notification-trigger.adapter';
 import { AuditAdapter } from './adapter/out/audit.adapter';
+import { BeachLocationAdapter } from './adapter/out/beach-location.adapter';
 import { ReportPurgeScheduler } from './adapter/in/schedule/report-purge.scheduler';
 import { SubmitReportService } from './application/service/submit-report.service';
 import { GetReportResultService } from './application/service/get-report-result.service';
+import { GetReportDetailService } from './application/service/get-report-detail.service';
 import { ListReportsService } from './application/service/list-reports.service';
 import { ReviewReportService } from './application/service/review-report.service';
 import { ProcessVisionService } from './application/service/process-vision.service';
@@ -25,7 +28,9 @@ import { VISION_RESULT_REPOSITORY } from './application/port/out/vision-result-r
 import { NOTIFICATION_TRIGGER } from './application/port/out/notification-trigger.port';
 import { AUDIT_PORT } from './application/port/out/audit.port';
 import { REPORT_PURGE } from './application/port/out/report-purge.port';
+import { BEACH_LOCATION } from './application/port/out/beach-location.port';
 import {
+  GET_REPORT_DETAIL_USE_CASE,
   GET_REPORT_RESULT_USE_CASE,
   LIST_REPORTS_USE_CASE,
   PROCESS_VISION_USE_CASE,
@@ -43,12 +48,15 @@ import {
   // 이로써 report 의 임시 NoopRiskRecalcAdapter 를 risk 컨텍스트의 실제 구현으로 대체한다.
   // RiskModule: 위험도 재산출(RISK_RECALC). NotificationModule: 자동 알림(CREATE_NOTIFICATION_USE_CASE).
   // UserModule: 감사 로그(RECORD_AUDIT_LOG_USE_CASE). 세 모듈 모두 report 를 import 하지 않아 순환 없음.
-  imports: [RiskModule, NotificationModule, UserModule],
+  // BeachModule: 해변 좌표 조회(BEACH_QUERY) → 좌표만 있는 제보의 최근접 해변 자동 배정(REPORT-005).
+  // beach 는 report 를 참조하지 않으므로 순환 없음.
+  imports: [RiskModule, NotificationModule, UserModule, BeachModule],
   controllers: [PublicReportController, AdminReportController, ReportUploadController],
   providers: [
     // 인바운드 포트 → 유스케이스 서비스
     { provide: SUBMIT_REPORT_USE_CASE, useClass: SubmitReportService },
     { provide: GET_REPORT_RESULT_USE_CASE, useClass: GetReportResultService },
+    { provide: GET_REPORT_DETAIL_USE_CASE, useClass: GetReportDetailService },
     { provide: LIST_REPORTS_USE_CASE, useClass: ListReportsService },
     { provide: REVIEW_REPORT_USE_CASE, useClass: ReviewReportService },
     { provide: PROCESS_VISION_USE_CASE, useClass: ProcessVisionService },
@@ -61,6 +69,8 @@ import {
     { provide: NOTIFICATION_TRIGGER, useClass: NotificationTriggerAdapter },
     { provide: AUDIT_PORT, useClass: AuditAdapter },
     { provide: REPORT_PURGE, useClass: ReportPurgePrismaRepository },
+    // 해변 좌표 조회(최근접 배정 / 관리자 지도) → beach 컨텍스트 조회 포트 위임
+    { provide: BEACH_LOCATION, useClass: BeachLocationAdapter },
     // 보관정책 파기 스케줄러 (adapter/in/schedule)
     ReportPurgeScheduler,
     // RISK_RECALC 는 RiskModule(imports)이 제공한다.

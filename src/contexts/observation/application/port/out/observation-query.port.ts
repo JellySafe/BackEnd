@@ -1,8 +1,15 @@
 import { Id } from '@shared/kernel/id';
 import { SourceType, SyncStatus } from '../../../domain/observation-enums';
+import { SyncHealthView } from '../../../domain/sync-health';
 
-/** GET /admin/data-sources 한 행 (수집 소스 상태). */
-export interface DataSourceStatusView {
+/**
+ * GET /admin/data-sources 한 행 (수집 소스 상태).
+ *
+ * SyncHealthView 를 확장해 건강 판정(health/healthReason/healthDetail/…)을 함께 싣는다.
+ * 기존 필드는 그대로 두고 추가만 했다 — 관리자 화면이 쓰던 응답을 깨지 않는다.
+ * lastSyncMessage 는 내부 태그(`[health:…]`)를 떼어 낸 사람이 읽는 문구만 담는다.
+ */
+export interface DataSourceStatusView extends SyncHealthView {
   id: Id;
   sourceCode: string;
   name: string;

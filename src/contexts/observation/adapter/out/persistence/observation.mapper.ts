@@ -1,8 +1,9 @@
 import { DataSource as PrismaDataSource, ObservationStation as PrismaStation, Prisma } from '@prisma/client';
-import { toId } from '@shared/kernel/id';
+import { Id, toId } from '@shared/kernel/id';
 import { DataSource } from '../../../domain/data-source';
 import { StationInfo } from '../../../domain/station';
 import { ObservationReading, OccurrenceReading } from '../../../domain/observation';
+import { ForecastReading } from '../../../domain/weather-forecast';
 import { SourceType, StationType, SyncStatus } from '../../../domain/observation-enums';
 
 /** number → Decimal (nullable) */
@@ -72,6 +73,27 @@ export function observationToCreate(
     airTemp: numToDec(reading.airTemp),
     precipitation: numToDec(reading.precipitation),
     qualityFlag: reading.qualityFlag,
+  };
+}
+
+// ----- WeatherForecast -----
+
+/**
+ * 예보 → Prisma 저장 필드 (uk(beach_id, target_at) 를 제외한 갱신 대상).
+ * 재발표될 때마다 덮어써야 하므로 create/update 양쪽에 같은 값을 쓴다.
+ * collected_at 은 "언제 받아왔나"라 갱신 때마다 새로 찍는다(예보 신선도 판단용).
+ */
+export function forecastToPersistence(reading: ForecastReading, sourceId: Id | null) {
+  return {
+    sourceId: sourceId === null ? null : BigInt(sourceId),
+    baseAt: reading.baseAt,
+    waveHeight: numToDec(reading.waveHeight),
+    windDirection: reading.windDirection,
+    windSpeed: numToDec(reading.windSpeed),
+    airTemp: numToDec(reading.airTemp),
+    precipitation: numToDec(reading.precipitation),
+    skyCode: reading.skyCode,
+    collectedAt: new Date(),
   };
 }
 

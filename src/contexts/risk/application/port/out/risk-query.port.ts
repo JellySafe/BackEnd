@@ -54,13 +54,25 @@ export interface BeachRef {
   region: string;
 }
 
+/** ADM-001 대시보드 요약 — 전일 대비 증감(오늘 값 - 어제 값). 음수 가능. */
+export interface DashboardDeltaRow {
+  overallScore: number; // 오늘 최고 점수 - 어제 마지막 산출본 최고 점수
+  dangerBeachCount: number; // 오늘 위험 이상 해변 수 - 어제 마지막 산출본 기준 위험 이상 해변 수
+  toxicPendingCount: number; // 오늘 접수된 독성 의심 제보 수 - 어제 접수분
+  unreviewedReportCount: number; // 오늘 접수된 제보 수 - 어제 접수분
+  actionCount: number; // 오늘 대응 기록 수 - 어제 대응 기록 수
+}
+
 /** ADM-001 대시보드 요약. */
 export interface DashboardSummaryRow {
   overallRisk: RiskLevel;
+  overallScore: number; // 전체 대표 위험 점수(0~100). 최신 'now' 중 최고 risk_score.
   dangerBeachCount: number; // 위험 이상 해변 수
   toxicPendingCount: number; // 독성 의심 미확인 제보 수
   unreviewedReportCount: number; // 미확인 제보 수
   actionCount: number; // 당일 대응 기록 수
+  generatedAt: Date | null; // 기준 시각 = 최신 'now' 위험도의 generated_at 최댓값
+  deltas: DashboardDeltaRow; // 전일 대비 증감
 }
 
 /**

@@ -6,13 +6,14 @@ import {
   AdminBeachRiskView,
   GetBeachRiskDetailUseCase,
   PublicBeachRiskView,
+  PublicRiskPointView,
   RiskCardView,
 } from '../port/in/risk-use-cases';
 import { RiskCardRow, RiskQueryPort, RISK_QUERY } from '../port/out/risk-query.port';
 import { buildSafetyGuide } from '../../domain/risk-guide';
 
-/** 일반 사용자 대표 카드 우선순위(now 우선). */
-const PUBLIC_PRIMARY_ORDER: RiskHorizon[] = ['now', '24h', '72h'];
+/** 일반 사용자 시간별 예측 표시 순서(= 대표 카드 우선순위, now 우선). */
+const PUBLIC_HORIZON_ORDER: RiskHorizon[] = ['now', '24h', '72h'];
 const PUBLIC_FACTOR_LIMIT = 5;
 
 /**
@@ -60,13 +61,18 @@ export class GetBeachRiskDetailService implements GetBeachRiskDetailUseCase {
     };
   }
 
+  /**
+   * USR-002. now/24h/72h 세 시점을 모두 담아 "시간별 위험도 예측" 화면을 채운다.
+   * 최상위 필드(riskLevel/riskScore/factors/...)는 대표 카드('현재') 값으로 유지한다(기존 응답 하위호환).
+   */
   async getPublicView(beachId: Id): Promise<PublicBeachRiskView> {
     const beach = await this.query.findBeach(beachId);
     if (!beach) {
       throw new NotFoundError('BEACH_NOT_FOUND', '해변을 찾을 수 없습니다.', { beachId });
     }
     const cards = await this.query.getBeachRiskCards(beachId);
-    const primary = this.pickPrimary(cards);
+    const timeline = await this.buildTimeline(cards);
+    const primary = this.pickPrimary(timeline);
 
     if (!primary) {
       // 아직 산출 이력이 없는 해변: 안전 기본값으로 안내.
@@ -80,28 +86,66 @@ export class GetBeachRiskDetailService implements GetBeachRiskDetailUseCase {
         guideText: buildSafetyGuide('safe'),
         dataConfidence: 'low',
         generatedAt: null,
+        riskTimeline: [],
       };
     }
 
-    const factors = await this.query.getFactors(primary.riskScoreId);
     return {
       beachId: beach.beachId,
       beachName: beach.name,
       horizon: primary.horizon,
       riskLevel: primary.riskLevel,
       riskScore: primary.riskScore,
-      factors: factors.slice(0, PUBLIC_FACTOR_LIMIT).map((f) => f.detail ?? f.name),
+      factors: primary.factors,
       guideText: buildSafetyGuide(primary.riskLevel),
-      dataConfidence: primary.confidence,
+      dataConfidence: primary.dataConfidence,
       generatedAt: primary.generatedAt,
+      riskTimeline: timeline,
     };
   }
 
-  private pickPrimary(cards: RiskCardRow[]): RiskCardRow | null {
-    for (const horizon of PUBLIC_PRIMARY_ORDER) {
-      const found = cards.find((c) => c.horizon === horizon);
+  /**
+   * horizon 별 최신 카드를 now → 24h → 72h 순으로 정리하고 요약 원인을 붙인다.
+   * 알려지지 않은 지평(향후 '6h' 등)은 뒤에 이어 붙여 누락시키지 않는다.
+   */
+  private async buildTimeline(cards: RiskCardRow[]): Promise<PublicRiskPointView[]> {
+    const known = PUBLIC_HORIZON_ORDER.map((h) => cards.find((c) => c.horizon === h)).filter(
+      (c): c is RiskCardRow => c !== undefined,
+    );
+    const rest = cards.filter((c) => !PUBLIC_HORIZON_ORDER.includes(c.horizon));
+    const ordered = [...known, ...rest];
+
+    const points: PublicRiskPointView[] = [];
+    for (const card of ordered) {
+      const factors = await this.query.getFactors(card.riskScoreId);
+      points.push({
+        horizon: card.horizon,
+        riskLevel: card.riskLevel,
+        riskScore: card.riskScore,
+        // 룰 이름(name)과 구체적 근거(detail)를 나눠서 준다.
+        // 예전에는 `f.detail ?? f.name` 으로 문자열 하나에 뭉개 보냈다. 화면은 "위험 원인" 을
+        // 제목 + 설명으로 그리는데 제목 자리에 근거 문장이 통째로 들어가고 설명은 비었다.
+        // 두 값은 성격이 다르다 — name 은 룰의 이름("인근 해역 해파리 속보"),
+        // detail 은 그 시점의 실제 수치("인근 해역 속보 3건"). 합치면 되돌릴 수 없다.
+        factors: factors.slice(0, PUBLIC_FACTOR_LIMIT).map((f) => ({
+          code: f.code,
+          name: f.name,
+          detail: f.detail,
+          scoreDelta: f.delta,
+        })),
+        dataConfidence: card.confidence,
+        generatedAt: card.generatedAt,
+      });
+    }
+    return points;
+  }
+
+  /** 대표 카드: now 우선, 없으면 가장 가까운 시점. */
+  private pickPrimary(timeline: PublicRiskPointView[]): PublicRiskPointView | null {
+    for (const horizon of PUBLIC_HORIZON_ORDER) {
+      const found = timeline.find((p) => p.horizon === horizon);
       if (found) return found;
     }
-    return cards[0] ?? null;
+    return timeline[0] ?? null;
   }
 }

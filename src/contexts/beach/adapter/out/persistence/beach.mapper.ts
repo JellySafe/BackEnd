@@ -13,6 +13,7 @@ export function toDomain(row: PrismaBeach): Beach {
     facingDirection: row.facingDirection,
     priority: row.priority,
     vulnerabilityScore: row.vulnerabilityScore,
+    imageUrl: row.imageUrl,
     isActive: row.isActive,
     createdAt: row.createdAt,
     updatedAt: row.updatedAt,
@@ -30,6 +31,7 @@ export function toPersistence(beach: Beach): Prisma.BeachUncheckedCreateInput {
     facingDirection: s.facingDirection,
     priority: s.priority,
     vulnerabilityScore: s.vulnerabilityScore,
+    imageUrl: s.imageUrl,
     isActive: s.isActive,
   };
 }
