@@ -21,7 +21,6 @@ export interface BeachDetail {
   lng: number;
   facingDirection: number | null;
   priority: number;
-  vulnerabilityScore: number;
   imageUrl: string | null;
   isActive: boolean;
   createdAt: Date | null;
@@ -39,7 +38,6 @@ export function toBeachDetail(beach: Beach): BeachDetail {
     lng: s.lng,
     facingDirection: s.facingDirection,
     priority: s.priority,
-    vulnerabilityScore: s.vulnerabilityScore,
     imageUrl: s.imageUrl,
     isActive: s.isActive,
     createdAt: s.createdAt ?? null,
@@ -73,7 +71,6 @@ export interface CreateBeachCommand {
   lng: number;
   facingDirection?: number | null;
   priority?: number;
-  vulnerabilityScore?: number;
   imageUrl?: string | null;
 }
 export interface CreateBeachUseCase {
@@ -90,7 +87,6 @@ export interface UpdateBeachCommand {
   lng?: number;
   facingDirection?: number | null;
   priority?: number;
-  vulnerabilityScore?: number;
   imageUrl?: string | null;
   isActive?: boolean;
 }

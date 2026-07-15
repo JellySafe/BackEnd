@@ -23,7 +23,6 @@ export type Beach = {
     lng: string;
     facing_direction: number | null;
     priority: Generated<number>;
-    vulnerability_score: Generated<number>;
     /**
      * 해변 대표 사진 URL. 미등록이면 null → 프론트가 placeholder 로 대체한다.
      */

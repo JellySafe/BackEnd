@@ -72,7 +72,6 @@ model Beach {
   lng                Decimal  @db.Decimal(10, 7)
   facingDirection    Int?     @map("facing_direction") @db.SmallInt
   priority           Int      @default(99) @db.SmallInt
-  vulnerabilityScore Int      @default(0) @map("vulnerability_score") @db.SmallInt
   /// 해변 대표 사진 URL. 미등록이면 null → 프론트가 placeholder 로 대체한다.
   imageUrl           String?  @map("image_url") @db.VarChar(500)
   isActive           Boolean  @default(true) @map("is_active")

@@ -106,7 +106,6 @@ export class BeachKyselyQuery implements BeachQueryPort {
         'b.lng as lng',
         'b.facing_direction as facingDirection',
         'b.priority as priority',
-        'b.vulnerability_score as vulnerabilityScore',
         'b.image_url as imageUrl',
         'b.is_active as isActive',
       ])
@@ -124,7 +123,6 @@ export class BeachKyselyQuery implements BeachQueryPort {
       lng: Number(row.lng),
       facingDirection: row.facingDirection === null ? null : Number(row.facingDirection),
       priority: Number(row.priority),
-      vulnerabilityScore: Number(row.vulnerabilityScore),
       imageUrl: row.imageUrl ?? null,
       isActive: Number(row.isActive) === 1,
     }));

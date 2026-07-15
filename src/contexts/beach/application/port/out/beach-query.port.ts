@@ -36,7 +36,6 @@ export interface BeachAdminItem {
   lng: number;
   facingDirection: number | null;
   priority: number;
-  vulnerabilityScore: number;
   imageUrl: string | null;
   isActive: boolean;
 }

@@ -92,7 +92,6 @@ export class RiskInputKyselyQuery implements RiskInputPort {
         'b.lat as lat',
         'b.lng as lng',
         'b.facing_direction as facingDirection',
-        'b.vulnerability_score as vulnerabilityScore',
       ])
       .where('b.id', '=', beachId)
       .executeTakeFirst();
@@ -200,7 +199,6 @@ export class RiskInputKyselyQuery implements RiskInputPort {
         beachId: Number(beach.beachId),
         region: beach.region,
         facingDirection: beach.facingDirection === null ? null : Number(beach.facingDirection),
-        vulnerabilityScore: Number(beach.vulnerabilityScore),
       },
       latestObservation,
       weekAvgWaterTemp,

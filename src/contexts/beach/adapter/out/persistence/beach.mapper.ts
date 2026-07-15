@@ -12,7 +12,6 @@ export function toDomain(row: PrismaBeach): Beach {
     lng: row.lng.toNumber(),
     facingDirection: row.facingDirection,
     priority: row.priority,
-    vulnerabilityScore: row.vulnerabilityScore,
     imageUrl: row.imageUrl,
     isActive: row.isActive,
     createdAt: row.createdAt,
@@ -30,7 +29,6 @@ export function toPersistence(beach: Beach): Prisma.BeachUncheckedCreateInput {
     lng: new Prisma.Decimal(s.lng),
     facingDirection: s.facingDirection,
     priority: s.priority,
-    vulnerabilityScore: s.vulnerabilityScore,
     imageUrl: s.imageUrl,
     isActive: s.isActive,
   };

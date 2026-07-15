@@ -9,7 +9,6 @@ export interface BeachProps {
   lng: number;
   facingDirection: number | null; // 해변 정면 방위각 0~359 (선택)
   priority: number; // 노출/정렬 우선순위 (작을수록 먼저)
-  vulnerabilityScore: number; // 지형 취약도 0~100
   imageUrl: string | null; // 대표 사진 URL (미등록이면 null)
   isActive: boolean;
   createdAt?: Date;
@@ -24,7 +23,6 @@ export interface NewBeachInput {
   lng: number;
   facingDirection?: number | null;
   priority?: number;
-  vulnerabilityScore?: number;
   imageUrl?: string | null;
 }
 
@@ -36,17 +34,15 @@ export interface BeachUpdate {
   lng?: number;
   facingDirection?: number | null;
   priority?: number;
-  vulnerabilityScore?: number;
   imageUrl?: string | null;
   isActive?: boolean;
 }
 
 const DEFAULT_PRIORITY = 99;
-const DEFAULT_VULNERABILITY = 0;
 
 /**
  * 해변 마스터 애그리거트 (ADM-005).
- * 좌표/방위/취약도의 물리적 유효 범위를 캡슐화한다.
+ * 좌표/방위의 물리적 유효 범위를 캡슐화한다.
  * 프레임워크/ORM 에 의존하지 않는 순수 도메인 객체다.
  */
 export class Beach {
@@ -63,7 +59,6 @@ export class Beach {
       lng: input.lng,
       facingDirection: input.facingDirection ?? null,
       priority: input.priority ?? DEFAULT_PRIORITY,
-      vulnerabilityScore: input.vulnerabilityScore ?? DEFAULT_VULNERABILITY,
       imageUrl: input.imageUrl?.trim() || null,
       isActive: true,
     };
@@ -87,7 +82,6 @@ export class Beach {
     if (patch.lng !== undefined) next.lng = patch.lng;
     if (patch.facingDirection !== undefined) next.facingDirection = patch.facingDirection;
     if (patch.priority !== undefined) next.priority = patch.priority;
-    if (patch.vulnerabilityScore !== undefined) next.vulnerabilityScore = patch.vulnerabilityScore;
     if (patch.imageUrl !== undefined) next.imageUrl = patch.imageUrl?.trim() || null;
     if (patch.isActive !== undefined) next.isActive = patch.isActive;
     Beach.validate(next);
@@ -106,11 +100,6 @@ export class Beach {
     }
     if (!Number.isFinite(p.lng) || p.lng < -180 || p.lng > 180) {
       throw new ValidationError('BEACH_LNG_RANGE', '경도는 -180 ~ 180 범위여야 합니다.', { lng: p.lng });
-    }
-    if (!Number.isFinite(p.vulnerabilityScore) || p.vulnerabilityScore < 0 || p.vulnerabilityScore > 100) {
-      throw new ValidationError('BEACH_VULNERABILITY_RANGE', '취약도 점수는 0 ~ 100 범위여야 합니다.', {
-        vulnerabilityScore: p.vulnerabilityScore,
-      });
     }
     if (
       p.facingDirection !== null &&

@@ -82,18 +82,6 @@ export class UpdateBeachRequest {
   priority?: number;
 
   @ApiPropertyOptional({
-    example: 15,
-    minimum: 0,
-    maximum: 100,
-    description: '해변 자체의 취약도 가산점(0~100). 위험도 산출 시 기본 점수로 더해진다.',
-  })
-  @IsOptional()
-  @IsInt()
-  @Min(0)
-  @Max(100)
-  vulnerabilityScore?: number;
-
-  @ApiPropertyOptional({
     example: 'https://cdn.example.com/beaches/hyeopjae.jpg',
     maxLength: 500,
     description:

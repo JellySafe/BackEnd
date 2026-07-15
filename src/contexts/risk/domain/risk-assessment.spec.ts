@@ -20,7 +20,6 @@ const beach: BeachRiskInput = {
   beachId: 1,
   region: '제주시',
   facingDirection: 315,
-  vulnerabilityScore: 15,
 };
 
 /** 관측 요인이 하나도 안 켜지도록(수온 낮음, 파고 낮음) 만든 최소 관측. */

@@ -9,7 +9,6 @@ export class BeachDetailResponse {
   @ApiProperty({ example: 126.2396 }) lng!: number;
   @ApiProperty({ example: 180, nullable: true }) facingDirection!: number | null;
   @ApiProperty({ example: 1 }) priority!: number;
-  @ApiProperty({ example: 50 }) vulnerabilityScore!: number;
   @ApiProperty({
     example: 'https://cdn.example.com/beaches/hyeopjae.jpg',
     nullable: true,

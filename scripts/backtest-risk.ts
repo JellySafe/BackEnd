@@ -77,18 +77,18 @@ const COLLECT = {
 
 /** prisma/seed.ts seedBeaches() 사본. */
 const BEACHES = [
-  { id: 1, name: '협재해수욕장', region: '제주시', lat: 33.3941, lng: 126.2396, facingDirection: 315, vulnerabilityScore: 15 },
-  { id: 2, name: '함덕해수욕장', region: '제주시', lat: 33.5432, lng: 126.6698, facingDirection: 0, vulnerabilityScore: 20 },
-  { id: 3, name: '이호테우해수욕장', region: '제주시', lat: 33.4986, lng: 126.4525, facingDirection: 340, vulnerabilityScore: 10 },
-  { id: 4, name: '중문색달해수욕장', region: '서귀포시', lat: 33.2447, lng: 126.4103, facingDirection: 180, vulnerabilityScore: 10 },
-  { id: 5, name: '표선해수욕장', region: '서귀포시', lat: 33.3262, lng: 126.8339, facingDirection: 135, vulnerabilityScore: 5 },
-  { id: 6, name: '곽지과물해수욕장', region: '제주시', lat: 33.4514, lng: 126.305, facingDirection: 340, vulnerabilityScore: 10 },
-  { id: 7, name: '금능으뜸원해수욕장', region: '제주시', lat: 33.3889, lng: 126.2372, facingDirection: 315, vulnerabilityScore: 10 },
-  { id: 8, name: '삼양검은모래해수욕장', region: '제주시', lat: 33.5183, lng: 126.5972, facingDirection: 0, vulnerabilityScore: 10 },
-  { id: 9, name: '김녕성세기해수욕장', region: '제주시', lat: 33.5588, lng: 126.7566, facingDirection: 0, vulnerabilityScore: 5 },
-  { id: 10, name: '월정리해수욕장', region: '제주시', lat: 33.5563, lng: 126.7955, facingDirection: 0, vulnerabilityScore: 5 },
-  { id: 11, name: '화순금모래해수욕장', region: '서귀포시', lat: 33.2419, lng: 126.3389, facingDirection: 200, vulnerabilityScore: 5 },
-  { id: 12, name: '신양섭지해수욕장', region: '서귀포시', lat: 33.4351, lng: 126.913, facingDirection: 90, vulnerabilityScore: 5 },
+  { id: 1, name: '협재해수욕장', region: '제주시', lat: 33.3941, lng: 126.2396, facingDirection: 315 },
+  { id: 2, name: '함덕해수욕장', region: '제주시', lat: 33.5432, lng: 126.6698, facingDirection: 0 },
+  { id: 3, name: '이호테우해수욕장', region: '제주시', lat: 33.4986, lng: 126.4525, facingDirection: 340 },
+  { id: 4, name: '중문색달해수욕장', region: '서귀포시', lat: 33.2447, lng: 126.4103, facingDirection: 180 },
+  { id: 5, name: '표선해수욕장', region: '서귀포시', lat: 33.3262, lng: 126.8339, facingDirection: 135 },
+  { id: 6, name: '곽지과물해수욕장', region: '제주시', lat: 33.4514, lng: 126.305, facingDirection: 340 },
+  { id: 7, name: '금능으뜸원해수욕장', region: '제주시', lat: 33.3889, lng: 126.2372, facingDirection: 315 },
+  { id: 8, name: '삼양검은모래해수욕장', region: '제주시', lat: 33.5183, lng: 126.5972, facingDirection: 0 },
+  { id: 9, name: '김녕성세기해수욕장', region: '제주시', lat: 33.5588, lng: 126.7566, facingDirection: 0 },
+  { id: 10, name: '월정리해수욕장', region: '제주시', lat: 33.5563, lng: 126.7955, facingDirection: 0 },
+  { id: 11, name: '화순금모래해수욕장', region: '서귀포시', lat: 33.2419, lng: 126.3389, facingDirection: 200 },
+  { id: 12, name: '신양섭지해수욕장', region: '서귀포시', lat: 33.4351, lng: 126.913, facingDirection: 90 },
 ] as const;
 
 /**
@@ -809,7 +809,6 @@ async function predict(report: WeeklyReport, prev: WeeklyReport | null, priorYea
         beachId: beach.id,
         region: beach.region,
         facingDirection: beach.facingDirection,
-        vulnerabilityScore: beach.vulnerabilityScore,
       },
       latestObservation,
       weekAvgWaterTemp,
@@ -1512,7 +1511,7 @@ async function main(): Promise<void> {
   console.log('【과제 D】 룰별 신호 (양성 = 고밀도 출현 주×시군구)');
   console.log('-'.repeat(110));
   console.log(`  ${'룰'.padEnd(22)} ${'점수'.padStart(4)}  ${'전체발화'.padStart(9)}  ${'고밀도주'.padStart(9)}  ${'비고밀도'.padStart(9)}  ${'리프트'.padStart(6)}  ${'AUC'.padStart(5)}  ${'p≈'.padStart(6)}`);
-  const codes: RiskFactorCode[] = ['TEMP_UP', 'TEMP_7D_AVG', 'WAVE_HIGH', 'WIND_INFLOW', 'CURRENT_INFLOW', 'PAST_OCCURRENCE', 'NEARBY_ALERT_HIGH', 'NEARBY_ALERT_LOW', 'BEACH_VULNERABILITY'];
+  const codes: RiskFactorCode[] = ['TEMP_UP', 'TEMP_7D_AVG', 'WAVE_HIGH', 'WIND_INFLOW', 'CURRENT_INFLOW', 'PAST_OCCURRENCE', 'NEARBY_ALERT_HIGH', 'NEARBY_ALERT_LOW'];
   const ruleSignals: Record<string, unknown>[] = [];
   for (const code of codes) {
     // 인근 룰은 fired 집합에서 떼어냈으므로(후보마다 코드가 달라진다) 원자료에서 직접 만든다.
@@ -1572,12 +1571,11 @@ async function main(): Promise<void> {
     WAVE_HIGH: 5,
     WIND_INFLOW: 5,
     CURRENT_INFLOW: 5,
-    BEACH_VULNERABILITY: 5,
   });
   const COUNT: NearbyMode = { kind: 'count' };
   /** 관측 룰(= NIFS 신호 없이)만으로 도달 가능한 최대 점수. 구조 제약 판정에 쓴다. */
   const obsOnlyMaxOf = (w: Weights) =>
-    w.TEMP_UP + w.TEMP_7D_AVG + w.WAVE_HIGH + w.WIND_INFLOW + w.CURRENT_INFLOW + w.PAST_OCCURRENCE + w.BEACH_VULNERABILITY;
+    w.TEMP_UP + w.TEMP_7D_AVG + w.WAVE_HIGH + w.WIND_INFLOW + w.CURRENT_INFLOW + w.PAST_OCCURRENCE;
 
   /** 밀도 점수표 후보를 만든다 (관측 룰은 v2 그대로 두고 인근 룰만 바꾼다). */
   const dens = (
@@ -1804,8 +1802,6 @@ async function main(): Promise<void> {
     const low = c.nearby.kind === 'density' ? c.nearby.low : c.nearby.kind === 'count' ? c.w.NEARBY_ALERT : c.nearby.attention;
     console.log(
       `  ${c.id.padEnd(18)} 관측만 ${String(obs).padStart(3)}(${lvlName(obs, c.cut)})` +
-        `  │ 저밀도+취약도만 ${String(low + c.w.BEACH_VULNERABILITY).padStart(3)}(${lvlName(low + c.w.BEACH_VULNERABILITY, c.cut)})` +
-        `  고밀도+취약도만 ${String(high + c.w.BEACH_VULNERABILITY).padStart(3)}(${lvlName(high + c.w.BEACH_VULNERABILITY, c.cut)})` +
         `  │ 고밀도+관측전부 ${String(Math.min(100, high + obs)).padStart(3)}(${lvlName(high + obs, c.cut)})`,
     );
   }
