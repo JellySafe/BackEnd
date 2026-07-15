@@ -113,6 +113,11 @@ const RULES_V1: Rule[] = [
   { ruleCode: 'CURRENT_INFLOW', ruleCategory: 'risk_variable', ruleName: '해변 방향 유입 해류', score: 10, conditionJson: { angle_tolerance: 45 } },
   { ruleCode: 'PAST_OCCURRENCE', ruleCategory: 'risk_variable', ruleName: '과거 동일 시기 출현 이력', score: 15 },
   { ruleCode: 'NEARBY_ALERT', ruleCategory: 'risk_variable', ruleName: '인근 해역 해파리 속보', score: 15, conditionJson: { radius_km: 30 } },
+  // v3 부터 도메인이 밀도별 코드로 발화한다. v1 은 밀도 무구분(+15)이었으므로 세 코드 모두 15.
+  // (없어도 DEFAULT_RULE_SCORES 폴백이 15 라 결과는 같지만, 관리자 화면·롤백 명세를 위해 명시한다.)
+  { ruleCode: 'NEARBY_ALERT_HIGH', ruleCategory: 'risk_variable', ruleName: '인근 해역 고밀도 출현 (v1: 밀도 무관 15)', score: 15, conditionJson: { radius_km: 30 } },
+  { ruleCode: 'NEARBY_ALERT_MEDIUM', ruleCategory: 'risk_variable', ruleName: '인근 해역 중밀도 출현 (v1: 밀도 무관 15)', score: 15, conditionJson: { radius_km: 30 } },
+  { ruleCode: 'NEARBY_ALERT_LOW', ruleCategory: 'risk_variable', ruleName: '인근 해역 저밀도 출현 (v1: 밀도 무관 15)', score: 15, conditionJson: { radius_km: 30 } },
   { ruleCode: 'BEACH_VULNERABILITY', ruleCategory: 'risk_variable', ruleName: '해수욕장 취약도', score: 5 },
   // 제보 가중치 (report_weight)
   { ruleCode: 'REPORT_GENERAL', ruleCategory: 'report_weight', ruleName: '일반 해파리 발견 제보', score: 10 },
@@ -168,6 +173,12 @@ const RULES_V2: Rule[] = [
   //         무지성 베이스라인(지난주 보고서 복사, 69.2%)보다 낮다. 이건 고정 구간이 강요한 대가다.
   //         (구간을 danger 45 로 내리면 재현율 69.2% / 오경보 0% 로 베이스라인과 같아진다 — risk-rules-v2.md 참조)
   { ruleCode: 'NEARBY_ALERT', ruleCategory: 'risk_variable', ruleName: '인근 해역 해파리 속보', score: 40, conditionJson: { radius_km: 30, window_days: 7, fallback: 'region_match_when_no_coords' } },
+  // v3 에서 도메인이 인근 룰을 **밀도별 코드**(NEARBY_ALERT_HIGH/MEDIUM/LOW)로 발화하도록 바뀌었다.
+  // v2 는 밀도를 가리지 않았으므로, 롤백(RISK_RULE_VERSION=v2) 시 **세 코드 모두 40** 으로 둬야
+  // 옛 v2 동작(밀도 무관 +40)이 그대로 재현된다. 이 세 행이 없으면 폴백(15)이 걸려 v2 가 거짓 롤백된다.
+  { ruleCode: 'NEARBY_ALERT_HIGH', ruleCategory: 'risk_variable', ruleName: '인근 해역 고밀도 출현 (v2: 밀도 무관 40)', score: 40, conditionJson: { radius_km: 30, window_days: 7, note: 'v2 는 밀도 무구분' } },
+  { ruleCode: 'NEARBY_ALERT_MEDIUM', ruleCategory: 'risk_variable', ruleName: '인근 해역 중밀도 출현 (v2: 밀도 무관 40)', score: 40, conditionJson: { radius_km: 30, window_days: 7, note: 'v2 는 밀도 무구분' } },
+  { ruleCode: 'NEARBY_ALERT_LOW', ruleCategory: 'risk_variable', ruleName: '인근 해역 저밀도 출현 (v2: 밀도 무관 40)', score: 40, conditionJson: { radius_km: 30, window_days: 7, note: 'v2 는 밀도 무구분' } },
 
   // TEMP_UP 10 → 15. 리프트 1.93 (고밀도 80.8% / 그 외 41.8%), 단일 AUC 0.695, p<0.001.
   //   NEARBY 다음으로 유의한 유일한 신호. 해변마다 최근접 부이가 달라 **해변별 변별력의 실질적 원천**이다
@@ -279,16 +290,104 @@ const RULES_V2: Rule[] = [
 ];
 
 /**
+ * v3 — 밀도 기반 인근 출현 (2026-07-15).
+ *
+ * 근거: `scripts/backtest-risk.ts` 재실행 — 같은 정답(NIFS 주간보고 68건, 주×시군구 136단위).
+ *       결정 과정·한계는 **`docs/risk-rules-v3.md` 를 먼저 읽어라.**
+ *
+ * ── 무엇이 바뀌었나 ──────────────────────────────────────────────────────────────────
+ * v2 의 `NEARBY_ALERT` 는 인근 **경보성 출현 건수**가 1건이라도 있으면 밀도와 무관하게 +40 을 줬다.
+ * 그 '건수'는 위험의 강도가 아니라 **NIFS 주간보고에 그 시군구가 몇 종으로 적혔는가**의 부산물이라
+ * (종 × 시군구마다 한 행), 저밀도 1종인 서귀포시가 고밀도 2종인 제주시와 같은 +40 을 받았다.
+ * → 운영에서 제주 12개 해변이 **전부 danger**. "어느 해변이 안전한가"에 답할 수 없었다.
+ *
+ * v3 은 건수를 버리고 **창 안 최고 밀도**로 등급을 매긴다(도메인 NEARBY_ALERT_HIGH/LOW).
+ *   · 고밀도 40 (v2 의 NEARBY_ALERT 와 같은 무게) / 저밀도 5.
+ *   · NIFS 특보 유무와 무관하게 계상한다(관측 사실을 행정 절차가 검열하지 않는다).
+ *   · 저밀도 지역이 '안전'으로 침묵하지 않도록 **MIN_NEARBY_1** 이 최소 '주의'를 보장한다(RISK-002).
+ *
+ * ── 백테스트 요약 (in-sample, 136 표본. v2 배포중 → v3) ──────────────────────────────
+ *   AUC             0.825 → 0.886       (Δ CI[+0.020,+0.111], 0 불포함)
+ *   danger+ 재현율   88.5% → 73.1%       (건수 방식은 저밀도까지 danger 로 올려 '재현율'이 부풀어 있었다)
+ *   danger+ 오경보율  14.1% → 2.8%
+ *   danger+ 정밀도    41.1% → 70.4%
+ *   danger 판정 비율  41.2% → 19.9%      (성수기 59.7% → 37.5%)  ← "전 해변 빨강" 이 풀렸다
+ *   저밀도→danger    59.0% → 15.4%
+ *   고밀도 vs 저밀도 AUC 0.704 → 0.827   ← 밀도가 실제로 갈린다
+ *   고밀도인데 '안전'  2건 → 2건 (유지)
+ *
+ * ── 컷오프 ───────────────────────────────────────────────────────────────────────────
+ * danger=45 를 **유지**한다(v2 개정에서 이미 56→45 로 내려 배포됨). 밀도 반영 후 다시 재봤고,
+ * 45 가 F2·변별력 균형에서 최적이었다(56 은 재현율 73.1%→57.7% 로 손해, 변별력 이득 없음).
+ * → risk-level.ts 를 바꿀 필요가 없다. LEVEL_* 행도 v2 와 동일(45/76).
+ *
+ * ⚠️ v2 헤더 주석의 제약이 그대로 적용된다: 단계 구간·condition_json·min_level 은 엔진이 안 읽는다.
+ *    이 표는 **점수**만 데이터다. NEARBY_ALERT_* 세 코드는 도메인이 밀도로 발화시킨다.
+ */
+const RULES_V3: Rule[] = [
+  // ───────────────────────────────────────── 인근 출현 — v3 의 핵심. 건수 → 밀도.
+  // v2 의 NEARBY_ALERT(단일, +40)를 밀도별 3코드로 쪼갠다. 도메인(risk-assessment.ts)이
+  // 창 안 최고 밀도를 골라 대응 코드를 발화시킨다. 건수는 점수에 쓰지 않는다.
+  //   고밀도 40: v2 의 무게를 그대로 물려받는다. NIFS 속보 하나만으로는 danger(45) 에 못 가고
+  //             (40+취약도5=45? → 취약도는 엔진이 상수로 5를 더하므로 실제로는 45=danger 경계).
+  //             ※ 백테스트 구조점검: 고밀도+취약도 = 45 = danger 경계. NIFS 고밀도 단독으로 danger 가능.
+  //               v2 와 동일한 성질이다(v2 도 40+5=45). 대신 저밀도는 여기 못 온다.
+  //   중밀도 15: NIFS 주간보고엔 없는 등급(고/저 2단계)이나 다른 수집기(제보·mock)가 넣을 수 있어
+  //             사다리를 비워 두지 않는다. 고와 저의 중간값. **검증된 값이 아니다**(표본에 없음).
+  //   저밀도 5:  단독으로는 어떤 단계도 못 만든다(5+취약도5=10=안전). 대신 MIN_NEARBY_1 이 '주의'를 깐다.
+  //             백테스트에서 저밀도 점수를 0~20 으로 스윕했고 5 가 danger 재현율을 손해 없이 유지하면서
+  //             저밀도→danger 비율을 15.4% 로 낮게 유지하는 값이었다(docs/risk-rules-v3.md §2).
+  { ruleCode: 'NEARBY_ALERT_HIGH', ruleCategory: 'risk_variable', ruleName: '인근 해역 고밀도 출현', score: 40, conditionJson: { radius_km: 30, window_days: 7, density: 'high', fallback: 'region_match_when_no_coords' } },
+  { ruleCode: 'NEARBY_ALERT_MEDIUM', ruleCategory: 'risk_variable', ruleName: '인근 해역 중밀도 출현', score: 15, conditionJson: { radius_km: 30, window_days: 7, density: 'medium', note: 'NIFS 주간보고엔 없는 등급 — 미검증' } },
+  { ruleCode: 'NEARBY_ALERT_LOW', ruleCategory: 'risk_variable', ruleName: '인근 해역 저밀도 출현', score: 5, conditionJson: { radius_km: 30, window_days: 7, density: 'low' } },
+  // v2 의 단일 NEARBY_ALERT 는 **비활성**으로 남긴다(도메인이 더 이상 이 코드를 발화하지 않는다).
+  // 지우지 않는 이유: 과거 risk_factors 행이 이 코드를 참조하고, 관리자 화면 룰 목록의 이력이다.
+  { ruleCode: 'NEARBY_ALERT', ruleCategory: 'risk_variable', ruleName: '인근 해역 해파리 속보 (v3: NEARBY_ALERT_* 로 대체)', score: 40, conditionJson: { deprecated: true, replaced_by: ['NEARBY_ALERT_HIGH', 'NEARBY_ALERT_MEDIUM', 'NEARBY_ALERT_LOW'] } },
+
+  // ───────────────────────────────────────── 관측 룰 — v2 와 동일(재검증했고 안 바꿨다).
+  { ruleCode: 'TEMP_UP', ruleCategory: 'risk_variable', ruleName: '최근 3일 수온 상승', score: 15, conditionJson: { window_days: 3, rise_delta_c: 2.0, or_abs_temp_c: 26.0 } },
+  { ruleCode: 'TEMP_7D_AVG', ruleCategory: 'risk_variable', ruleName: '최근 7일 평균 수온 높음', score: 10, conditionJson: { window_days: 7, threshold_c: 25.0 } },
+  { ruleCode: 'PAST_OCCURRENCE', ruleCategory: 'risk_variable', ruleName: '과거 동일 시기 출현 이력', score: 5, conditionJson: { season_window_days: 14, min_age_years: 1 } },
+  { ruleCode: 'WAVE_HIGH', ruleCategory: 'risk_variable', ruleName: '파고 높음', score: 5, conditionJson: { threshold_m: 1.5 } },
+  { ruleCode: 'WIND_INFLOW', ruleCategory: 'risk_variable', ruleName: '해변 방향 유입 풍향', score: 5, conditionJson: { angle_tolerance: 60, min_wind_speed_ms: 5.0 } },
+  { ruleCode: 'CURRENT_INFLOW', ruleCategory: 'risk_variable', ruleName: '해변 방향 유입 해류', score: 5, conditionJson: { angle_tolerance: 60, min_current_speed_ms: 0.3 } },
+  { ruleCode: 'BEACH_VULNERABILITY', ruleCategory: 'risk_variable', ruleName: '해수욕장 취약도', score: 5 },
+
+  // ───────────────────────────────────────── 제보 가중치 — v2 와 동일(검증 불가).
+  { ruleCode: 'REPORT_GENERAL', ruleCategory: 'report_weight', ruleName: '일반 해파리 발견 제보', score: 10 },
+  { ruleCode: 'REPORT_MULTIPLE', ruleCategory: 'report_weight', ruleName: '다수 출현 제보', score: 15 },
+  { ruleCode: 'REPORT_TOXIC', ruleCategory: 'report_weight', ruleName: '독성 해파리 의심 제보', score: 25 },
+  { ruleCode: 'REPORT_TOXIC_MULTIPLE', ruleCategory: 'report_weight', ruleName: '독성 의심 + 다수 출현 제보', score: 35 },
+  { ruleCode: 'REPORT_STING', ruleCategory: 'report_weight', ruleName: '쏘임 사고 제보', score: 40 },
+
+  // ───────────────────────────────────────── 단계 구간 — v2 와 동일(45/76). 표시용.
+  { ruleCode: 'LEVEL_SAFE', ruleCategory: 'level_threshold', ruleName: '안전 0~30', conditionJson: { min: 0, max: 30 } },
+  { ruleCode: 'LEVEL_CAUTION', ruleCategory: 'level_threshold', ruleName: '주의 31~44', conditionJson: { min: 31, max: 44 } },
+  { ruleCode: 'LEVEL_DANGER', ruleCategory: 'level_threshold', ruleName: '위험 45~75', conditionJson: { min: 45, max: 75 } },
+  { ruleCode: 'LEVEL_SEVERE', ruleCategory: 'level_threshold', ruleName: '심각 76~100', conditionJson: { min: 76, max: 100 } },
+
+  // ───────────────────────────────────────── 최소 단계 보장 (RISK-002).
+  // MIN_NEARBY_1 이 v3 에서 새로 추가됐다: 인근에 해파리가 확인되면(밀도 무관) 최소 '주의'.
+  //   저밀도 지역이 점수가 낮아 '안전' 으로 침묵하는 것을 막는다(위 헤더 참조). 엔진은 이 코드를
+  //   deriveNearbyMinTriggers 로 하드코딩 적용한다 — 이 행은 관리자 화면 표시용이다.
+  { ruleCode: 'MIN_TOXIC_1', ruleCategory: 'min_level', ruleName: '독성 의심 1건 → 최소 주의', minRiskLevel: 'caution' },
+  { ruleCode: 'MIN_TOXIC_HIGH', ruleCategory: 'min_level', ruleName: '독성 의심 + 신뢰도 높음 → 최소 위험', minRiskLevel: 'danger', conditionJson: { confidence_gte: 0.8 } },
+  { ruleCode: 'MIN_TOXIC_STING', ruleCategory: 'min_level', ruleName: '독성 의심 + 쏘임 → 최소 심각', minRiskLevel: 'severe' },
+  { ruleCode: 'MIN_NEARBY_1', ruleCategory: 'min_level', ruleName: '인근 출현 확인 → 최소 주의', minRiskLevel: 'caution', conditionJson: { any_density: true, window_days: 7 } },
+];
+
+/**
  * 위험도 룰 점수표.
  *
  * 버전을 **여러 개 나란히** 심는다. 애플리케이션은 `RISK_RULE_VERSION` 환경변수로 고른다
- * (AppConfig.riskRuleVersion, 기본 'v1'). v2 를 쓰려면 `RISK_RULE_VERSION=v2` 를 넣어라.
- * v1 을 지우지 않으므로 환경변수 한 줄로 즉시 롤백된다.
+ * (AppConfig.riskRuleVersion, 기본 'v1'). v3 를 쓰려면 `RISK_RULE_VERSION=v3` 를 넣어라.
+ * v1·v2 를 지우지 않으므로 환경변수 한 줄로 즉시 롤백된다.
  */
 async function seedRiskRules() {
   const versions: Array<{ version: string; rules: Rule[] }> = [
     { version: 'v1', rules: RULES_V1 },
     { version: 'v2', rules: RULES_V2 },
+    { version: 'v3', rules: RULES_V3 },
   ];
 
   for (const { version, rules } of versions) {
@@ -319,7 +418,7 @@ async function seedRiskRules() {
     }
     console.log(`  ✓ 위험도 룰 ${rules.length}건 (version=${version})`);
   }
-  console.log(`    → 적용 버전은 RISK_RULE_VERSION 환경변수로 고른다 (기본 v1, 백테스트 권장 v2)`);
+  console.log(`    → 적용 버전은 RISK_RULE_VERSION 환경변수로 고른다 (기본 v1, 운영 권장 v3)`);
 }
 
 async function seedRecommendations() {

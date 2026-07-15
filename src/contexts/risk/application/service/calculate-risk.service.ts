@@ -15,6 +15,7 @@ import { RiskEngine } from '../../domain/risk-engine';
 import {
   deriveConfidence,
   deriveMinLevelTriggers,
+  deriveNearbyMinTriggers,
   evaluateForecastVariables,
   evaluateReportWeights,
   evaluateRiskVariables,
@@ -88,7 +89,11 @@ export class CalculateRiskService implements CalculateRiskUseCase {
 
         const variables = evaluateRiskVariables(bundle, ruleScore);
         const reportWeights = evaluateReportWeights(bundle.verifiedReports, ruleScore);
-        const minLevelTriggers = deriveMinLevelTriggers(bundle.verifiedReports);
+        // 제보 기반(독성·쏘임) + 인근 출현 기반(밀도 무관 최소 '주의') 최소 단계 보장을 합친다.
+        const minLevelTriggers = [
+          ...deriveMinLevelTriggers(bundle.verifiedReports),
+          ...deriveNearbyMinTriggers(bundle.nearbyAlert),
+        ];
         const baseConfidence = deriveConfidence(variables.missing.length, bundle.observationAgeMinutes);
 
         for (const horizon of HORIZONS) {

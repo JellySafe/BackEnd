@@ -17,7 +17,7 @@ primary_region = 'nrt'
 
   # 위험도 점수표 버전. 백테스트로 재조정한 v2 를 쓴다(docs/risk-rules-v2.md).
   # 문제가 생기면 'v1' 로 바꾸고 재배포하면 즉시 롤백된다(두 버전이 DB 에 나란히 있다).
-  RISK_RULE_VERSION = 'v2'
+  RISK_RULE_VERSION = 'v3'
   # 프론트엔드 도메인만 브라우저에서 API 호출 허용. 미지정 시 모든 origin 허용이라 반드시 명시한다.
   # `*` 는 호스트 한 세그먼트 안에서만 확장된다(cors-origin.ts).
   #   - 프로덕션 도메인 2개

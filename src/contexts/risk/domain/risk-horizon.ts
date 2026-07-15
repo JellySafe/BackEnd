@@ -36,7 +36,12 @@ const HORIZON_WEIGHT: Record<RiskFactorCode, Partial<Record<RiskHorizon, number>
   WIND_INFLOW: { now: 1, '6h': 0.8, '24h': 0.4, '72h': 0 },
   CURRENT_INFLOW: { now: 1, '6h': 0.9, '24h': 0.6, '72h': 0.2 },
   PAST_OCCURRENCE: { now: 1, '6h': 1, '24h': 1, '72h': 1 },
-  NEARBY_ALERT: { now: 1, '6h': 1.1, '24h': 1.2, '72h': 1.3 },
+  // 인근 출현 — 개체군이 조류를 타고 다가오는 데 시간이 걸린다 → 미래에 오히려 유효해진다.
+  // 밀도 등급이 달라도 '다가온다' 는 물리는 같으므로 계수는 셋 다 같다(점수만 다르다).
+  NEARBY_ALERT: { now: 1, '6h': 1.1, '24h': 1.2, '72h': 1.3 }, // deprecated (v3 부터 미발화)
+  NEARBY_ALERT_HIGH: { now: 1, '6h': 1.1, '24h': 1.2, '72h': 1.3 },
+  NEARBY_ALERT_MEDIUM: { now: 1, '6h': 1.1, '24h': 1.2, '72h': 1.3 },
+  NEARBY_ALERT_LOW: { now: 1, '6h': 1.1, '24h': 1.2, '72h': 1.3 },
   BEACH_VULNERABILITY: { now: 1, '6h': 1, '24h': 1, '72h': 1 },
   // 제보 가중치 — 시간이 지날수록 신호가 약해진다.
   REPORT_GENERAL: { now: 1, '6h': 0.9, '24h': 0.6, '72h': 0.3 },

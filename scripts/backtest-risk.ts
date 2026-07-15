@@ -38,12 +38,17 @@ import {
   deriveMinLevelTriggers,
   evaluateReportWeights,
   evaluateRiskVariables,
+  NearbyDensity,
   ObservationInput,
   RiskInputBundle,
 } from '@contexts/risk/domain/risk-assessment';
 import { RiskEngine } from '@contexts/risk/domain/risk-engine';
 import { applyHorizon } from '@contexts/risk/domain/risk-horizon';
-import { DEFAULT_RULE_SCORES, RiskFactorCode } from '@contexts/risk/domain/risk-factors';
+import {
+  DEFAULT_RULE_SCORES,
+  NEARBY_DENSITY_CODES,
+  RiskFactorCode,
+} from '@contexts/risk/domain/risk-factors';
 import { RiskLevel } from '@shared/kernel/risk-level';
 import { haversineKm } from '@contexts/observation/domain/geo';
 import { parseSeaObs } from '@contexts/observation/adapter/out/collector/kma-sea-obs.collector';
@@ -237,12 +242,22 @@ interface WeeklyReport {
   ratioNomura: number | null;
   ratioMoon: number | null;
   ratioEtc: number | null;
-  /** 시군구별 밀도. */
+  /** 시군구별 밀도(최고). */
   density: Record<JejuRegion, 'high' | 'low' | 'none'>;
   /** 시군구별 출현 종 수(고+저). NEARBY_ALERT 카운트의 원자료. */
   occCount: Record<JejuRegion, number>;
   /** 시군구별 '경보성' 출현 건수 = alertLevel in (attention,caution,warning). */
   alertCount: Record<JejuRegion, number>;
+  /**
+   * 시군구별 **최고 경보 등급**(alert_level 사다리 인덱스: 0 none / 1 attention / 2 caution / 3 warning).
+   * resolveAlertLevel(advisory, density) 와 같은 식 — 특보 등급 + 고밀도면 한 칸.
+   */
+  alertRank: Record<JejuRegion, number>;
+  /**
+   * 시군구별 **최고 밀도로 출현한 종** 이름. 요인 설명 문구(describeNearbyAlert)의 원자료이자
+   * "종이 여럿이면 건수가 는다" 를 눈으로 확인하는 용도.
+   */
+  topSpecies: Record<JejuRegion, string[]>;
   speciesBlocks: number;
   toxicSpecies: string[];
 }
@@ -343,24 +358,39 @@ function toGroundTruth(text: string, srcode: string, subject: string, fallbackDa
   const density: Record<JejuRegion, 'high' | 'low' | 'none'> = { 제주시: 'none', 서귀포시: 'none' };
   const occCount: Record<JejuRegion, number> = { 제주시: 0, 서귀포시: 0 };
   const alertCount: Record<JejuRegion, number> = { 제주시: 0, 서귀포시: 0 };
+  const alertRank: Record<JejuRegion, number> = { 제주시: 0, 서귀포시: 0 };
+  const highSpecies: Record<JejuRegion, string[]> = { 제주시: [], 서귀포시: [] };
+  const lowSpecies: Record<JejuRegion, string[]> = { 제주시: [], 서귀포시: [] };
   const toxicSpecies: string[] = [];
 
   const advisoryRank = advisory === '경보' ? 3 : advisory === '주의보' ? 2 : advisory === '예비주의보' ? 1 : 0;
+  // resolveAlertLevel(advisory, density) 와 동일한 식 (nifs-report.parser.ts).
+  const alertRankOf = (d: 'high' | 'low') => Math.min(advisoryRank + (d === 'high' ? 1 : 0), 3);
 
   for (const b of blocks) {
     if (b.isToxic && (b.highRegions.length > 0 || b.lowRegions.length > 0)) toxicSpecies.push(b.species);
     for (const r of b.highRegions) {
       density[r] = 'high';
       occCount[r] += 1;
+      highSpecies[r].push(b.species);
       // resolveAlertLevel(advisory, 'high') → rank = advisoryRank + 1 ≥ 1 → 항상 경보성
       alertCount[r] += 1;
+      alertRank[r] = Math.max(alertRank[r], alertRankOf('high'));
     }
     for (const r of b.lowRegions) {
       if (density[r] !== 'high') density[r] = 'low';
       occCount[r] += 1;
+      lowSpecies[r].push(b.species);
       // resolveAlertLevel(advisory, 'low') → rank = advisoryRank → 특보가 있어야 경보성(attention+)
       if (advisoryRank >= 1) alertCount[r] += 1;
+      alertRank[r] = Math.max(alertRank[r], alertRankOf('low'));
     }
+  }
+
+  // 최고 밀도로 출현한 종만 남긴다 (도메인 NearbyAlertInput.species 와 같은 규약).
+  const topSpecies: Record<JejuRegion, string[]> = { 제주시: [], 서귀포시: [] };
+  for (const r of ['제주시', '서귀포시'] as JejuRegion[]) {
+    topSpecies[r] = [...new Set(density[r] === 'high' ? highSpecies[r] : lowSpecies[r])];
   }
 
   return {
@@ -375,6 +405,8 @@ function toGroundTruth(text: string, srcode: string, subject: string, fallbackDa
     density,
     occCount,
     alertCount,
+    alertRank,
+    topSpecies,
     speciesBlocks: blocks.length,
     toxicSpecies: [...new Set(toxicSpecies)],
   };
@@ -549,10 +581,14 @@ interface Prediction {
   score: number;
   level: RiskLevel;
   confidence: string;
-  /** 발화한 룰 코드. **점수표와 무관하다** — 발화 여부는 THRESHOLDS(수온/파고/각도)로만 정해진다. */
-  firedCodes: string[];
+  /**
+   * NEARBY_* 를 **뺀** 발화 룰 코드. **점수표와 무관하다** — 발화 여부는 THRESHOLDS(수온/파고/각도)로만 정해진다.
+   * 인근 출현 룰은 후보마다 발화 코드 자체가 달라지므로(건수 방식 vs 밀도 방식) 여기서 분리해
+   * 아래 nearbyScore() 가 후보별로 따로 계산한다.
+   */
+  firedBase: string[];
   /** v1-as-run 재현용: 좌표 필터 버그가 살아 있던 시절엔 NEARBY/PAST 가 발화하지 못했다. */
-  firedCodesAsRun: string[];
+  firedBaseAsRun: string[];
   /** 등가성 검증 (엔진 점수 vs 발화집합 합산). */
   parityEngine: number;
   parityShortcut: number;
@@ -560,7 +596,15 @@ interface Prediction {
   waveHeight: number | null;
   weekAvgTemp: number | null;
   missing: string[];
+  /** ── 인근 출현 원자료 (후보가 이걸로 자기 방식대로 점수를 매긴다) ── */
+  /** 창 안(직전 주간보고) 그 시군구의 최고 밀도. 출현 없으면 'none'. */
+  nearbyDensity: 'high' | 'low' | 'none';
+  /** 창 안 최고 경보 등급 (0 none / 1 attention / 2 caution / 3 warning). */
+  nearbyAlertRank: number;
+  /** 창 안 '경보성'(alert_level ≥ attention) 출현 건수 = v2 의 nearbyAlertCount. */
   nearbyAlertCount: number;
+  /** 최고 밀도 출현 종 (문구 검증용). */
+  nearbySpecies: string[];
   pastOccurrenceCount: number;
 }
 
@@ -581,21 +625,85 @@ const ruleScore = (code: string, fallback: number): number =>
 
 type Weights = Record<RiskFactorCode, number>;
 
-/** 단계 구간. ⚠️ 프로덕션 값은 risk-level.ts 에 **하드코딩**돼 있고 DB/시드로 바꿀 수 없다. */
+/**
+ * 단계 구간. ⚠️ 프로덕션 값은 risk-level.ts 에 **하드코딩**돼 있고 DB/시드로 바꿀 수 없다
+ * (risk_rule_configs 의 LEVEL_* 행은 관리자 화면 표시용 — 엔진이 읽지 않는다).
+ */
 interface Cutoffs {
   caution: number;
   danger: number;
   severe: number;
 }
-const PROD_CUT: Cutoffs = { caution: 31, danger: 56, severe: 76 };
+
+/** 현재 배포된 구간 (risk-level.ts riskLevelFromScore — v2 개정에서 danger 56 → 45 로 내렸다). */
+const PROD_CUT: Cutoffs = { caution: 31, danger: 45, severe: 76 };
+/** v2 문서를 쓰던 시절의 구간. 밀도 반영 후 다시 올릴 가치가 있는지 재평가한다. */
+const OLD_CUT: Cutoffs = { caution: 31, danger: 56, severe: 76 };
+
+/**
+ * ★ 인근 출현 룰을 어떻게 점수로 바꾸는가 — 후보마다 다르다. 이번 개정의 핵심 축이다.
+ *
+ *  · 'count'   — v1/v2 방식. 창 안에 경보성(alert_level ≥ attention) 출현이 **한 건이라도** 있으면
+ *                밀도와 무관하게 NEARBY_ALERT 점수를 통째로 준다. 고밀도든 저밀도든 똑같다.
+ *  · 'density' — v3 후보. 창 안 **최고 밀도**로 등급을 매겨 NEARBY_ALERT_{HIGH,LOW} 점수를 준다.
+ *                gate 가 어떤 출현을 '창 안'으로 볼지 정한다:
+ *                  'alerted' = alert_level ≥ attention 인 것만 (v2 의 필터를 그대로 유지)
+ *                              → 저밀도는 **NIFS 특보가 걸린 주에만** 신호가 된다.
+ *                  'any'     = 밀도가 기록된 모든 출현 (특보 유무 무관)
+ *                              → "NIFS 가 저밀도 출현을 확인했다" 자체를 근거로 본다.
+ *                              특보는 광역 행정 조치라 늦게 나온다 — 관측 사실을 특보가 검열해선 안 된다는 입장.
+ *  · 'alert'   — 밀도 대신 **경보 등급**(특보 + 밀도의 합성)으로 등급을 매긴다. 밀도 방식과 비교용.
+ */
+type NearbyMode =
+  | { kind: 'count' }
+  | { kind: 'density'; gate: 'alerted' | 'any'; high: number; low: number; speciesBonus?: number }
+  | { kind: 'alert'; warning: number; caution: number; attention: number };
+
+interface NearbyRaw {
+  density: 'high' | 'low' | 'none';
+  alertRank: number;
+  alertCount: number;
+}
+
+/** 후보의 인근-출현 점수. 이 함수 하나가 (a)~(g) 후보를 가른다. */
+function nearbyScore(n: NearbyRaw, w: Weights, mode: NearbyMode): number {
+  switch (mode.kind) {
+    case 'count':
+      return n.alertCount > 0 ? w.NEARBY_ALERT : 0;
+    case 'density': {
+      if (n.density === 'none') return 0;
+      if (mode.gate === 'alerted' && n.alertRank < 1) return 0;
+      const base = n.density === 'high' ? mode.high : mode.low;
+      // 종수 보너스(후보 g): 최고 밀도 종이 여럿이면 가산. 기본은 0 = 건수를 보지 않는다.
+      const extra = (mode.speciesBonus ?? 0) * Math.max(0, n.alertCount - 1);
+      return base + extra;
+    }
+    case 'alert':
+      if (n.alertRank >= 3) return mode.warning;
+      if (n.alertRank === 2) return mode.caution;
+      if (n.alertRank === 1) return mode.attention;
+      return 0;
+  }
+}
+
+/** 도메인이 실제로 내보내는 인근 룰 코드(밀도 방식). 등가성 검증에 쓴다. */
+function nearbyCodeOf(density: 'high' | 'low' | 'none'): string | null {
+  if (density === 'none') return null;
+  return NEARBY_DENSITY_CODES[density as NearbyDensity];
+}
 
 function weights(over: Partial<Weights>): Weights {
   return { ...DEFAULT_RULE_SCORES, ...over };
 }
 
+/** 관측 룰만의 합 (NEARBY 제외). 후보 비교와 그리드에서 공통으로 쓴다. */
 function scoreOfFired(fired: readonly string[], w: Weights): number {
   let s = 0;
   for (const c of fired) s += w[c as RiskFactorCode] ?? 0;
+  return s;
+}
+
+function clamp100(s: number): number {
   return Math.max(0, Math.min(100, Math.round(s)));
 }
 
@@ -611,23 +719,40 @@ interface Candidate {
   label: string;
   w: Weights;
   cut: Cutoffs;
+  nearby: NearbyMode;
+  /**
+   * ★ 최소 단계 보장: 인근에 **어떤 밀도로든** 해파리가 확인되면 최소 '주의'.
+   *
+   * 밀도별 점수를 도입하면 저밀도 지역의 점수가 확 낮아진다. 그 자체는 의도한 것이지만,
+   * "NIFS 가 저밀도 출현을 확인했고 예비주의보까지 발령 중인데 화면에는 **안전**" 이라는
+   * 상태가 생긴다. 안전 서비스가 할 말이 아니다. 점수만으로는 이걸 못 고친다 —
+   * 저밀도 점수를 caution 바닥(31점)까지 올리면 여름 관측이 얹혀 곧장 danger 로 튄다.
+   * 바닥(floor)과 점수는 분리해야 한다. 그게 RISK-002 최소 단계 보장이 존재하는 이유다.
+   */
+  minNearbyCaution?: boolean;
   /** true 면 좌표 버그(NEARBY/PAST 미발화) 상태로 평가한다. */
   asRun?: boolean;
 }
 
 /**
  * 등가성 검증용 점수표 — 이 표로 **실제 RiskEngine 을 돌린 점수**와
- * scoreOfFired(발화집합) 를 (해변 × 주) 전 건에서 대조한다.
+ * scoreOfFired(발화집합) + nearbyScore 를 (해변 × 주) 전 건에서 대조한다.
  * 하나라도 어긋나면 아래 그리드 탐색 결과 전체가 무효다. main() 에서 단언한다.
+ *
+ * 도메인은 이제 밀도 방식(gate='any')으로만 발화하므로, 등가성도 그 방식으로 검증한다.
+ * (건수 방식 'count' 는 v1/v2 를 재현하기 위한 **스크립트 안의 모형**이다 — 도메인에는 더 이상 없다.
+ *  대신 count 모형이 옛 도메인과 같은 값을 내는지는 alertCount 정의로 보장된다.)
  */
 const PARITY_W: Weights = weights({
-  NEARBY_ALERT: 40,
+  NEARBY_ALERT_HIGH: 25,
+  NEARBY_ALERT_LOW: 5,
   TEMP_UP: 15,
   TEMP_7D_AVG: 10,
   PAST_OCCURRENCE: 5,
   WAVE_HIGH: 5,
   WIND_INFLOW: 5,
 });
+const PARITY_NEARBY: NearbyMode = { kind: 'density', gate: 'any', high: 25, low: 5 };
 
 async function predict(report: WeeklyReport, prev: WeeklyReport | null, priorYears: WeeklyReport[]): Promise<Prediction[]> {
   const decisionAt = kstSampleInstant(report.endDay);
@@ -657,14 +782,20 @@ async function predict(report: WeeklyReport, prev: WeeklyReport | null, priorYea
     }
     const weekAvgWaterTemp = weekTemps.length > 0 ? weekTemps.reduce((a, b) => a + b, 0) / weekTemps.length : null;
 
-    // --- NEARBY_ALERT: nearbyWindowDays=7 → **직전 주간보고**의 경보성 출현만 창에 든다.
+    // --- NEARBY_*: nearbyWindowDays=7 → **직전 주간보고**의 출현만 창에 든다.
     //     라벨 누출 방지: 같은 주 보고서(=정답)는 절대 입력에 넣지 않는다.
     //     (반경 30km 대신 시군구 일치로 근사 — 주간보고는 좌표를 주지 않는다. 문서에 명시.)
     const prevInWindow =
       prev !== null &&
       (kstSampleInstant(report.endDay).getTime() - kstSampleInstant(prev.endDay).getTime()) / DAY_MS <=
         COLLECT.nearbyWindowDays;
-    const nearbyAlertCount = prevInWindow && prev ? prev.alertCount[region] : 0;
+    const inWindow = prevInWindow ? prev : null;
+    const nearbyAlertCount = inWindow ? inWindow.alertCount[region] : 0;
+    const nearbyDensity = inWindow ? inWindow.density[region] : 'none';
+    const nearbyAlertRank = inWindow ? inWindow.alertRank[region] : 0;
+    const nearbySpecies = inWindow ? inWindow.topSpecies[region] : [];
+    // 창 안 최고 밀도 종의 건수 (종수 보너스 후보 g 의 원자료).
+    const nearbyTopCount = nearbySpecies.length;
 
     // --- PAST_OCCURRENCE: 과거 연도의 같은 시기(±14일) 같은 시군구 출현 건수
     const doy = dayOfYear(report.endDay);
@@ -683,7 +814,17 @@ async function predict(report: WeeklyReport, prev: WeeklyReport | null, priorYea
       latestObservation,
       weekAvgWaterTemp,
       recentWaterTemps,
-      nearbyAlertCount,
+      // 프로덕션 어댑터(risk-input.kysely-query#findNearbyAlert)와 같은 모양으로 만든다.
+      // gate='any' — 밀도가 기록된 출현은 특보 유무와 무관하게 근거로 본다(채택안, 아래 후보 비교 참조).
+      nearbyAlert:
+        nearbyDensity === 'none'
+          ? null
+          : {
+              densityLevel: nearbyDensity as NearbyDensity,
+              species: nearbySpecies,
+              region: beach.region,
+              count: nearbyAlertCount,
+            },
       pastOccurrenceCount,
       verifiedReports: [],
       forecasts: [], // 과거 예보는 조회할 수 없다 → 'now' 지평만 평가한다(24h/72h 는 백테스트 대상 아님).
@@ -706,9 +847,12 @@ async function predict(report: WeeklyReport, prev: WeeklyReport | null, priorYea
       minLevelTriggers,
       confidence,
     });
-    const firedCodes = result.factors.map((f) => f.code);
+    // 인근 룰은 후보마다 발화 코드가 달라지므로 base 에서 떼어낸다.
+    const isNearby = (c: string) => c.startsWith('NEARBY_ALERT');
+    const firedBase = result.factors.map((f) => f.code).filter((c) => !isNearby(c));
 
-    // --- 등가성 검증: 임의 점수표로 엔진을 돌린 점수 == Σ weights[발화코드] 인가?
+    // --- 등가성 검증: 임의 점수표로 **실제 엔진**을 돌린 점수 == Σ weights[관측 발화코드] + nearbyScore 인가?
+    //     (밀도 방식으로 검증한다 — 도메인이 실제로 그렇게 동작하기 때문이다)
     const parityEngine = RiskEngine.calculate({
       variables: applyHorizon(
         evaluateRiskVariables(bundle, (code, fb) => PARITY_W[code as RiskFactorCode] ?? fb).factors,
@@ -718,7 +862,22 @@ async function predict(report: WeeklyReport, prev: WeeklyReport | null, priorYea
       minLevelTriggers: [],
       confidence,
     }).score;
-    const parityShortcut = scoreOfFired(firedCodes, PARITY_W);
+    const parityShortcut = clamp100(
+      scoreOfFired(firedBase, PARITY_W) +
+        nearbyScore(
+          { density: nearbyDensity, alertRank: nearbyAlertRank, alertCount: nearbyTopCount },
+          PARITY_W,
+          PARITY_NEARBY,
+        ),
+    );
+    // 도메인이 정말 밀도별 코드를 내보내는지도 확인한다(코드명 오타 방지).
+    const expectedNearbyCode = nearbyCodeOf(nearbyDensity);
+    const actualNearbyCode = result.factors.map((f) => f.code).find(isNearby) ?? null;
+    if (expectedNearbyCode !== actualNearbyCode) {
+      throw new Error(
+        `NEARBY 코드 불일치 (${report.endDay} ${beach.name}): 기대 ${expectedNearbyCode} / 실제 ${actualNearbyCode}`,
+      );
+    }
     // ====================================================================
 
     out.push({
@@ -729,16 +888,19 @@ async function predict(report: WeeklyReport, prev: WeeklyReport | null, priorYea
       score: result.score,
       level: result.level,
       confidence: result.confidence,
-      firedCodes,
+      firedBase,
       // 좌표 버그(v1-as-run) 재현: NIFS 주간보고는 좌표가 없어 두 룰이 통째로 죽어 있었다.
-      firedCodesAsRun: firedCodes.filter((c) => c !== 'NEARBY_ALERT' && c !== 'PAST_OCCURRENCE'),
+      firedBaseAsRun: firedBase.filter((c) => c !== 'PAST_OCCURRENCE'),
       parityEngine,
       parityShortcut,
       waterTemp: latestObservation?.waterTemp ?? null,
       waveHeight: latestObservation?.waveHeight ?? null,
       weekAvgTemp: weekAvgWaterTemp,
       missing: variables.missing,
+      nearbyDensity,
+      nearbyAlertRank,
       nearbyAlertCount,
+      nearbySpecies,
       pastOccurrenceCount,
     });
   }
@@ -763,16 +925,19 @@ interface Unit {
   score: number;
   level: RiskLevel;
   meanScore: number;
-  /** 시군구 내 해변별 발화 코드 집합. 임의의 점수표를 여기서 O(1) 로 재평가한다. */
+  /** 시군구 내 해변별 관측 발화 코드 집합(NEARBY 제외). 임의의 점수표를 여기서 O(1) 로 재평가한다. */
   beachFired: string[][];
   /** 좌표 버그 상태(v1-as-run)의 해변별 발화 코드 집합. */
   beachFiredAsRun: string[][];
+  /** 인근 출현 원자료 — 시군구 단위라 해변마다 같다. 후보가 자기 방식으로 점수를 매긴다. */
+  nearby: NearbyRaw;
   // 요인
   fired: Set<string>;
   waterTemp: number | null;
   weekAvgTemp: number | null;
   waveHeight: number | null;
   nearbyAlertCount: number;
+  nearbyDensity: 'high' | 'low' | 'none';
 }
 
 interface BinaryMetrics {
@@ -894,9 +1059,11 @@ function metricsLine(name: string, m: BinaryMetrics): string {
 /** 한 평가 단위의 점수 = 시군구 내 해변 **최대**(안전 측 집계 — 경보 누락을 벌한다). */
 function unitScore(u: Unit, c: Candidate): number {
   const sets = c.asRun ? u.beachFiredAsRun : u.beachFired;
+  // 좌표 필터 버그(v1-as-run) 시절엔 NIFS 출현이 통째로 걸러져 인근 룰이 발화하지 못했다.
+  const near = c.asRun ? 0 : nearbyScore(u.nearby, c.w, c.nearby);
   let best = 0;
   for (const f of sets) {
-    const s = scoreOfFired(f, c.w);
+    const s = clamp100(scoreOfFired(f, c.w) + near);
     if (s > best) best = s;
   }
   return best;
@@ -924,6 +1091,25 @@ interface Evaluation {
   dist: [number, number, number, number];
   scoreMin: number;
   scoreMax: number;
+
+  // ─────────────────────────────────────────────────── ★ 변별력 (이번 개정의 진짜 과제)
+  /**
+   * **danger 판정 비율** = 전체 평가 단위 중 danger 이상으로 판정한 비율.
+   * 성능이 아니라 **경보의 의미**를 재는 지표다. 이게 1.0 에 가까우면 "어느 해변이 그나마 안전한가"
+   * 라는 질문에 답할 수 없고(앱의 존재 이유), 늘 빨간불이라 아무도 안 믿는다(경보 피로).
+   * 다만 **줄이는 것 자체가 목적이 아니다** — 재현율과 반드시 같이 봐야 한다.
+   */
+  dangerRate: number;
+  /** 해파리 철(7~10월)의 danger 판정 비율. 운영에서 "철 내내 빨강" 이 실제로 일어나는 구간이다. */
+  dangerRatePeak: number;
+  /** **저밀도** 주를 danger 이상으로 판정한 비율. 표선(저밀도)이 위험으로 뜨던 문제의 직접 지표. */
+  lowAsDanger: number;
+  /** 고밀도 주 평균 점수 − 저밀도 주 평균 점수. 밀도가 점수로 옮겨졌는지 보는 눈금. */
+  gapHighLow: number;
+  /** 고밀도 주 평균 점수 − 출현 없는 주 평균 점수. */
+  gapHighNone: number;
+  /** 고밀도 주 vs 저밀도 주 점수의 AUC. 1.0 = 두 밀도를 완벽히 가른다, 0.5 = 못 가른다. */
+  aucHighVsLow: number;
 }
 
 function fBeta(m: BinaryMetrics, beta: number): number {
@@ -934,7 +1120,12 @@ function fBeta(m: BinaryMetrics, beta: number): number {
 
 function evaluateCandidate(units: Unit[], c: Candidate): Evaluation {
   const scores = units.map((u) => unitScore(u, c));
-  const ranks = scores.map((s) => levelRankOf(s, c.cut));
+  const ranks = scores.map((s, i) => {
+    const byScore = levelRankOf(s, c.cut);
+    // RISK-002 최소 단계 보장 — 점수와 무관하게 바닥을 깐다.
+    const floor = c.minNearbyCaution && !c.asRun && units[i].nearby.density !== 'none' ? 1 : 0;
+    return Math.max(byScore, floor);
+  });
   const truthHigh = units.map((u) => u.density === 'high');
   const d = binary(ranks.map((r) => r >= 2), truthHigh);
   const cm = binary(ranks.map((r) => r >= 1), truthHigh);
@@ -953,6 +1144,20 @@ function evaluateCandidate(units: Unit[], c: Candidate): Evaluation {
   const severePrecision =
     sevIdx.length > 0 ? sevIdx.filter((i) => units[i].density === 'high').length / sevIdx.length : NaN;
 
+  // ── 변별력 지표 ────────────────────────────────────────────────────────────────────
+  const idxOf = (d0: 'high' | 'low' | 'none') => units.map((u, i) => (u.density === d0 ? i : -1)).filter((i) => i >= 0);
+  const hi = idxOf('high');
+  const lo = idxOf('low');
+  const no = idxOf('none');
+  const mean = (idx: number[]) => (idx.length > 0 ? idx.reduce((a, i) => a + scores[i], 0) / idx.length : NaN);
+
+  const peakIdx = units.map((u, i) => (u.month >= 7 && u.month <= 10 ? i : -1)).filter((i) => i >= 0);
+  const rateAtDanger = (idx: number[]) => (idx.length > 0 ? idx.filter((i) => ranks[i] >= 2).length / idx.length : NaN);
+
+  // 고밀도 vs 저밀도만 놓고 잰 AUC — "밀도를 가르는가?" 에 직접 답한다.
+  const hlScores = [...hi, ...lo].map((i) => scores[i]);
+  const hlTruth = [...hi.map(() => true), ...lo.map(() => false)];
+
   const f2 = fBeta(d, 2);
   return {
     auc: auc(scores, truthHigh),
@@ -969,6 +1174,12 @@ function evaluateCandidate(units: Unit[], c: Candidate): Evaluation {
     dist,
     scoreMin: Math.min(...scores),
     scoreMax: Math.max(...scores),
+    dangerRate: (dist[2] + dist[3]) / units.length,
+    dangerRatePeak: rateAtDanger(peakIdx),
+    lowAsDanger: rateAtDanger(lo),
+    gapHighLow: mean(hi) - mean(lo),
+    gapHighNone: mean(hi) - mean(no),
+    aucHighVsLow: auc(hlScores, hlTruth),
   };
 }
 
@@ -1023,10 +1234,21 @@ function bootstrapDiff(
 
 function candidateLine(c: Candidate, e: Evaluation): string {
   return (
-    `  ${c.id.padEnd(16)} ` +
+    `  ${c.id.padEnd(18)} ` +
     `AUC ${fmt(e.auc, 3)} │ danger+ 재현율 ${pct(e.d.recall).padStart(6)} 오경보율 ${pct(e.faNone).padStart(5)} 정밀도 ${pct(e.d.precision).padStart(6)} F1 ${fmt(e.d.f1, 2).padStart(4)} F2 ${fmt(e.f2 < 0 ? NaN : e.f2, 2).padStart(4)} │ ` +
-    `caution+ 재현율 ${pct(e.c.recall).padStart(6)} 오경보율 ${pct(e.faNoneCaution).padStart(5)} │ ` +
+    `caution+ 재현율 ${pct(e.c.recall).padStart(6)} │ ` +
     `단계 ${e.dist.join('/')} 점수 ${e.scoreMin}~${e.scoreMax}`
+  );
+}
+
+/** ★ 변별력 줄 — 성능표만 보면 이번 개정의 목적(전 해변이 똑같다)을 놓친다. */
+function discriminationLine(c: Candidate, e: Evaluation): string {
+  return (
+    `  ${c.id.padEnd(18)} ` +
+    `danger판정 ${pct(e.dangerRate).padStart(6)} (성수기 ${pct(e.dangerRatePeak).padStart(6)}) │ ` +
+    `저밀도→danger ${pct(e.lowAsDanger).padStart(6)} │ ` +
+    `고밀도−저밀도 ${fmt(e.gapHighLow, 1).padStart(5)}점  고밀도−없음 ${fmt(e.gapHighNone, 1).padStart(5)}점 │ ` +
+    `고vs저 AUC ${fmt(e.aucHighVsLow, 3)}`
   );
 }
 
@@ -1126,13 +1348,20 @@ async function main(): Promise<void> {
         score: Math.max(...rows.map((x) => x.score)),
         meanScore: rows.reduce((a, b) => a + b.score, 0) / rows.length,
         level: rows.reduce<RiskLevel>((acc, x) => (LEVEL_RANK[x.level] > LEVEL_RANK[acc] ? x.level : acc), 'safe'),
-        beachFired: rows.map((x) => x.firedCodes),
-        beachFiredAsRun: rows.map((x) => x.firedCodesAsRun),
-        fired: new Set(rows.flatMap((x) => x.firedCodes)),
+        beachFired: rows.map((x) => x.firedBase),
+        beachFiredAsRun: rows.map((x) => x.firedBaseAsRun),
+        nearby: {
+          density: rows[0].nearbyDensity,
+          alertRank: rows[0].nearbyAlertRank,
+          // 종수 보너스(후보 g)의 원자료 = 최고 밀도 종의 수.
+          alertCount: rows[0].nearbySpecies.length,
+        },
+        fired: new Set(rows.flatMap((x) => x.firedBase)),
         waterTemp: rows.map((x) => x.waterTemp).find((x) => x !== null) ?? null,
         weekAvgTemp: rows.map((x) => x.weekAvgTemp).find((x) => x !== null) ?? null,
         waveHeight: rows.map((x) => x.waveHeight).find((x) => x !== null) ?? null,
         nearbyAlertCount: Math.max(...rows.map((x) => x.nearbyAlertCount)),
+        nearbyDensity: rows[0].nearbyDensity,
       });
     }
   }
@@ -1202,15 +1431,47 @@ async function main(): Promise<void> {
   console.log(metricsLine('B2 항상 안전(safe)', binary(units.map(() => false), truthHigh)));
   console.log(metricsLine('B3 계절만 (7~10월=위험)', binary(units.map((u) => u.month >= 7 && u.month <= 10), truthHigh)));
   console.log(metricsLine('B4 수온만 (≥26℃=위험)', binary(units.map((u) => (u.waterTemp ?? 0) >= 26), truthHigh)));
-  console.log(metricsLine('B5 직전주 NIFS 고밀도(지속성)', binary(units.map((u) => u.nearbyAlertCount >= 1 && u.fired.has('NEARBY_ALERT')), truthHigh)));
+  console.log(metricsLine('B5 직전주 NIFS 경보성 출현(지속성)', binary(units.map((u) => u.nearbyAlertCount >= 1), truthHigh)));
+  console.log(metricsLine('B6 직전주 NIFS **고밀도**만', binary(units.map((u) => u.nearbyDensity === 'high'), truthHigh)));
   console.log('  --- 순위 지표 (AUC: 0.5=동전던지기) ---');
   console.log(`  룰 점수 AUC                       ${fmt(auc(units.map((u) => u.score), truthHigh))}`);
   console.log(`  수온만 AUC                        ${fmt(auc(units.map((u) => u.waterTemp ?? -99), truthHigh))}`);
   console.log(`  7일 평균수온만 AUC                ${fmt(auc(units.map((u) => u.weekAvgTemp ?? -99), truthHigh))}`);
   console.log(`  파고만 AUC                        ${fmt(auc(units.map((u) => u.waveHeight ?? -99), truthHigh))}`);
   console.log(`  직전주 경보건수만 AUC             ${fmt(auc(units.map((u) => u.nearbyAlertCount), truthHigh))}`);
+  console.log(`  ★ 직전주 **밀도등급**만 AUC       ${fmt(auc(units.map((u) => (u.nearbyDensity === 'high' ? 2 : u.nearbyDensity === 'low' ? 1 : 0)), truthHigh))}`);
+  console.log(`  ★ 직전주 **경보등급**만 AUC       ${fmt(auc(units.map((u) => u.nearby.alertRank), truthHigh))}`);
   console.log(`  월(계절)만 AUC                    ${fmt(auc(units.map((u) => u.month), truthHigh))}`);
-  console.log(`  룰 점수 − NEARBY_ALERT 제거 AUC   ${fmt(auc(units.map((u) => u.score - (u.fired.has('NEARBY_ALERT') ? DEFAULT_RULE_SCORES.NEARBY_ALERT : 0)), truthHigh))}`);
+  console.log(`  룰 점수 − 인근출현 제거 AUC       ${fmt(auc(units.map((u) => u.score - (u.nearbyDensity !== 'none' ? DEFAULT_RULE_SCORES.NEARBY_ALERT_HIGH : 0)), truthHigh))}`);
+
+  // ★ 건수 vs 밀도 — 무엇이 진짜 신호인가?
+  console.log('\n  ★ [건수는 위험의 강도인가, 종 개수의 부산물인가?]');
+  {
+    const byCount = new Map<number, { n: number; high: number }>();
+    for (const u of units) {
+      const k = u.nearbyAlertCount;
+      const e = byCount.get(k) ?? { n: 0, high: 0 };
+      e.n += 1;
+      if (u.density === 'high') e.high += 1;
+      byCount.set(k, e);
+    }
+    console.log('    직전주 경보건수별 → 이번주 고밀도 비율');
+    for (const [k, v] of [...byCount.entries()].sort((a, b) => a[0] - b[0])) {
+      console.log(`      ${k}건: ${String(v.n).padStart(3)}단위 → 고밀도 ${pct(v.high / v.n).padStart(6)}`);
+    }
+    const byDens = new Map<string, { n: number; high: number }>();
+    for (const u of units) {
+      const e = byDens.get(u.nearbyDensity) ?? { n: 0, high: 0 };
+      e.n += 1;
+      if (u.density === 'high') e.high += 1;
+      byDens.set(u.nearbyDensity, e);
+    }
+    console.log('    직전주 **밀도**별 → 이번주 고밀도 비율');
+    for (const k of ['none', 'low', 'high']) {
+      const v = byDens.get(k);
+      if (v) console.log(`      ${k.padEnd(5)}: ${String(v.n).padStart(3)}단위 → 고밀도 ${pct(v.high / v.n).padStart(6)}`);
+    }
+  }
 
   // =====================================================================================
   // 과제 B: 출현 여부(고+저) 탐지
@@ -1251,10 +1512,16 @@ async function main(): Promise<void> {
   console.log('【과제 D】 룰별 신호 (양성 = 고밀도 출현 주×시군구)');
   console.log('-'.repeat(110));
   console.log(`  ${'룰'.padEnd(22)} ${'점수'.padStart(4)}  ${'전체발화'.padStart(9)}  ${'고밀도주'.padStart(9)}  ${'비고밀도'.padStart(9)}  ${'리프트'.padStart(6)}  ${'AUC'.padStart(5)}  ${'p≈'.padStart(6)}`);
-  const codes: RiskFactorCode[] = ['TEMP_UP', 'TEMP_7D_AVG', 'WAVE_HIGH', 'WIND_INFLOW', 'CURRENT_INFLOW', 'PAST_OCCURRENCE', 'NEARBY_ALERT', 'BEACH_VULNERABILITY'];
+  const codes: RiskFactorCode[] = ['TEMP_UP', 'TEMP_7D_AVG', 'WAVE_HIGH', 'WIND_INFLOW', 'CURRENT_INFLOW', 'PAST_OCCURRENCE', 'NEARBY_ALERT_HIGH', 'NEARBY_ALERT_LOW', 'BEACH_VULNERABILITY'];
   const ruleSignals: Record<string, unknown>[] = [];
   for (const code of codes) {
-    const fires = units.map((u) => u.fired.has(code));
+    // 인근 룰은 fired 집합에서 떼어냈으므로(후보마다 코드가 달라진다) 원자료에서 직접 만든다.
+    const fires =
+      code === 'NEARBY_ALERT_HIGH'
+        ? units.map((u) => u.nearbyDensity === 'high')
+        : code === 'NEARBY_ALERT_LOW'
+          ? units.map((u) => u.nearbyDensity === 'low')
+          : units.map((u) => u.fired.has(code));
     const nFire = fires.filter(Boolean).length;
     const posFire = units.filter((u, i) => u.density === 'high' && fires[i]).length;
     const negFire = units.filter((u, i) => u.density !== 'high' && fires[i]).length;
@@ -1289,73 +1556,105 @@ async function main(): Promise<void> {
   if (parityBad > 0) throw new Error('엔진 등가성 검증 실패 — 점수표 탐색을 신뢰할 수 없다.');
 
   console.log(`
-  ※ 단계 구간은 risk-level.ts 에 **하드코딩**돼 있다(0-30/31-55/56-75/76-100).
+  ※ 단계 구간은 risk-level.ts 에 **하드코딩**돼 있다. 현재 배포값: 0-30 안전 / 31-44 주의 / 45-75 위험 / 76-100 심각.
     risk_rule_configs 의 level_threshold 행은 엔진이 읽지 않는다(rule-config.kysely-query 가 score/min_risk_level 만 select).
-    → **시드로 바꿀 수 있는 것은 룰 점수뿐이다.** 컷오프를 옮기려면 src 를 고쳐야 한다.
-    그래서 아래 후보는 전부 **고정 구간(danger=56)** 에서 평가한다. 구간을 옮겼을 때의 이득은 E-4 에서 따로 잰다.
+    → 컷오프를 옮기려면 src 를 고쳐야 한다. 이번 개정은 **점수표 + 컷오프를 함께** 후보로 놓고 비교한다.
 
   ※ 오경보율 = **출현이 전혀 없던 주**(n=${nNone})에 danger 이상을 낸 비율. (저밀도 주의 경보는 헛경보로 세지 않는다)
 `);
 
-  const V2_CORE = { NEARBY_ALERT: 40, TEMP_UP: 15, TEMP_7D_AVG: 10, PAST_OCCURRENCE: 5 } as const;
+  // v2 프로덕션 점수표 (prisma/seed.ts RULES_V2 — CURRENT_INFLOW 는 5 로 이미 내려가 있다).
+  const V2_W = weights({
+    NEARBY_ALERT: 40,
+    TEMP_UP: 15,
+    TEMP_7D_AVG: 10,
+    PAST_OCCURRENCE: 5,
+    WAVE_HIGH: 5,
+    WIND_INFLOW: 5,
+    CURRENT_INFLOW: 5,
+    BEACH_VULNERABILITY: 5,
+  });
+  const COUNT: NearbyMode = { kind: 'count' };
+  /** 관측 룰(= NIFS 신호 없이)만으로 도달 가능한 최대 점수. 구조 제약 판정에 쓴다. */
+  const obsOnlyMaxOf = (w: Weights) =>
+    w.TEMP_UP + w.TEMP_7D_AVG + w.WAVE_HIGH + w.WIND_INFLOW + w.CURRENT_INFLOW + w.PAST_OCCURRENCE + w.BEACH_VULNERABILITY;
 
-  const candidates: Candidate[] = [
-    { id: '(a) v1', label: '현행 seed.ts v1', w: weights({}), cut: PROD_CUT },
-    { id: 'v1-as-run', label: '좌표 버그 시절(참고)', w: weights({}), cut: PROD_CUT, asRun: true },
-    {
-      id: '(c) v2-drop',
-      label: '백테스트 제안 — 파고·풍향 제거',
-      w: weights({ ...V2_CORE, WAVE_HIGH: 0, WIND_INFLOW: 0 }),
-      cut: PROD_CUT,
-    },
-    {
-      id: '(d) v2-keep5',
-      label: '(c) + 파고·풍향 5점 유지',
-      w: weights({ ...V2_CORE, WAVE_HIGH: 5, WIND_INFLOW: 5 }),
-      cut: PROD_CUT,
-    },
-    {
-      id: '(d2) v2-keep10',
-      label: '(c) + 파고·풍향 10점 유지(현행 유지)',
-      w: weights({ ...V2_CORE, WAVE_HIGH: 10, WIND_INFLOW: 10 }),
-      cut: PROD_CUT,
-    },
-    {
-      id: '(e1) NEARBY30',
-      label: 'NEARBY 30 + 파고·풍향 5 (danger 는 NIFS 신호 필수)',
-      w: weights({ NEARBY_ALERT: 30, TEMP_UP: 15, TEMP_7D_AVG: 10, PAST_OCCURRENCE: 5, WAVE_HIGH: 5, WIND_INFLOW: 5 }),
-      cut: PROD_CUT,
-    },
-    {
-      id: '(e2) NEARBY-only',
-      label: 'NEARBY 55 단독 + 취약도 5 (다른 룰 0 — 점수표가 정말 필요한가? = 베이스라인의 점수표 판)',
-      w: weights({
-        NEARBY_ALERT: 55, TEMP_UP: 0, TEMP_7D_AVG: 0, PAST_OCCURRENCE: 0,
-        WAVE_HIGH: 0, WIND_INFLOW: 0, CURRENT_INFLOW: 0,
-      }),
-      cut: PROD_CUT,
-    },
-    {
-      id: '(e3) NEARBY55',
-      label: '★ NEARBY 55 (NIFS 신호만으로 danger 도달) + 파고·풍향 5 유지',
-      w: weights({
-        NEARBY_ALERT: 55, TEMP_UP: 15, TEMP_7D_AVG: 10, PAST_OCCURRENCE: 5,
-        WAVE_HIGH: 5, WIND_INFLOW: 5,
-      }),
-      cut: PROD_CUT,
-    },
-    {
-      id: '(e4) NEARBY55-drop',
-      label: '(e3) 에서 파고·풍향만 제거',
-      w: weights({
-        NEARBY_ALERT: 55, TEMP_UP: 15, TEMP_7D_AVG: 10, PAST_OCCURRENCE: 5,
-        WAVE_HIGH: 0, WIND_INFLOW: 0,
-      }),
-      cut: PROD_CUT,
-    },
+  /** 밀도 점수표 후보를 만든다 (관측 룰은 v2 그대로 두고 인근 룰만 바꾼다). */
+  const dens = (
+    high: number,
+    low: number,
+    gate: 'alerted' | 'any',
+    speciesBonus = 0,
+    over: Partial<Weights> = {},
+  ): [Weights, NearbyMode] => [
+    weights({ ...V2_W, NEARBY_ALERT_HIGH: high, NEARBY_ALERT_LOW: low, ...over }),
+    { kind: 'density', gate, high, low, speciesBonus },
   ];
 
+  const candidates: Candidate[] = [];
+  const push = (
+    id: string,
+    label: string,
+    w: Weights,
+    nearby: NearbyMode,
+    cut: Cutoffs,
+    asRun = false,
+    minNearbyCaution = false,
+  ) => candidates.push({ id, label, w, cut, nearby, asRun, minNearbyCaution });
+
+  push('(z) v1', '최초 점수표 (참고)', weights({}), COUNT, OLD_CUT);
+  push('(a) v2 배포중', '★ 현행 — NEARBY 건수만 보고 무조건 +40 / 컷오프 45', V2_W, COUNT, PROD_CUT);
+  push('(a2) v2@56', 'v2 점수표 + 옛 컷오프 56 (참고)', V2_W, COUNT, OLD_CUT);
+  {
+    const [w, n] = dens(40, 5, 'any');
+    push('(b) v3 밀도@45', '★★ 채택안 — 고40/저5, 특보 무관 + 컷오프 45(현행 유지)', w, n, PROD_CUT);
+  }
+  {
+    const [w, n] = dens(40, 5, 'any');
+    push('(c) v3 밀도@56', '같은 밀도 점수 + 컷오프 56 (v2 문서 시절 값)', w, n, OLD_CUT);
+  }
+  {
+    const [w, n] = dens(25, 5, 'any');
+    push('(b2) 고25/저5@45', '고밀도 점수를 낮게 — NIFS 속보만으로는 danger 불가', w, n, PROD_CUT);
+  }
+  {
+    const [w, n] = dens(40, 10, 'any');
+    push('(b3) 고40/저10@45', '저밀도 점수를 올리면? (재현율 ↑ / 저밀도 과경보 ↑)', w, n, PROD_CUT);
+  }
+  {
+    const [w, n] = dens(40, 5, 'alerted');
+    push('(d) 특보게이트', '(b) 인데 저밀도는 NIFS 특보가 걸린 주에만 계상 (= v2 의 alert_level 필터 유지)', w, n, PROD_CUT);
+  }
+  {
+    const [w, n] = dens(40, 0, 'any');
+    push('(e) 저밀도 0점', '(b) 인데 저밀도를 아예 무시 — 저밀도는 근거가 아닌가?', w, n, PROD_CUT);
+  }
+  push(
+    '(f) 경보등급',
+    '밀도 대신 alert_level(특보+밀도 합성)로 등급',
+    weights({ ...V2_W, NEARBY_ALERT_HIGH: 40, NEARBY_ALERT_LOW: 5 }),
+    { kind: 'alert', warning: 45, caution: 40, attention: 10 },
+    PROD_CUT,
+  );
+  {
+    const [w, n] = dens(40, 5, 'any', 5);
+    push('(g) 종수보너스', '(b) + 최고밀도 종이 여럿이면 종당 +5 — 건수를 다시 넣으면 나아지나?', w, n, PROD_CUT);
+  }
+  {
+    // 구조 제약 복원안: 관측만으로 danger(45)에 못 가게 관측 천장을 44 이하로 내린다.
+    // PAST_OCCURRENCE 는 백테스트에서 p=0.31(유의하지 않음)이라 가장 먼저 깎을 후보다.
+    const [w, n] = dens(40, 5, 'any', 0, { PAST_OCCURRENCE: 0 });
+    push('(h) +구조복원', '(b) + PAST_OCCURRENCE 5→0 → 관측만 최대 45→40 = 해파리 근거 0이면 danger 불가', w, n, PROD_CUT);
+  }
+  {
+    // ★ (b) 의 부작용 교정: 저밀도 출현 중인데 '안전' 이라고 말하는 상태를 막는다.
+    const [w, n] = dens(40, 5, 'any');
+    push('(i) v3+최소주의', '★★ (b) + 인근 출현이 확인되면 최소 "주의" 보장 (밀도 무관)', w, n, PROD_CUT, false, true);
+  }
+  push('(y) v2-as-run', '좌표 버그 시절(회귀 감시용)', V2_W, COUNT, PROD_CUT, true);
+
   const evals = new Map<string, Evaluation>();
+  console.log('■ 성능');
   for (const c of candidates) {
     const e = evaluateCandidate(units, c);
     evals.set(c.id, e);
@@ -1368,187 +1667,174 @@ async function main(): Promise<void> {
   const baseM = binary(basePred, truthHigh);
   const baseFaNone =
     units.filter((u, i) => u.density === 'none' && basePred[i]).length / Math.max(1, nNone);
+  const baseDangerRate = basePred.filter(Boolean).length / units.length;
+  const baseLowAsDanger =
+    units.filter((u, i) => u.density === 'low' && basePred[i]).length /
+    Math.max(1, units.filter((u) => u.density === 'low').length);
   console.log(
-    `  ${'(b) 베이스라인'.padEnd(14)} ` +
-      `AUC ${fmt(auc(baseScores, truthHigh), 3)}  ` +
-      `재현율 ${pct(baseM.recall).padStart(6)}  ` +
-      `오경보율 ${pct(baseFaNone).padStart(6)}  ` +
-      `정밀도 ${pct(baseM.precision).padStart(6)}  ` +
-      `F1 ${fmt(baseM.f1, 2).padStart(4)}  ` +
-      `F2 ${fmt(fBeta(baseM, 2), 2).padStart(4)}  ` +
-      `단계 -  점수 -   지난주 NIFS 고밀도 그대로 복사`,
+    `  ${'(B) 베이스라인'.padEnd(16)} ` +
+      `AUC ${fmt(auc(baseScores, truthHigh), 3)} │ danger+ 재현율 ${pct(baseM.recall).padStart(6)} 오경보율 ${pct(baseFaNone).padStart(5)} 정밀도 ${pct(baseM.precision).padStart(6)} F1 ${fmt(baseM.f1, 2).padStart(4)} F2 ${fmt(fBeta(baseM, 2), 2).padStart(4)} │ ` +
+      `caution+ 재현율 ${pct(baseM.recall).padStart(6)} │ 단계 -  점수 -   지난주 NIFS 경보 그대로 복사`,
   );
-  console.log('  * 단계 = safe/caution/danger/severe 단위 수. 베이스라인은 점수표가 없어 단계가 없다.');
 
   // =====================================================================================
-  // 과제 E-1: ★ 핵심 쟁점 — 파고·풍향을 남기면 나빠지는가? (다른 룰 고정, 두 값만 스윕)
+  // 과제 E-0b: ★★ 변별력 — 이번 개정의 진짜 과제
+  //   "성능이 좋아졌는가" 만 보면 놓친다. 문제는 **전 해변이 똑같이 danger** 라는 것이었다.
   // =====================================================================================
-  console.log('\n' + '-'.repeat(110));
-  console.log('【과제 E-1】 ★ WAVE_HIGH × WIND_INFLOW 절제 실험 (나머지 룰은 v2 코어로 고정: NEARBY40/TEMP15/7D10/PAST5)');
-  console.log('  ※ 고밀도 주에 **아무 경고도 못 준(safe 라고 답한)** 수를 같이 본다 — 안전 서비스의 진짜 놓침이다.');
+  console.log('\n' + '-'.repeat(120));
+  console.log('■ ★ 변별력 (danger 판정 비율 / 밀도 분리)');
+  console.log('  danger판정 = 전체 단위 중 danger 이상. 성수기 = 7~10월. 이게 100% 에 가까우면 "어느 해변이 안전한가"에 답할 수 없다.');
+  console.log('  ⚠️ 낮다고 좋은 게 아니다 — 위 재현율과 **반드시 같이** 봐야 한다. 놓치면서 조용한 건 최악이다.');
+  for (const c of candidates) console.log(discriminationLine(c, evals.get(c.id)!));
   console.log(
-    `  ${'파고'.padStart(4)} ${'풍향'.padStart(4)}   ${'AUC'.padStart(5)}  ${'danger+재현'.padStart(10)}  ${'danger+오경보'.padStart(12)}  ${'F1'.padStart(4)}  ` +
-      `${'caution+재현'.padStart(11)}  ${'caution+오경보'.padStart(13)}  ${'고밀도인데safe'.padStart(13)}  단계(s/c/d/x)`,
+    `  ${'(B) 베이스라인'.padEnd(18)} danger판정 ${pct(baseDangerRate).padStart(6)} (성수기 ${pct(
+      units.filter((u, i) => u.month >= 7 && u.month <= 10 && basePred[i]).length /
+        Math.max(1, units.filter((u) => u.month >= 7 && u.month <= 10).length),
+    ).padStart(6)}) │ 저밀도→danger ${pct(baseLowAsDanger).padStart(6)} │ (점수표 없음)`,
   );
-  for (const wv of [0, 5, 10, 15]) {
-    for (const wd of [0, 5, 10, 15]) {
-      const c: Candidate = {
-        id: `w${wv}/${wd}`,
-        label: '',
-        w: weights({ ...V2_CORE, WAVE_HIGH: wv, WIND_INFLOW: wd }),
-        cut: PROD_CUT,
-      };
-      const e = evaluateCandidate(units, c);
-      const missedHigh = nHigh - e.c.tp; // caution 이상도 못 받은 고밀도 주
-      const mark = wv === 0 && wd === 0 ? '  ← (c) 제거' : wv === 5 && wd === 5 ? '  ← (d) 5점 유지' : '';
-      console.log(
-        `  ${String(wv).padStart(4)} ${String(wd).padStart(4)}   ${fmt(e.auc, 3)}  ${pct(e.d.recall).padStart(10)}  ${pct(e.faNone).padStart(12)}  ${fmt(e.d.f1, 2).padStart(4)}  ` +
-          `${pct(e.c.recall).padStart(11)}  ${pct(e.faNoneCaution).padStart(13)}  ${String(missedHigh).padStart(11)}건  ${e.dist.join('/')}${mark}`,
-      );
-    }
-  }
-
-  // 짝지은 부트스트랩 — 차이의 95% CI 가 0 을 포함하면 "구별 못 한다".
-  const cDrop = candidates.find((c) => c.id === '(c) v2-drop')!;
-  const cKeep = candidates.find((c) => c.id === '(d) v2-keep5')!;
-  const cKeep10 = candidates.find((c) => c.id === '(d2) v2-keep10')!;
-  console.log('\n  [짝지은 부트스트랩 3000회] 차이의 95% CI (양수 = 앞이 더 좋음 / CI 가 0 포함 = 구별 불가)');
-  for (const [a, b] of [
-    [cKeep, cDrop],
-    [cKeep10, cDrop],
-  ] as [Candidate, Candidate][]) {
-    const bs = bootstrapDiff(units, a, b);
-    console.log(
-      `    ${a.id} − ${b.id}:  ΔAUC 평균 ${fmt(bs.aucMean, 4)} CI[${fmt(bs.auc[0], 3)}, ${fmt(bs.auc[1], 3)}]  ` +
-        `Δ재현율 CI[${pct(bs.recall[0])}, ${pct(bs.recall[1])}]  Δ오경보율 CI[${pct(bs.faNone[0])}, ${pct(bs.faNone[1])}]`,
-    );
-  }
 
   // =====================================================================================
-  // 과제 E-2: 그리드 탐색 (고정 구간 danger=56 에서 최적 점수표)
-  //   선택 기준(안전 서비스): F2 최대화 (재현율을 정밀도보다 4배 무겁게)
-  //                        + 하드 제약: 오경보율(출현 없는 주) ≤ 10%  ← 경보 피로 방어선
+  // 과제 E-1: ★ 그리드 탐색 — 밀도 점수(고/저) × danger 컷오프
+  //   목적함수 F2(재현율 우선) + 하드 제약 3개.
   // =====================================================================================
-  console.log('\n' + '-'.repeat(110));
-  console.log('【과제 E-2】 그리드 탐색 (구간 고정: danger=56, severe=76)');
+  console.log('\n' + '-'.repeat(120));
+  console.log('【과제 E-1】 ★ 그리드 탐색 — NEARBY 고밀도 점수 × 저밀도 점수 × danger 컷오프');
   console.log('  목적함수: F2 최대 (놓침 1건 ≈ 헛경보 4건 — 안전 서비스라 재현율에 무게)');
   console.log('  제약 ①(경보 피로): 출현 없는 주 danger+ 오경보율 ≤ 10%');
-  console.log('  제약 ②(구조): 관측만으로 danger 도달 불가 (= NIFS 신호나 시민 제보 없이는 최대 55점).');
-  console.log('               관측 룰은 어느 것도 유의한 신호가 없다 → 관측만으로 "위험"을 선언할 근거가 없다.');
+  console.log('  제약 ②(구조):     관측만으로 danger 도달 불가 — 해파리 근거 0인 날에 "위험"을 선언하지 않는다');
+  console.log('  제약 ③(변별력):   저밀도 주를 danger 로 올리는 비율 ≤ 25% — 저밀도가 고밀도와 같이 취급되면 개정의 의미가 없다');
+  console.log('  제약 ④(severe):   severe 비율 ≤ 5% (같은 기간 NIFS 자신의 특보 발표율 4.4% 와 맞춘다)');
   const FA_CAP = 0.1;
-  const grid: { c: Candidate; e: Evaluation; obsOnlyMax: number }[] = [];
-  for (const nb of [20, 25, 30, 35, 40, 45, 50, 55, 60])
-    for (const tu of [5, 10, 15, 20])
-      for (const t7 of [0, 5, 10, 15])
-        for (const po of [0, 5, 10, 15])
-          for (const wv of [0, 5, 10])
-            for (const wd of [0, 5, 10]) {
-              const w = weights({
-                NEARBY_ALERT: nb, TEMP_UP: tu, TEMP_7D_AVG: t7,
-                PAST_OCCURRENCE: po, WAVE_HIGH: wv, WIND_INFLOW: wd,
-              });
-              const c: Candidate = { id: `N${nb}/T${tu}/A${t7}/P${po}/W${wv}/D${wd}`, label: '', w, cut: PROD_CUT };
-              const obsOnlyMax =
-                w.TEMP_UP + w.TEMP_7D_AVG + w.WAVE_HIGH + w.WIND_INFLOW + w.CURRENT_INFLOW +
-                w.PAST_OCCURRENCE + w.BEACH_VULNERABILITY;
-              grid.push({ c, e: evaluateCandidate(units, c), obsOnlyMax });
-            }
-  console.log(`\n  탐색 조합 ${grid.length}개 (BEACH_VULNERABILITY=5, CURRENT_INFLOW=10 고정 — 둘 다 검증 불가)`);
+  const LOW_DANGER_CAP = 0.25;
+  const SEVERE_CAP = 0.05;
 
-  const header = `  ${'점수표'.padEnd(30)} ${'AUC'.padStart(5)}  ${'재현율'.padStart(7)}  ${'오경보율'.padStart(8)}  ${'정밀도'.padStart(7)}  ${'F1'.padStart(4)}  ${'F2'.padStart(4)}  ${'severe'.padStart(6)}`;
-  const row = (g: { c: Candidate; e: Evaluation }) =>
-    `  ${g.c.id.padEnd(30)} ${fmt(g.e.auc, 3)}  ${pct(g.e.d.recall).padStart(7)}  ${pct(g.e.faNone).padStart(8)}  ${pct(g.e.d.precision).padStart(7)}  ${fmt(g.e.d.f1, 2).padStart(4)}  ${fmt(g.e.f2, 2).padStart(4)}  ${String(g.e.severeCount).padStart(6)}`;
-
-  const byF2 = (a: { e: Evaluation }, b: { e: Evaluation }) => b.e.f2 - a.e.f2 || b.e.auc - a.e.auc;
-
-  const feasible = grid.filter((g) => g.e.f2Defined && g.e.faNone <= FA_CAP && g.obsOnlyMax <= 55).sort(byF2);
-  console.log(`\n  [제약 ①+②] 통과 ${feasible.length}개. 상위 12:`);
-  console.log(header);
-  for (const g of feasible.slice(0, 12)) console.log(row(g));
-
-  const feasible1 = grid.filter((g) => g.e.f2Defined && g.e.faNone <= FA_CAP).sort(byF2);
-  console.log(`\n  [제약 ①만 — 구조 제약을 풀면?] 통과 ${feasible1.length}개. 상위 5:`);
-  console.log(header);
-  for (const g of feasible1.slice(0, 5)) console.log(row(g) + `   (관측만 최대 ${g.obsOnlyMax}점)`);
-
-  const bestAuc = grid.slice().sort((a, b) => b.e.auc - a.e.auc)[0];
-  console.log(`\n  (참고) 제약 전부 무시하고 AUC 만 최대: ${bestAuc.c.id}  AUC ${fmt(bestAuc.e.auc, 3)}  재현율 ${pct(bestAuc.e.d.recall)}  오경보율 ${pct(bestAuc.e.faNone)}`);
-
-  // ★ 파고·풍향 천장 비교 — 같은 제약 아래 "빼면" vs "낮게 남기면" 도달 가능한 최고 성능
-  const bestDrop = feasible.filter((g) => g.c.w.WAVE_HIGH === 0 && g.c.w.WIND_INFLOW === 0)[0];
-  const bestKeep = feasible.filter((g) => g.c.w.WAVE_HIGH >= 5 && g.c.w.WIND_INFLOW >= 5)[0];
-  console.log('\n  ★[천장 비교] 제약 ①+② 아래 도달 가능한 최고 F2 — 파고·풍향을 빼야만 하는가?');
-  console.log(`    파고·풍향 = 0  강제: ${bestDrop ? `${bestDrop.c.id.padEnd(28)} F2 ${fmt(bestDrop.e.f2, 3)}  AUC ${fmt(bestDrop.e.auc, 3)}  재현율 ${pct(bestDrop.e.d.recall)}  오경보율 ${pct(bestDrop.e.faNone)}` : '없음'}`);
-  console.log(`    파고·풍향 ≥ 5  강제: ${bestKeep ? `${bestKeep.c.id.padEnd(28)} F2 ${fmt(bestKeep.e.f2, 3)}  AUC ${fmt(bestKeep.e.auc, 3)}  재현율 ${pct(bestKeep.e.d.recall)}  오경보율 ${pct(bestKeep.e.faNone)}` : '없음'}`);
-  if (bestDrop && bestKeep) {
-    const bs = bootstrapDiff(units, bestKeep.c, bestDrop.c);
-    console.log(
-      `    두 천장의 짝지은 부트스트랩: ΔAUC ${fmt(bs.aucMean, 4)} CI[${fmt(bs.auc[0], 3)}, ${fmt(bs.auc[1], 3)}]  ` +
-        `Δ재현율 CI[${pct(bs.recall[0])}, ${pct(bs.recall[1])}]  Δ오경보율 CI[${pct(bs.faNone[0])}, ${pct(bs.faNone[1])}]`,
-    );
+  interface GridRow {
+    c: Candidate;
+    e: Evaluation;
+    obsOnlyMax: number;
+    okFa: boolean;
+    okStruct: boolean;
+    okLow: boolean;
+    okSevere: boolean;
   }
+  const grid: GridRow[] = [];
+  for (const gate of ['any', 'alerted'] as const)
+    for (const high of [15, 20, 25, 30, 35, 40, 45, 50])
+      for (const low of [0, 5, 10, 15, 20])
+        for (const cut of [40, 45, 50, 56, 60]) {
+          if (low > high) continue;
+          const [w, n] = dens(high, low, gate);
+          const c: Candidate = {
+            id: `H${high}/L${low}/cut${cut}/${gate === 'any' ? 'any' : 'alt'}`,
+            label: '',
+            w,
+            cut: { caution: 31, danger: cut, severe: 76 },
+            nearby: n,
+          };
+          const e = evaluateCandidate(units, c);
+          const obsOnlyMax = obsOnlyMaxOf(w);
+          grid.push({
+            c,
+            e,
+            obsOnlyMax,
+            okFa: e.faNone <= FA_CAP,
+            okStruct: obsOnlyMax < cut,
+            okLow: e.lowAsDanger <= LOW_DANGER_CAP,
+            okSevere: e.severeCount / units.length <= SEVERE_CAP,
+          });
+        }
+  console.log(`\n  탐색 조합 ${grid.length}개`);
+
+  const gHeader =
+    `  ${'후보'.padEnd(22)} ${'AUC'.padStart(5)}  ${'재현율'.padStart(7)}  ${'오경보'.padStart(7)}  ${'정밀도'.padStart(7)}  ${'F1'.padStart(4)}  ${'F2'.padStart(4)}  ` +
+    `${'danger판정'.padStart(9)}  ${'저밀도→d'.padStart(8)}  ${'severe'.padStart(6)}  ${'관측만최대'.padStart(9)}`;
+  const gRow = (g: GridRow) =>
+    `  ${g.c.id.padEnd(22)} ${fmt(g.e.auc, 3)}  ${pct(g.e.d.recall).padStart(7)}  ${pct(g.e.faNone).padStart(7)}  ${pct(g.e.d.precision).padStart(7)}  ${fmt(g.e.d.f1, 2).padStart(4)}  ${fmt(g.e.f2, 2).padStart(4)}  ` +
+    `${pct(g.e.dangerRate).padStart(9)}  ${pct(g.e.lowAsDanger).padStart(8)}  ${String(g.e.severeCount).padStart(6)}  ${String(g.obsOnlyMax).padStart(9)}`;
+  const byF2 = (a: GridRow, b: GridRow) => b.e.f2 - a.e.f2 || b.e.auc - a.e.auc;
+
+  const feasible = grid.filter((g) => g.e.f2Defined && g.okFa && g.okStruct && g.okLow && g.okSevere).sort(byF2);
+  console.log(`\n  [제약 ①②③④ 전부 통과] ${feasible.length}개. 상위 15:`);
+  console.log(gHeader);
+  for (const g of feasible.slice(0, 15)) console.log(gRow(g));
+
+  console.log('\n  [제약을 하나씩 풀면 무엇이 올라오나 — 무엇이 병목인지 보려고]');
+  const relax = (name: string, rows: GridRow[]) => {
+    const top = rows.sort(byF2)[0];
+    console.log(`    ${name.padEnd(28)} ${top ? gRow(top).trim() : '없음'}`);
+  };
+  relax('제약 없음 (F2 최대)', grid.filter((g) => g.e.f2Defined).slice());
+  relax('②구조 제약만 품', grid.filter((g) => g.e.f2Defined && g.okFa && g.okLow && g.okSevere).slice());
+  relax('③저밀도 제약만 품', grid.filter((g) => g.e.f2Defined && g.okFa && g.okStruct && g.okSevere).slice());
+  relax('④severe 제약만 품', grid.filter((g) => g.e.f2Defined && g.okFa && g.okStruct && g.okLow).slice());
 
   // =====================================================================================
-  // 과제 E-2b: ★ NEARBY_ALERT 가중치 스윕 — 고정 구간이 강요하는 삼자택일
-  //
-  //   고정 구간(caution 31 / danger 56 / severe 76)에서 다음 셋은 **동시에 성립할 수 없다**:
-  //     (i)  NIFS 고밀도 속보 하나만으로 danger 도달  → NEARBY + 취약도 ≥ 56 → NEARBY ≥ 51
-  //     (ii) 관측(수온 등)만으로 caution 도달          → 관측 룰 합 ≥ 31
-  //     (iii) NIFS + 여름철 평범한 관측이 severe 로 튀지 않음 → 합 < 76
-  //   (i)+(ii) ⇒ 합 ≥ 56 + (31 − 5) = 82 > 76 ⇒ (iii) 위반. 산수가 그렇다.
-  //   → 셋 중 하나를 포기해야 한다. 아래 표가 그 대가를 보여준다.
+  // 과제 E-2: 컷오프 스윕 (고정 점수표에서 컷오프만 움직인다)
   // =====================================================================================
-  console.log('\n' + '-'.repeat(110));
-  console.log('【과제 E-2b】 ★ NEARBY_ALERT 스윕 (나머지 고정: TEMP_UP15 / TEMP_7D10 / PAST5 / WAVE5 / WIND5)');
-  console.log('  고정 구간이 강요하는 삼자택일: NIFS단독→danger / 관측만→caution / severe 희소  — 셋 다는 불가능하다.');
-  console.log(
-    `  ${'NEARBY'.padStart(6)}  ${'AUC'.padStart(5)}  ${'danger+재현'.padStart(10)}  ${'danger+오경보'.padStart(12)}  ${'F1'.padStart(4)}  ` +
-      `${'caution+재현'.padStart(11)}  ${'caution+오경보'.padStart(13)}  ${'severe수'.padStart(8)}  ${'severe정밀'.padStart(9)}  ${'관측만최대'.padStart(9)}`,
-  );
-  for (const nb of [30, 35, 40, 45, 50, 55, 60]) {
-    const w = weights({ NEARBY_ALERT: nb, TEMP_UP: 15, TEMP_7D_AVG: 10, PAST_OCCURRENCE: 5, WAVE_HIGH: 5, WIND_INFLOW: 5 });
-    const e = evaluateCandidate(units, { id: `N${nb}`, label: '', w, cut: PROD_CUT });
-    const obsOnly = w.TEMP_UP + w.TEMP_7D_AVG + w.WAVE_HIGH + w.WIND_INFLOW + w.CURRENT_INFLOW + w.PAST_OCCURRENCE + w.BEACH_VULNERABILITY;
-    const mark = nb === 40 ? '  ← 채택' : nb >= 51 ? '  (NIFS 단독 danger, 대신 severe 폭발)' : '';
+  console.log('\n' + '-'.repeat(120));
+  console.log('【과제 E-2】 danger 컷오프 스윕');
+  for (const [label, w, n] of [
+    ['(a) v2 현행 (건수)', V2_W, COUNT],
+    ['(b) 밀도 고40/저5', ...dens(40, 5, 'any')],
+    ['(b2) 밀도 고25/저5', ...dens(25, 5, 'any')],
+    ['(b3) 밀도 고40/저10', ...dens(40, 10, 'any')],
+  ] as [string, Weights, NearbyMode][]) {
     console.log(
-      `  ${String(nb).padStart(6)}  ${fmt(e.auc, 3)}  ${pct(e.d.recall).padStart(10)}  ${pct(e.faNone).padStart(12)}  ${fmt(e.d.f1, 2).padStart(4)}  ` +
-        `${pct(e.c.recall).padStart(11)}  ${pct(e.faNoneCaution).padStart(13)}  ${String(e.severeCount).padStart(8)}  ${pct(e.severePrecision).padStart(9)}  ${String(obsOnly).padStart(9)}${mark}`,
+      `\n  [${label}]  ${'컷오프'.padStart(5)}  ${'재현율'.padStart(7)}  ${'오경보'.padStart(7)}  ${'F1'.padStart(5)}  ${'F2'.padStart(5)}  ${'danger판정'.padStart(9)}  ${'저밀도→d'.padStart(8)}  ${'severe'.padStart(6)}`,
     );
-  }
-  console.log('  * severe = 대응 권고상 "구역 폐쇄 검토 / 입수 통제". 136주 중 18주(13%)가 severe 면 아무도 안 믿는다.');
-  console.log('  * 베이스라인(직전주 NIFS 복사) danger+ 재현율 69.2% / F1 0.72 — NEARBY≥51 이어야 이 값에 닿는다.');
-
-  // =====================================================================================
-  // 과제 E-3: 도달 가능성 — "NIFS 신호 없이 danger 가 뜨는가?" (경보 피로 구조 점검)
-  // =====================================================================================
-  console.log('\n' + '-'.repeat(110));
-  console.log('【과제 E-3】 구조 점검 — 각 후보에서 관측만으로 도달 가능한 최대 점수');
-  console.log('  (제보 0건 가정. "NIFS 없이" = NEARBY_ALERT 미발화 상태에서 모든 관측 룰이 동시에 켜진 최악의 날)');
-  for (const c of candidates) {
-    const w = c.w;
-    const obsOnly = w.TEMP_UP + w.TEMP_7D_AVG + w.WAVE_HIGH + w.WIND_INFLOW + w.CURRENT_INFLOW + w.PAST_OCCURRENCE + w.BEACH_VULNERABILITY;
-    const withNearby = obsOnly + w.NEARBY_ALERT;
-    const lvl = (s: number) => ['safe', 'caution', 'danger', 'severe'][levelRankOf(Math.min(100, s), c.cut)];
-    console.log(
-      `  ${c.id.padEnd(14)} NIFS 없이 최대 ${String(obsOnly).padStart(3)} (${lvl(obsOnly)})   NIFS 포함 최대 ${String(withNearby).padStart(3)} (${lvl(withNearby)})`,
-    );
-  }
-  console.log('  * CURRENT_INFLOW 는 백테스트 전 기간 결측이지만 프로덕션(중문 KHOA)에서는 켜질 수 있다 → 최대치 계산에 포함.');
-
-  // =====================================================================================
-  // 과제 E-4: 단계 구간을 옮길 수 있다면? (src 수정이 필요한 시나리오 — 이번 작업 범위 밖)
-  // =====================================================================================
-  console.log('\n' + '-'.repeat(110));
-  console.log('【과제 E-4】 danger 컷오프 스윕 — 구간을 옮기면 더 나아지는가? (src/shared/kernel/risk-level.ts 수정 필요)');
-  for (const c of candidates.filter((x) => ['(a) v1', '(c) v2-drop', '(d) v2-keep5'].includes(x.id))) {
-    console.log(`\n  [${c.id}]  ${'컷오프'.padStart(5)}  ${'재현율'.padStart(7)}  ${'오경보율'.padStart(8)}  ${'F1'.padStart(5)}  ${'F2'.padStart(5)}`);
-    for (const cut of [25, 30, 35, 40, 45, 50, 56, 60, 65]) {
-      const e = evaluateCandidate(units, { ...c, cut: { ...PROD_CUT, danger: cut } });
-      const mark = cut === 56 ? '  ← 현행(고정)' : '';
+    for (const cut of [35, 40, 45, 50, 56, 60, 65]) {
+      const e = evaluateCandidate(units, { id: '', label: '', w, nearby: n, cut: { caution: 31, danger: cut, severe: 76 } });
+      const mark = cut === 45 ? '  ← 현재 배포' : cut === 56 ? '  ← v2 문서 시절' : '';
       console.log(
-        `            ${String(cut).padStart(5)}  ${pct(e.d.recall).padStart(7)}  ${pct(e.faNone).padStart(8)}  ${fmt(e.d.f1, 2).padStart(5)}  ${fmt(e.f2, 2).padStart(5)}${mark}`,
+        `${' '.repeat(label.length + 5)}${String(cut).padStart(5)}  ${pct(e.d.recall).padStart(7)}  ${pct(e.faNone).padStart(7)}  ${fmt(e.d.f1, 2).padStart(5)}  ${fmt(e.f2, 2).padStart(5)}  ${pct(e.dangerRate).padStart(9)}  ${pct(e.lowAsDanger).padStart(8)}  ${String(e.severeCount).padStart(6)}${mark}`,
       );
     }
+  }
+
+  // =====================================================================================
+  // 과제 E-3: 구조 점검 — 관측만으로 danger 가 뜨는가?
+  // =====================================================================================
+  console.log('\n' + '-'.repeat(120));
+  console.log('【과제 E-3】 구조 점검 — 각 후보에서 "해파리 근거 0" 인 날 도달 가능한 최대 점수');
+  console.log('  (제보 0건. NIFS 출현도 없음. 관측 룰이 전부 동시에 켜진 최악의 여름날)');
+  const lvlName = (s: number, cut: Cutoffs) => ['안전', '주의', '위험', '심각'][levelRankOf(Math.min(100, s), cut)];
+  for (const c of candidates) {
+    const obs = obsOnlyMaxOf(c.w);
+    const high = c.nearby.kind === 'density' ? c.nearby.high : c.nearby.kind === 'count' ? c.w.NEARBY_ALERT : c.nearby.warning;
+    const low = c.nearby.kind === 'density' ? c.nearby.low : c.nearby.kind === 'count' ? c.w.NEARBY_ALERT : c.nearby.attention;
+    console.log(
+      `  ${c.id.padEnd(18)} 관측만 ${String(obs).padStart(3)}(${lvlName(obs, c.cut)})` +
+        `  │ 저밀도+취약도만 ${String(low + c.w.BEACH_VULNERABILITY).padStart(3)}(${lvlName(low + c.w.BEACH_VULNERABILITY, c.cut)})` +
+        `  고밀도+취약도만 ${String(high + c.w.BEACH_VULNERABILITY).padStart(3)}(${lvlName(high + c.w.BEACH_VULNERABILITY, c.cut)})` +
+        `  │ 고밀도+관측전부 ${String(Math.min(100, high + obs)).padStart(3)}(${lvlName(high + obs, c.cut)})`,
+    );
+  }
+  console.log('  * CURRENT_INFLOW 는 백테스트 전 기간 결측이지만 프로덕션(중문 KHOA)에서는 켜질 수 있다 → 최대치에 포함.');
+
+  // =====================================================================================
+  // 과제 E-4: 짝지은 부트스트랩 — 밀도 반영이 정말 나아진 건가, 표본 흔들림인가?
+  // =====================================================================================
+  console.log('\n' + '-'.repeat(120));
+  console.log('【과제 E-4】 짝지은 부트스트랩 3000회 — 차이의 95% CI (0 을 포함하면 "구별 못 한다")');
+  const byId = (id: string) => candidates.find((c) => c.id === id)!;
+  for (const [a, b] of [
+    ['(b) v3 밀도@45', '(a) v2 배포중'],
+    ['(b) v3 밀도@45', '(c) v3 밀도@56'],
+    ['(b) v3 밀도@45', '(b2) 고25/저5@45'],
+    ['(b) v3 밀도@45', '(b3) 고40/저10@45'],
+    ['(b) v3 밀도@45', '(d) 특보게이트'],
+    ['(b) v3 밀도@45', '(e) 저밀도 0점'],
+    ['(b) v3 밀도@45', '(g) 종수보너스'],
+    ['(b) v3 밀도@45', '(f) 경보등급'],
+    ['(b) v3 밀도@45', '(h) +구조복원'],
+    ['(i) v3+최소주의', '(b) v3 밀도@45'],
+    ['(i) v3+최소주의', '(a) v2 배포중'],
+  ] as [string, string][]) {
+    const bs = bootstrapDiff(units, byId(a), byId(b));
+    console.log(
+      `  ${a.padEnd(18)} − ${b.padEnd(18)}: ΔAUC ${fmt(bs.aucMean, 4).padStart(7)} CI[${fmt(bs.auc[0], 3)}, ${fmt(bs.auc[1], 3)}]  ` +
+        `Δ재현율 CI[${pct(bs.recall[0]).padStart(6)}, ${pct(bs.recall[1]).padStart(6)}]  Δ오경보율 CI[${pct(bs.faNone[0]).padStart(6)}, ${pct(bs.faNone[1]).padStart(6)}]`,
+    );
   }
 
   // =====================================================================================
@@ -1556,70 +1842,91 @@ async function main(): Promise<void> {
   // =====================================================================================
   const test = units.filter((u) => u.endDay >= '2026-01-01');
   const train = units.filter((u) => u.endDay < '2026-01-01');
-  console.log('\n' + '-'.repeat(110));
-  console.log(`【과제 E-5】 시간 분할 (학습기간 ${train.length} / 2026 홀드아웃 ${test.length}, 고밀도 ${test.filter((u) => u.density === 'high').length})`);
+  console.log('\n' + '-'.repeat(120));
+  console.log(`【과제 E-5】 시간 분할 (학습 ${train.length} / 2026 홀드아웃 ${test.length}, 고밀도 ${test.filter((u) => u.density === 'high').length})`);
   if (test.length > 0 && test.some((u) => u.density === 'high') && test.some((u) => u.density !== 'high')) {
     const tHigh = test.map((u) => u.density === 'high');
     for (const c of candidates) {
       const e = evaluateCandidate(test, c);
-      console.log(`  ${c.id.padEnd(14)} 2026 AUC ${fmt(e.auc, 3)}  재현율 ${pct(e.d.recall).padStart(6)}  오경보율 ${pct(e.faNone).padStart(6)}`);
+      console.log(`  ${c.id.padEnd(18)} 2026 AUC ${fmt(e.auc, 3)}  재현율 ${pct(e.d.recall).padStart(6)}  오경보율 ${pct(e.faNone).padStart(6)}  danger판정 ${pct(e.dangerRate).padStart(6)}`);
     }
-    console.log(`  ${'(b) 베이스라인'.padEnd(14)} 2026 AUC ${fmt(auc(test.map((u) => u.nearbyAlertCount), tHigh), 3)}`);
+    console.log(`  ${'(B) 베이스라인'.padEnd(18)} 2026 AUC ${fmt(auc(test.map((u) => u.nearbyAlertCount), tHigh), 3)}`);
     console.log('  ⚠️ 표본 20개(고밀도 3개). 신뢰구간이 표 전체를 덮는다 — 순위를 논할 수준이 아니다.');
-    console.log('  ⚠️ v2 가중치는 전체 표본의 룰 분석에서 나왔다 → 이 홀드아웃은 깨끗한 검증이 아니다.');
   } else {
     console.log('  홀드아웃에 양성/음성이 모두 있지 않다 — 결론 없음');
   }
 
   // =====================================================================================
-  // 과제 E-6: 최종 v2 확정판 — seed.ts 에 넣을 값 그대로
+  // 과제 E-6: 최종안 상세 + 실제 사례 재현(제주시 고밀도 주 vs 서귀포시 저밀도 주)
   // =====================================================================================
-  console.log('\n' + '='.repeat(110));
-  const FINAL: Candidate = {
-    id: 'v2 (최종)',
-    label: 'seed.ts seedRiskRules() v2 — NEARBY40 / TEMP_UP15 / TEMP_7D10 / PAST5 / WAVE5 / WIND5 / CURRENT10 / VULN5',
-    w: weights({
-      NEARBY_ALERT: 40,
-      TEMP_UP: 15,
-      TEMP_7D_AVG: 10,
-      PAST_OCCURRENCE: 5,
-      WAVE_HIGH: 5,
-      WIND_INFLOW: 5,
-      CURRENT_INFLOW: 10,
-      BEACH_VULNERABILITY: 5,
-    }),
-    cut: PROD_CUT,
-  };
-  const fe = evaluateCandidate(units, FINAL);
-  console.log('【최종 v2】 ' + FINAL.label);
+  console.log('\n' + '='.repeat(120));
+  const FINAL = byId('(i) v3+최소주의');
+  const fe = evals.get(FINAL.id)!;
+  console.log('【최종안】 ' + FINAL.label);
   console.log(candidateLine(FINAL, fe));
+  console.log(discriminationLine(FINAL, fe));
   console.log('  ' + metricsLine('danger 이상 (고밀도 탐지)', fe.d));
   console.log('  ' + metricsLine('caution 이상 (고밀도 탐지)', fe.c));
-  console.log(`  출현 없는 주(n=${nNone}) 오경보율: danger+ ${pct(fe.faNone)} / caution+ ${pct(fe.faNoneCaution)}`);
   console.log(`  severe: ${fe.severeCount}건 (${pct(fe.severeCount / units.length)}), 그중 실제 고밀도 ${pct(fe.severePrecision)}`);
 
-  // ★ 안전 서비스의 진짜 놓침: 고밀도 출현 주에 **아무 경고도 못 준** 경우
-  const v1c = candidates[0];
-  const e1 = evals.get('(a) v1')!;
-  const eDrop = evals.get('(c) v2-drop')!;
   console.log('\n  ★ 진짜 놓침 = 고밀도 출현 주인데 "안전(safe)" 이라고 답한 수 (경고 0)');
-  console.log(`     v1          ${nHigh - e1.c.tp}건 / ${nHigh}`);
-  console.log(`     v2-drop     ${nHigh - eDrop.c.tp}건 / ${nHigh}`);
-  console.log(`     v2 (최종)   ${nHigh - fe.c.tp}건 / ${nHigh}`);
-  console.log(`     베이스라인   ${nHigh - baseM.tp}건 / ${nHigh}  (2단계뿐 — 경보 아니면 무언(無言))`);
-
-  const bsFinalV1 = bootstrapDiff(units, FINAL, v1c);
-  const bsFinalDrop = bootstrapDiff(units, FINAL, cDrop);
-  console.log(`\n  [부트스트랩] v2 − v1      : ΔAUC ${fmt(bsFinalV1.aucMean, 3)} CI[${fmt(bsFinalV1.auc[0], 3)}, ${fmt(bsFinalV1.auc[1], 3)}]  Δdanger+재현율 CI[${pct(bsFinalV1.recall[0])}, ${pct(bsFinalV1.recall[1])}]`);
-  console.log(`  [부트스트랩] v2 − v2-drop : ΔAUC ${fmt(bsFinalDrop.aucMean, 4)} CI[${fmt(bsFinalDrop.auc[0], 3)}, ${fmt(bsFinalDrop.auc[1], 3)}]  Δdanger+오경보율 CI[${pct(bsFinalDrop.faNone[0])}, ${pct(bsFinalDrop.faNone[1])}]`);
-  {
-    const te = test.length > 0 && test.some((u) => u.density === 'high') ? evaluateCandidate(test, FINAL) : null;
-    if (te) console.log(`  2026 홀드아웃: AUC ${fmt(te.auc, 3)}  danger+재현율 ${pct(te.d.recall)}  오경보율 ${pct(te.faNone)}  (n=${test.length}, 고밀도 ${test.filter((u) => u.density === 'high').length})`);
+  for (const c of candidates) {
+    const e = evals.get(c.id)!;
+    console.log(`     ${c.id.padEnd(18)} ${String(nHigh - e.c.tp).padStart(2)}건 / ${nHigh}`);
   }
-  console.log('\n  ⚠️ 위 수치는 전부 **in-sample** 이다. 같은 136개 표본에서 가중치를 골랐다.');
-  console.log('  ⚠️ danger+ 재현율(57.7%)은 무지성 베이스라인(69.2%)보다 **낮다**. 고정 구간이 강요한 대가다(E-2b).');
-  console.log('     v2 가 베이스라인을 이기는 지점은 ① 순위(AUC 0.875 vs 0.823) ② 경고 도달률(caution+ 84.6% vs 69.2%)');
-  console.log('     ③ 베이스라인이 아예 못 하는 것(해변별 차이 / 시민 제보 / 24h·72h 예보) 이다.');
+  console.log(`     ${'(B) 베이스라인'.padEnd(18)} ${String(nHigh - baseM.tp).padStart(2)}건 / ${nHigh}  (2단계뿐 — 경보 아니면 무언(無言))`);
+
+  // ---- 교차표 (최종안)
+  console.log('\n  【교차표 — 최종안】 행=예측 단계, 열=실제 출현');
+  {
+    const scoresF = units.map((u) => unitScore(u, FINAL));
+    const ranksF = scoresF.map((s, i) =>
+      Math.max(
+        levelRankOf(s, FINAL.cut),
+        FINAL.minNearbyCaution && units[i].nearby.density !== 'none' ? 1 : 0,
+      ),
+    );
+    console.log('             없음   저밀도  고밀도 |  합계');
+    for (let r = 0; r <= 3; r += 1) {
+      const idx = units.map((_, i) => i).filter((i) => ranksF[i] === r);
+      const cnt = (d0: string) => idx.filter((i) => units[i].density === d0).length;
+      console.log(
+        `  ${['safe', 'caution', 'danger', 'severe'][r].padEnd(8)} ${String(cnt('none')).padStart(5)} ${String(cnt('low')).padStart(7)} ${String(cnt('high')).padStart(7)} | ${String(idx.length).padStart(5)}`,
+      );
+    }
+    console.log(`  ${'합계'.padEnd(7)} ${String(nNone).padStart(5)} ${String(nLow).padStart(7)} ${String(nHigh).padStart(7)} | ${String(units.length).padStart(5)}`);
+  }
+
+  // ---- ★ 지금 이 순간의 실제 사례 재현: 최근 주 해변별 점수
+  console.log('\n  ★ [현재 상황 재현] 최근 주간보고 기준 — 밀도 반영 전/후 해변별 점수');
+  {
+    const last = reports[reports.length - 1];
+    const prevLast = reports[reports.length - 2];
+    console.log(
+      `  기준: ${last.endDay} 산출 (입력 = 직전 보고 ${prevLast.endDay}: 제주시 ${prevLast.density.제주시}(${prevLast.topSpecies.제주시.join(',') || '-'}) / 서귀포시 ${prevLast.density.서귀포시}(${prevLast.topSpecies.서귀포시.join(',') || '-'}), 특보 ${prevLast.advisory ?? '미발표'})`,
+    );
+    const rows = preds.filter((p) => p.endDay === last.endDay);
+    console.log(`  ${'해변'.padEnd(12)} ${'시군구'.padEnd(5)} ${'직전밀도'.padEnd(5)}  ${'v2(건수)'.padStart(12)}  ${'최종안(밀도)'.padStart(14)}   발화 요인(관측)`);
+    for (const p of rows) {
+      const n: NearbyRaw = { density: p.nearbyDensity, alertRank: p.nearbyAlertRank, alertCount: p.nearbySpecies.length };
+      const before = clamp100(scoreOfFired(p.firedBase, V2_W) + nearbyScore(n, V2_W, COUNT));
+      const after = clamp100(scoreOfFired(p.firedBase, FINAL.w) + nearbyScore(n, FINAL.w, FINAL.nearby));
+      const lvB = lvlName(before, PROD_CUT);
+      // 최소 단계 보장(RISK-002)을 반영한 단계 — 점수만으로 읽으면 화면과 달라진다.
+      const rankA = Math.max(
+        levelRankOf(after, FINAL.cut),
+        FINAL.minNearbyCaution && n.density !== 'none' ? 1 : 0,
+      );
+      const lvA = ['안전', '주의', '위험', '심각'][rankA];
+      console.log(
+        `  ${p.beachName.padEnd(12)} ${p.region.padEnd(5)} ${p.nearbyDensity.padEnd(7)}  ${String(before).padStart(4)}점 ${lvB.padEnd(3)}  →  ${String(after).padStart(4)}점 ${lvA.padEnd(3)}   ${p.firedBase.join(' ')}`,
+      );
+    }
+  }
+
+  console.log('\n  ⚠️ 위 수치는 전부 **in-sample** 이다. 같은 136개 표본에서 밀도 점수와 컷오프를 골랐다.');
+  console.log('  ⚠️ 해변 **내부** 변별력(협재 vs 함덕)은 여전히 검증 불가다 — 정답이 시군구 단위라서.');
+  console.log('     이번 개정이 검증한 변별력은 **시군구 간**(제주시 고밀도 vs 서귀포시 저밀도) 이다.');
 
   // ---- 제보 룰
   console.log('\n【검증 불가】');

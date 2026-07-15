@@ -3,7 +3,9 @@ import { sql } from 'kysely';
 import { KyselyService } from '@shared/persistence/kysely/kysely.service';
 import { Id } from '@shared/kernel/id';
 import {
+  NearbyAlertInput,
   ObservationInput,
+  pickHighestDensity,
   RiskInputBundle,
   VerifiedReportInput,
 } from '../../../domain/risk-assessment';
@@ -146,14 +148,14 @@ export class RiskInputKyselyQuery implements RiskInputPort {
       .map((r) => numOrNull(r.waterTemp))
       .filter((n): n is number => n !== null);
 
-    // 인근 해역 속보 / 과거 동일 시기 이력.
-    // 좌표가 있는 출현은 반경으로, 좌표가 없는 출현(NIFS 광역 주간보고)은 시군구 일치로 센다.
-    // 좌표가 없는 해변(이론상 없음)은 거리 계산이 불가능하므로 0 으로 둔다 — 없는 근거를 지어내지 않는다.
-    const [nearbyAlertCount, pastOccurrenceCount] =
+    // 인근 해역 출현 / 과거 동일 시기 이력.
+    // 좌표가 있는 출현은 반경으로, 좌표가 없는 출현(NIFS 광역 주간보고)은 시군구 일치로 본다.
+    // 좌표가 없는 해변(이론상 없음)은 거리 계산이 불가능하므로 비운다 — 없는 근거를 지어내지 않는다.
+    const [nearbyAlert, pastOccurrenceCount] =
       beachLat === null || beachLng === null
-        ? [0, 0]
+        ? [null, 0]
         : await Promise.all([
-            this.countNearbyAlerts(
+            this.findNearbyAlert(
               beachLat,
               beachLng,
               options.nearbyRadiusKm,
@@ -203,7 +205,7 @@ export class RiskInputKyselyQuery implements RiskInputPort {
       latestObservation,
       weekAvgWaterTemp,
       recentWaterTemps,
-      nearbyAlertCount,
+      nearbyAlert,
       pastOccurrenceCount,
       verifiedReports,
       observationAgeMinutes,
@@ -244,26 +246,69 @@ export class RiskInputKyselyQuery implements RiskInputPort {
   }
 
   /**
-   * NEARBY_ALERT: 해변 반경 N km 안에서 최근 윈도우 내에 뜬 경보성 출현 건수.
+   * NEARBY_ALERT_*: 해변 '인근'의 최근 출현을 **밀도로 요약**한다.
    *
-   * 좌표가 없는 출현 행은 제외한다(거리를 알 수 없는 건 '인근'이라고 말할 수 없다).
+   * ── 무엇이 바뀌었나 (v3) ────────────────────────────────────────────────────────────
+   * 예전에는 여기서 **건수만 세서**(`COUNT(*)`) 도메인에 `nearbyAlertCount: number` 를 넘겼고,
+   * 도메인은 `count > 0` 이면 밀도와 무관하게 +40 을 줬다. 두 가지가 잘못이었다.
+   *
+   *  1. **건수는 위험의 강도가 아니다.** NIFS 주간보고는 `종 × 시군구` 마다 한 행을 만든다
+   *     (nifs-report.parser.ts). 그래서 '제주시 3건' 은 해파리가 세 배 많다는 뜻이 아니라
+   *     **그 주에 제주시가 세 종으로 적혔다**는 뜻이다. 종 하나가 초대량 출현한 주가 더 위험할 수 있다.
+   *  2. **밀도를 버렸다.** NIFS 는 시군구별로 고/저밀도를 구분해 발표하고 우리는 그걸 이미
+   *     `density_level` 로 파싱해 저장하고 있었다. 위험도 산출만 그 컬럼을 안 읽었다.
+   *     결과: 제주 12개 해변이 고밀도든 저밀도든 전부 같은 +40 을 받아 **전부 danger** 로 나왔다.
+   *
+   * → 창 안에서 **가장 높은 밀도**를 골라 등급(HIGH/MEDIUM/LOW)만 넘긴다. 건수는 진단용으로만 싣는다.
+   *   합산하지 않는 이유는 도메인 NearbyAlertInput 주석에 적었다(합산 = 건수 방식의 부활).
+   *
+   * ── alert_level 필터를 왜 뺐나 ──────────────────────────────────────────────────────
+   * 예전 쿼리는 `alert_level IN ('attention','caution','warning')` 로 걸렀다. 그런데 alert_level 은
+   * `resolveAlertLevel(NIFS 특보단계, 밀도)` 의 합성값이라(nifs-report.parser.ts),
+   * **특보가 발표되지 않은 주의 저밀도 출현은 alert_level='none'** 이 되어 통째로 버려졌다.
+   * NIFS 특보는 광역 행정 조치라 관측보다 늦게(또는 아예 안) 나온다. "저밀도 출현을 확인했다"는
+   * 관측 사실을 행정 절차가 검열하게 두는 셈이다.
+   *
+   * → 밀도가 기록된 출현은 **특보 유무와 무관하게** 근거로 삼는다. 대신 저밀도의 점수를 낮게 준다
+   *   (v3: 고밀도 25 / 저밀도 5). 백테스트에서 특보 게이트를 유지한 변형(후보 d)과 비교했고,
+   *   게이트를 빼는 쪽이 고밀도 탐지 재현율을 손해 없이 올렸다 — docs/risk-rules-v3.md §2.
+   *
    * ST_Distance_Sphere 는 미터를 반환한다(MySQL 8, 구면 거리).
    */
-  private async countNearbyAlerts(
+  private async findNearbyAlert(
     lat: number,
     lng: number,
     radiusKm: number,
     region: string,
     since: Date,
-  ): Promise<number> {
-    const row = await this.db
+  ): Promise<NearbyAlertInput | null> {
+    const rows = await this.db
       .selectFrom('jellyfish_occurrences as j')
       .where('j.occurred_at', '>=', since)
-      .where('j.alert_level', 'in', ['attention', 'caution', 'warning'])
+      .where('j.density_level', 'in', ['high', 'medium', 'low'])
       .where(nearBeach(lat, lng, radiusKm, region))
-      .select((eb) => eb.fn.countAll<number>().as('cnt'))
-      .executeTakeFirst();
-    return Number(row?.cnt ?? 0);
+      .select([
+        'j.density_level as densityLevel',
+        'j.species as species',
+        'j.region as region',
+      ])
+      .execute();
+
+    if (rows.length === 0) return null;
+
+    const densityLevel = pickHighestDensity(rows.map((r) => r.densityLevel));
+    if (densityLevel === null) return null; // 방어: WHERE 가 걸렀지만 도메인 판정을 유일한 진실로 둔다
+
+    // 최고 밀도로 출현한 기록만 문구·건수의 근거로 삼는다.
+    const top = rows.filter((r) => r.densityLevel === densityLevel);
+
+    return {
+      densityLevel,
+      species: [...new Set(top.map((r) => r.species).filter((s): s is string => !!s && s.trim() !== ''))],
+      // 좌표 매칭분이 섞이면 region 이 여럿일 수 있다 — 해변의 시군구와 같은 것을 우선한다.
+      region: top.some((r) => r.region === region) ? region : (top[0].region ?? null),
+      count: top.length,
+    };
   }
 
   /**
