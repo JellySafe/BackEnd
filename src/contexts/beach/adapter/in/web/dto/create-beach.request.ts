@@ -11,7 +11,7 @@ import {
 
 /**
  * ADM-005 POST /admin/beaches 요청.
- * 물리적 범위(위경도/방위/취약도)는 도메인(Beach)에서도 재검증한다.
+ * 물리적 범위(위경도/방위)는 도메인(Beach)에서도 재검증한다.
  */
 export class CreateBeachRequest {
   @ApiProperty({
@@ -77,18 +77,6 @@ export class CreateBeachRequest {
   @IsInt()
   @Min(0)
   priority?: number;
-
-  @ApiPropertyOptional({
-    example: 15,
-    minimum: 0,
-    maximum: 100,
-    description: '해변 자체의 취약도 가산점(0~100). 위험도 산출 시 기본 점수로 더해진다.',
-  })
-  @IsOptional()
-  @IsInt()
-  @Min(0)
-  @Max(100)
-  vulnerabilityScore?: number;
 
   @ApiPropertyOptional({
     example: 'https://cdn.example.com/beaches/hyeopjae.jpg',

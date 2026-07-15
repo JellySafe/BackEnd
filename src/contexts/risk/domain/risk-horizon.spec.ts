@@ -37,12 +37,6 @@ describe('applyHorizon', () => {
     expect(h72).toBeGreaterThan(0); // 완전히 사라지지는 않는다
   });
 
-  it('취약도는 지형 상수라 지평에 관계없이 불변이다', () => {
-    for (const h of ['now', '24h', '72h'] as const) {
-      expect(applyHorizon([f('BEACH_VULNERABILITY', 5)], h)[0].delta).toBe(5);
-    }
-  });
-
   it('지평을 되풀이하지 않고, 그 요인이 시간에 따라 어떻게 작용하는지만 덧붙인다', () => {
     // 화면이 이미 "24시간 후" 탭으로 지평을 말하고 있다. 원인마다 또 "(24시간 후 예상)" 을
     // 붙이면 모든 줄이 같은 접미사를 달아 지평별 차이가 묻힌다.
@@ -55,13 +49,10 @@ describe('applyHorizon', () => {
 
   it('시간이 지나도 그대로인 근거에는 아무 말도 덧붙이지 않는다', () => {
     // "과거 출현 기록 3건 (72시간 후 예상)" 같은 문장은 성립하지 않는다.
-    // 과거 기록과 취약도는 예측 대상이 아니라 불변 사실이다.
+    // 과거 기록은 예측 대상이 아니라 불변 사실이다.
     for (const h of ['now', '24h', '72h'] as const) {
       expect(applyHorizon([f('PAST_OCCURRENCE', 15, '과거 출현 기록 3건')], h)[0].detail).toBe(
         '과거 출현 기록 3건',
-      );
-      expect(applyHorizon([f('BEACH_VULNERABILITY', 5, '취약도 지수 10')], h)[0].detail).toBe(
-        '취약도 지수 10',
       );
     }
   });
@@ -101,7 +92,6 @@ describe('지평별 산출 통합 — 회귀 방지', () => {
     f('WAVE_HIGH', 10, '파고 1.8m'),
     f('WIND_INFLOW', 10, '풍속 6.0m/s'),
     f('NEARBY_ALERT', 15, '인근 해역 속보 3건'),
-    f('BEACH_VULNERABILITY', 15, '취약도 지수 15'),
   ];
   const reportWeights = [f('REPORT_TOXIC', 25, '독성 의심 제보 1건')];
   const minLevelTriggers: MinLevelTrigger[] = [{ ruleCode: 'MIN_TOXIC_1', level: 'caution' }];

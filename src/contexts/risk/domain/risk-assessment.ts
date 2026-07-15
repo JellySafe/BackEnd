@@ -33,7 +33,6 @@ export interface BeachRiskInput {
   beachId: Id;
   region: string;
   facingDirection: number | null; // 해변이 바다를 향한 방향(0~359)
-  vulnerabilityScore: number;
 }
 
 /** 확인완료(verified/reflected) 제보 요약. */
@@ -244,11 +243,6 @@ export function evaluateRiskVariables(
         describeNearbyAlert(bundle.nearbyAlert),
       ),
     );
-  }
-
-  // BEACH_VULNERABILITY: 해수욕장 취약도(마스터 값)
-  if (bundle.beach.vulnerabilityScore > 0) {
-    factors.push(mkVariable('BEACH_VULNERABILITY', ruleScore, `취약도 지수 ${bundle.beach.vulnerabilityScore}`));
   }
 
   return { factors, missing };

@@ -29,7 +29,6 @@ export class UpdateBeachService implements UpdateBeachUseCase {
       lng: command.lng,
       facingDirection: command.facingDirection,
       priority: command.priority,
-      vulnerabilityScore: command.vulnerabilityScore,
       imageUrl: command.imageUrl,
       isActive: command.isActive,
     });

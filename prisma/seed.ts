@@ -65,22 +65,22 @@ async function seedTestUser() {
 async function seedBeaches() {
   // 제주특별자치도 지정 해수욕장 12곳 (제주시 8, 서귀포시 4).
   // priority 1~5 는 기능정의서상 MVP 1순위(협재/함덕/이호테우/중문/표선), 6~12 는 나머지 지정 해변.
-  // 좌표/방위각/취약도는 초기값이며 실운영 전 PM 확정 대상이다.
+  // 좌표/방위각은 초기값이며 실운영 전 PM 확정 대상이다.
   const beaches = [
     // --- MVP 1순위 5곳 ---
-    { name: '협재해수욕장', region: '제주시', lat: 33.3941, lng: 126.2396, facingDirection: 315, priority: 1, vulnerabilityScore: 15 },
-    { name: '함덕해수욕장', region: '제주시', lat: 33.5432, lng: 126.6698, facingDirection: 0, priority: 2, vulnerabilityScore: 20 },
-    { name: '이호테우해수욕장', region: '제주시', lat: 33.4986, lng: 126.4525, facingDirection: 340, priority: 3, vulnerabilityScore: 10 },
-    { name: '중문색달해수욕장', region: '서귀포시', lat: 33.2447, lng: 126.4103, facingDirection: 180, priority: 4, vulnerabilityScore: 10 },
-    { name: '표선해수욕장', region: '서귀포시', lat: 33.3262, lng: 126.8339, facingDirection: 135, priority: 5, vulnerabilityScore: 5 },
+    { name: '협재해수욕장', region: '제주시', lat: 33.3941, lng: 126.2396, facingDirection: 315, priority: 1 },
+    { name: '함덕해수욕장', region: '제주시', lat: 33.5432, lng: 126.6698, facingDirection: 0, priority: 2 },
+    { name: '이호테우해수욕장', region: '제주시', lat: 33.4986, lng: 126.4525, facingDirection: 340, priority: 3 },
+    { name: '중문색달해수욕장', region: '서귀포시', lat: 33.2447, lng: 126.4103, facingDirection: 180, priority: 4 },
+    { name: '표선해수욕장', region: '서귀포시', lat: 33.3262, lng: 126.8339, facingDirection: 135, priority: 5 },
     // --- 나머지 제주 지정 해수욕장 7곳 ---
-    { name: '곽지과물해수욕장', region: '제주시', lat: 33.4514, lng: 126.3050, facingDirection: 340, priority: 6, vulnerabilityScore: 10 },
-    { name: '금능으뜸원해수욕장', region: '제주시', lat: 33.3889, lng: 126.2372, facingDirection: 315, priority: 7, vulnerabilityScore: 10 },
-    { name: '삼양검은모래해수욕장', region: '제주시', lat: 33.5183, lng: 126.5972, facingDirection: 0, priority: 8, vulnerabilityScore: 10 },
-    { name: '김녕성세기해수욕장', region: '제주시', lat: 33.5588, lng: 126.7566, facingDirection: 0, priority: 9, vulnerabilityScore: 5 },
-    { name: '월정리해수욕장', region: '제주시', lat: 33.5563, lng: 126.7955, facingDirection: 0, priority: 10, vulnerabilityScore: 5 },
-    { name: '화순금모래해수욕장', region: '서귀포시', lat: 33.2419, lng: 126.3389, facingDirection: 200, priority: 11, vulnerabilityScore: 5 },
-    { name: '신양섭지해수욕장', region: '서귀포시', lat: 33.4351, lng: 126.9130, facingDirection: 90, priority: 12, vulnerabilityScore: 5 },
+    { name: '곽지과물해수욕장', region: '제주시', lat: 33.4514, lng: 126.3050, facingDirection: 340, priority: 6 },
+    { name: '금능으뜸원해수욕장', region: '제주시', lat: 33.3889, lng: 126.2372, facingDirection: 315, priority: 7 },
+    { name: '삼양검은모래해수욕장', region: '제주시', lat: 33.5183, lng: 126.5972, facingDirection: 0, priority: 8 },
+    { name: '김녕성세기해수욕장', region: '제주시', lat: 33.5588, lng: 126.7566, facingDirection: 0, priority: 9 },
+    { name: '월정리해수욕장', region: '제주시', lat: 33.5563, lng: 126.7955, facingDirection: 0, priority: 10 },
+    { name: '화순금모래해수욕장', region: '서귀포시', lat: 33.2419, lng: 126.3389, facingDirection: 200, priority: 11 },
+    { name: '신양섭지해수욕장', region: '서귀포시', lat: 33.4351, lng: 126.9130, facingDirection: 90, priority: 12 },
   ];
   for (const b of beaches) {
     await prisma.beach.upsert({ where: { name: b.name }, update: {}, create: b });
@@ -118,7 +118,6 @@ const RULES_V1: Rule[] = [
   { ruleCode: 'NEARBY_ALERT_HIGH', ruleCategory: 'risk_variable', ruleName: '인근 해역 고밀도 출현 (v1: 밀도 무관 15)', score: 15, conditionJson: { radius_km: 30 } },
   { ruleCode: 'NEARBY_ALERT_MEDIUM', ruleCategory: 'risk_variable', ruleName: '인근 해역 중밀도 출현 (v1: 밀도 무관 15)', score: 15, conditionJson: { radius_km: 30 } },
   { ruleCode: 'NEARBY_ALERT_LOW', ruleCategory: 'risk_variable', ruleName: '인근 해역 저밀도 출현 (v1: 밀도 무관 15)', score: 15, conditionJson: { radius_km: 30 } },
-  { ruleCode: 'BEACH_VULNERABILITY', ruleCategory: 'risk_variable', ruleName: '해수욕장 취약도', score: 5 },
   // 제보 가중치 (report_weight)
   { ruleCode: 'REPORT_GENERAL', ruleCategory: 'report_weight', ruleName: '일반 해파리 발견 제보', score: 10 },
   { ruleCode: 'REPORT_MULTIPLE', ruleCategory: 'report_weight', ruleName: '다수 출현 제보', score: 15 },
@@ -168,7 +167,7 @@ const RULES_V2: Rule[] = [
   //     NEARBY 40 → severe 5건(3.7%) / 45 → 14건(10.3%) / 55 → 18건(13.2%).
   //   severe 는 대응 권고상 "구역 폐쇄 검토 / 입수 통제" 다. 같은 기간 NIFS 자신이 특보를 낸 건
   //   136 단위 중 6건(4.4%)뿐이다. 3.7% 는 그 눈금과 맞고, 10% 는 아무도 안 믿는다.
-  //   대가: NIFS 속보 **하나만으로는 danger 에 못 간다**(40+취약도5 = 45 = 주의).
+  //   대가: NIFS 속보 **하나만으로는 danger 에 못 간다**(단독 40 = 주의).
   //         danger 는 "NIFS 속보 + 그 해변의 수온 상승"을 요구한다. danger+ 재현율 57.7% 로,
   //         무지성 베이스라인(지난주 보고서 복사, 69.2%)보다 낮다. 이건 고정 구간이 강요한 대가다.
   //         (구간을 danger 45 로 내리면 재현율 69.2% / 오경보 0% 로 베이스라인과 같아진다 — risk-rules-v2.md 참조)
@@ -182,7 +181,7 @@ const RULES_V2: Rule[] = [
 
   // TEMP_UP 10 → 15. 리프트 1.93 (고밀도 80.8% / 그 외 41.8%), 단일 AUC 0.695, p<0.001.
   //   NEARBY 다음으로 유의한 유일한 신호. 해변마다 최근접 부이가 달라 **해변별 변별력의 실질적 원천**이다
-  //   (NEARBY·PAST·취약도는 시군구/상수라 해변을 가르지 못한다).
+  //   (NEARBY·PAST 는 시군구 단위라 해변을 가르지 못한다).
   { ruleCode: 'TEMP_UP', ruleCategory: 'risk_variable', ruleName: '최근 3일 수온 상승', score: 15, conditionJson: { window_days: 3, rise_delta_c: 2.0, or_abs_temp_c: 26.0 } },
 
   // TEMP_7D_AVG 5 → 10. 리프트 1.86 (69.2% / 37.3%), 단일 AUC 0.660, p=0.003.
@@ -207,10 +206,10 @@ const RULES_V2: Rule[] = [
   //       대가는 출현 없는 주의 caution 오경보 7.0% → 14.1% (5건 → 10건 / 71). caution 은 '모니터링 강화'라
   //       공개 경보가 아니다. 놓침 2건과 caution 헛경보 5건이면 안전 서비스에선 남기는 쪽이 맞다.
   //     · AUC 0.868 → 0.875 (ΔAUC 95% CI [-0.010, +0.025] — 0 을 포함하니 개선을 주장하지 않는다).
-  //   왜 하필 5 인가 (10 이 아니라):
-  //     10 이면 관측만으로 도달 가능한 최대가 65점 = **danger** 가 된다. 신호가 없다고 측정된 룰들로
-  //     해파리 근거 0인 날에 '위험'을 선언하는 경로가 열린다. 5 면 관측만으로는 최대 55점 = 주의 천장이다.
-  //     → **5 는 구조 제약을 지키면서 caution 도달률을 최대로 끌어올리는 유일한 값이다.**
+  //   왜 하필 5 인가 (10 이 아니라): 관측만으로 닿는 천장을 낮게 억제하려는 것이다.
+  //     WAVE 5 면 관측만 최대 45점, 10 이면 50점 — 둘 다 danger(45+) 안이지만 5 가 그 깊이를 최소로 눌러 준다.
+  //     신호가 없다고 측정된 파고·풍향에 무게를 더 실어 해파리 근거 0인 날의 점수를 키울 이유가 없다.
+  //     (관측만으로 danger 경계에 닿을 수 있다는 잔여 위험은 risk-level.ts 에 기록된, 알고 택한 것이다.)
   //   그리고 실용적 이유: 파고·풍향은 기상청 해상예보가 24h/72h 를 **재평가하는 유일한 입구**다
   //   (risk-horizon.ts FORECAST_BACKED_CODES). 0 으로 만들면 예보 연동이 통째로 죽는다.
   { ruleCode: 'WAVE_HIGH', ruleCategory: 'risk_variable', ruleName: '파고 높음', score: 5, conditionJson: { threshold_m: 1.5 } },
@@ -218,7 +217,6 @@ const RULES_V2: Rule[] = [
   // ★ WIND_INFLOW 10 → 5 (제거하지 않는다). 위 WAVE_HIGH 와 완전히 같은 논거.
   //   백테스트: 리프트 0.93, p=0.77 — 무신호. 다만 **해변 방위각(facing_direction)을 쓰는 유일한 룰**이라
   //   이걸 빼면 해변별 변별력의 축이 '최근접 부이 수온' 하나만 남는다.
-  //   (BEACH_VULNERABILITY 는 해변별 취약도 값을 실제로 쓰지 않는다 — 아래 주석 참조.)
   { ruleCode: 'WIND_INFLOW', ruleCategory: 'risk_variable', ruleName: '해변 방향 유입 풍향', score: 5, conditionJson: { angle_tolerance: 60, min_wind_speed_ms: 5.0 } },
 
   // CURRENT_INFLOW 10 → 5. **검증 불가 + 센서 배치 인공물 제거.**
@@ -240,14 +238,6 @@ const RULES_V2: Rule[] = [
   //   일관성이 없다. 인식론적 지위가 같다 — 셋 다 "신호가 있는지 모른다".
   //   같은 5 로 맞춘다. 실시간 유속 데이터가 쌓여 검증 가능해지면 그때 재평가한다.
   { ruleCode: 'CURRENT_INFLOW', ruleCategory: 'risk_variable', ruleName: '해변 방향 유입 해류', score: 5, conditionJson: { angle_tolerance: 60, min_current_speed_ms: 0.3 } },
-
-  // BEACH_VULNERABILITY 5 유지. **검증 불가라 유지한다.**
-  //   정답이 시군구 단위라 해변 간 차이를 검증할 방법이 없다(백테스트 한계 1번).
-  //   ⚠️ 별개로 알아둘 것: 엔진은 `beaches.vulnerability_score`(5~20)를 **점수에 쓰지 않는다.**
-  //      risk-assessment.ts 는 그 값이 0 보다 큰지만 보고 이 룰 점수(=5)를 통째로 더한다.
-  //      즉 12개 해변 전부에 붙는 **상수 오프셋**이고, 해변을 전혀 가르지 못한다. 순위에 영향 없음.
-  //      (고치려면 도메인 코드를 바꿔야 한다 — 이번 개정 범위 밖. risk-rules-v2.md 에 제안으로 남겼다.)
-  { ruleCode: 'BEACH_VULNERABILITY', ruleCategory: 'risk_variable', ruleName: '해수욕장 취약도', score: 5 },
 
   // ────────────────────────────────────────────────────── 제보 가중치 (report_weight) — 전부 v1 과 동일
   // **검증 불가라 유지한다.** 서비스가 출시된 적이 없어 과거 시민 제보 데이터가 0건이다.
@@ -282,7 +272,7 @@ const RULES_V2: Rule[] = [
   // ──────────────────────────────────────────────── 최소 단계 보장 (min_level) — RISK-002
   // **검증 불가라 유지한다.** 제보 데이터가 없어 백테스트로 평가되지 않았다(위와 동일한 이유).
   // ⚠️ 이 행들도 엔진이 읽지 않는다 — deriveMinLevelTriggers 가 도메인 코드에 하드코딩돼 있다.
-  //    v2 에서 관측만으로 severe 에 도달하는 경로를 막았으므로(최대 55점), **severe 는 사실상
+  //    v2 에서 관측만으로 severe 에 도달하는 경로를 막았으므로(관측만 최대 45점, severe 는 76+), **severe 는 사실상
   //    'NIFS 고밀도 + 강한 관측' 이거나 '독성+쏘임 제보' 로만 뜬다.** 이 보장 룰의 중요도가 오히려 커졌다.
   { ruleCode: 'MIN_TOXIC_1', ruleCategory: 'min_level', ruleName: '독성 의심 1건 → 최소 주의', minRiskLevel: 'caution' },
   { ruleCode: 'MIN_TOXIC_HIGH', ruleCategory: 'min_level', ruleName: '독성 의심 + 신뢰도 높음 → 최소 위험', minRiskLevel: 'danger', conditionJson: { confidence_gte: 0.8 } },
@@ -328,13 +318,11 @@ const RULES_V3: Rule[] = [
   // ───────────────────────────────────────── 인근 출현 — v3 의 핵심. 건수 → 밀도.
   // v2 의 NEARBY_ALERT(단일, +40)를 밀도별 3코드로 쪼갠다. 도메인(risk-assessment.ts)이
   // 창 안 최고 밀도를 골라 대응 코드를 발화시킨다. 건수는 점수에 쓰지 않는다.
-  //   고밀도 40: v2 의 무게를 그대로 물려받는다. NIFS 속보 하나만으로는 danger(45) 에 못 가고
-  //             (40+취약도5=45? → 취약도는 엔진이 상수로 5를 더하므로 실제로는 45=danger 경계).
-  //             ※ 백테스트 구조점검: 고밀도+취약도 = 45 = danger 경계. NIFS 고밀도 단독으로 danger 가능.
-  //               v2 와 동일한 성질이다(v2 도 40+5=45). 대신 저밀도는 여기 못 온다.
+  //   고밀도 40: v2 의 무게를 그대로 물려받는다. NIFS 고밀도 단독은 40점 = 주의(31~44)이고,
+  //             danger(45) 에는 관측 근거(수온 상승 등)가 얹혀야 닿는다. 저밀도는 여기 못 온다.
   //   중밀도 15: NIFS 주간보고엔 없는 등급(고/저 2단계)이나 다른 수집기(제보·mock)가 넣을 수 있어
   //             사다리를 비워 두지 않는다. 고와 저의 중간값. **검증된 값이 아니다**(표본에 없음).
-  //   저밀도 5:  단독으로는 어떤 단계도 못 만든다(5+취약도5=10=안전). 대신 MIN_NEARBY_1 이 '주의'를 깐다.
+  //   저밀도 5:  단독으로는 어떤 단계도 못 만든다(단독 5 = 안전). 대신 MIN_NEARBY_1 이 '주의'를 깐다.
   //             백테스트에서 저밀도 점수를 0~20 으로 스윕했고 5 가 danger 재현율을 손해 없이 유지하면서
   //             저밀도→danger 비율을 15.4% 로 낮게 유지하는 값이었다(docs/risk-rules-v3.md §2).
   { ruleCode: 'NEARBY_ALERT_HIGH', ruleCategory: 'risk_variable', ruleName: '인근 해역 고밀도 출현', score: 40, conditionJson: { radius_km: 30, window_days: 7, density: 'high', fallback: 'region_match_when_no_coords' } },
@@ -351,7 +339,6 @@ const RULES_V3: Rule[] = [
   { ruleCode: 'WAVE_HIGH', ruleCategory: 'risk_variable', ruleName: '파고 높음', score: 5, conditionJson: { threshold_m: 1.5 } },
   { ruleCode: 'WIND_INFLOW', ruleCategory: 'risk_variable', ruleName: '해변 방향 유입 풍향', score: 5, conditionJson: { angle_tolerance: 60, min_wind_speed_ms: 5.0 } },
   { ruleCode: 'CURRENT_INFLOW', ruleCategory: 'risk_variable', ruleName: '해변 방향 유입 해류', score: 5, conditionJson: { angle_tolerance: 60, min_current_speed_ms: 0.3 } },
-  { ruleCode: 'BEACH_VULNERABILITY', ruleCategory: 'risk_variable', ruleName: '해수욕장 취약도', score: 5 },
 
   // ───────────────────────────────────────── 제보 가중치 — v2 와 동일(검증 불가).
   { ruleCode: 'REPORT_GENERAL', ruleCategory: 'report_weight', ruleName: '일반 해파리 발견 제보', score: 10 },

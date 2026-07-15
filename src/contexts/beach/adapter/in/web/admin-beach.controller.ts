@@ -57,7 +57,6 @@ export class AdminBeachController {
       '',
       '- `lat`/`lng` : 위험도 계산이 이 좌표로 관측 데이터를 매칭하므로 정확해야 한다.',
       '- `priority` : 대시보드 정렬 우선순위',
-      '- `vulnerabilityScore` : 해변 자체의 취약도. 위험도 산출에 가중치로 들어간다.',
     ].join('\n'),
   })
   @ApiOkData(BeachDetailResponse)
@@ -70,7 +69,6 @@ export class AdminBeachController {
       lng: body.lng,
       facingDirection: body.facingDirection ?? null,
       priority: body.priority,
-      vulnerabilityScore: body.vulnerabilityScore,
       imageUrl: body.imageUrl,
     });
   }
@@ -95,7 +93,6 @@ export class AdminBeachController {
       lng: body.lng,
       facingDirection: body.facingDirection,
       priority: body.priority,
-      vulnerabilityScore: body.vulnerabilityScore,
       imageUrl: body.imageUrl,
       isActive: body.isActive,
     });

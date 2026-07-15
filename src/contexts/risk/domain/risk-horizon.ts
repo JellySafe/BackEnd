@@ -15,7 +15,6 @@ import { RiskFactorCode } from './risk-factors';
  *   - 수온      : 관성이 크다. 3일 안에 급변하지 않는다 → 대부분 유지
  *   - 인근 속보 : 해파리 개체군이 조류를 타고 **다가오는 데 시간이 걸린다** → 미래에 오히려 유효
  *   - 제보      : 시간이 지나면 그 개체군은 이미 이동했다 → 감쇠
- *   - 취약도    : 지형 상수 → 불변
  *
  * ── 예보가 붙은 뒤 (현재) ────────────────────────────────────────────────────────────
  * 기상청 단기 해상예보가 붙으면서 파고/풍향/풍속은 **그 시각의 실제 예보값**을 안다.
@@ -42,7 +41,6 @@ const HORIZON_WEIGHT: Record<RiskFactorCode, Partial<Record<RiskHorizon, number>
   NEARBY_ALERT_HIGH: { now: 1, '6h': 1.1, '24h': 1.2, '72h': 1.3 },
   NEARBY_ALERT_MEDIUM: { now: 1, '6h': 1.1, '24h': 1.2, '72h': 1.3 },
   NEARBY_ALERT_LOW: { now: 1, '6h': 1.1, '24h': 1.2, '72h': 1.3 },
-  BEACH_VULNERABILITY: { now: 1, '6h': 1, '24h': 1, '72h': 1 },
   // 제보 가중치 — 시간이 지날수록 신호가 약해진다.
   REPORT_GENERAL: { now: 1, '6h': 0.9, '24h': 0.6, '72h': 0.3 },
   REPORT_MULTIPLE: { now: 1, '6h': 0.9, '24h': 0.6, '72h': 0.3 },
@@ -69,7 +67,7 @@ function weightOf(code: string, horizon: RiskHorizon): number {
  *     예측 대상이 아니다. "현재 수온 24.7℃ ... (72시간 후 예상)" — 현재인지 미래인지 모순이다.
  *
  * 그래서 지평을 되풀이하지 않고, **그 요인이 시간이 지나며 어떻게 작용하는지**만 적는다.
- * 값이 그대로인 요인(과거 이력·취약도 같은 시간 불변 사실)에는 아무것도 붙지 않는다.
+ * 값이 그대로인 요인(과거 이력 같은 시간 불변 사실)에는 아무것도 붙지 않는다.
  */
 function horizonNote(weight: number): string {
   if (weight === 1) return ''; // 시간이 지나도 그대로인 근거 → 덧붙일 말이 없다

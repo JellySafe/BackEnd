@@ -4,7 +4,7 @@
  * 실제 점수는 risk_rule_configs 에서 로드하며, DB 값이 우선한다.
  */
 
-// 위험 변수 (관측/출현/취약도 기반)
+// 위험 변수 (관측/출현 기반)
 export const RISK_VARIABLE_CODES = [
   'TEMP_UP', // 최근 3일 수온 상승 +10
   'TEMP_7D_AVG', // 최근 7일 평균 수온 +5
@@ -16,7 +16,6 @@ export const RISK_VARIABLE_CODES = [
   'NEARBY_ALERT_HIGH', // 인근 해역 고밀도 출현
   'NEARBY_ALERT_MEDIUM', // 인근 해역 중밀도 출현
   'NEARBY_ALERT_LOW', // 인근 해역 저밀도 출현
-  'BEACH_VULNERABILITY', // 해수욕장 취약도 +5
 ] as const;
 export type RiskVariableCode = (typeof RISK_VARIABLE_CODES)[number];
 
@@ -75,7 +74,6 @@ export const RISK_FACTOR_NAMES: Record<RiskFactorCode, string> = {
   NEARBY_ALERT_HIGH: '인근 해역 고밀도 출현',
   NEARBY_ALERT_MEDIUM: '인근 해역 중밀도 출현',
   NEARBY_ALERT_LOW: '인근 해역 저밀도 출현',
-  BEACH_VULNERABILITY: '해수욕장 취약도',
   REPORT_GENERAL: '일반 해파리 발견 제보',
   REPORT_MULTIPLE: '다수 출현 제보',
   REPORT_TOXIC: '독성 해파리 의심 제보',
@@ -105,7 +103,6 @@ export const DEFAULT_RULE_SCORES: Record<RiskFactorCode, number> = {
   NEARBY_ALERT_HIGH: 15,
   NEARBY_ALERT_MEDIUM: 15,
   NEARBY_ALERT_LOW: 15,
-  BEACH_VULNERABILITY: 5,
   REPORT_GENERAL: 10,
   REPORT_MULTIPLE: 15,
   REPORT_TOXIC: 25,

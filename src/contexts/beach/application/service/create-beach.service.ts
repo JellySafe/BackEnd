@@ -9,7 +9,7 @@ import {
 import { BeachRepositoryPort, BEACH_REPOSITORY } from '../port/out/beach-repository.port';
 
 /**
- * ADM-005 해변 등록. 도메인 불변식(좌표/방위/취약도 범위)은 Beach.create 가 강제한다.
+ * ADM-005 해변 등록. 도메인 불변식(좌표/방위 범위)은 Beach.create 가 강제한다.
  */
 @Injectable()
 export class CreateBeachService implements CreateBeachUseCase {
@@ -23,7 +23,6 @@ export class CreateBeachService implements CreateBeachUseCase {
       lng: command.lng,
       facingDirection: command.facingDirection ?? null,
       priority: command.priority,
-      vulnerabilityScore: command.vulnerabilityScore,
       imageUrl: command.imageUrl ?? null,
     });
     const saved = await this.repository.save(beach);

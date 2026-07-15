@@ -9,7 +9,6 @@ const beach: BeachRiskInput = {
   beachId: 1,
   region: '제주시',
   facingDirection: 0, // 북향 해변(함덕)
-  vulnerabilityScore: 20,
 };
 
 const NOW = new Date('2026-07-14T02:00:00Z'); // KST 07-14 11:00
@@ -179,7 +178,6 @@ describe('예보가 붙었을 때 24h/72h 가 실제로 어떻게 달라지는�
   // 함덕(북향). 현재는 잔잔하지만 이틀 뒤 북풍·높은 파고가 예보된 상황.
   const observedVariables: FactorContribution[] = [
     { code: 'TEMP_UP', name: '수온 상승', delta: 10, detail: '현재 수온 27.4℃' },
-    { code: 'BEACH_VULNERABILITY', name: '취약도', delta: 5, detail: '취약도 지수 20' },
   ];
   // 현재 관측 파고는 0.8m → WAVE_HIGH 요인 자체가 없다(임계 미만).
   const forecasts: ForecastPoint[] = [
