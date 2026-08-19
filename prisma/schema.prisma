@@ -60,8 +60,31 @@ model User {
   notifications       Notification[]
   notificationConsent NotificationConsent[]
   subscriptions       Subscription[]
+  refreshTokens       RefreshToken[]
 
   @@map("users")
+}
+
+/// 리프레시 토큰 (AUTH-001 재발급·로그아웃).
+/// 원문은 저장하지 않는다 — token_hash 는 SHA-256(토큰) hex 64자다.
+/// 운영 DB 에는 prisma/sql/002-refresh-tokens.sql 을 적용해야 이 모델이 실제 테이블과 맞는다.
+model RefreshToken {
+  id            BigInt    @id @default(autoincrement())
+  userId        BigInt    @map("user_id")
+  tokenHash     String    @unique(map: "uk_refresh_tokens_hash") @map("token_hash") @db.Char(64)
+  familyId      String    @map("family_id") @db.Char(32)
+  issuedAt      DateTime  @map("issued_at") @db.DateTime(0)
+  expiresAt     DateTime  @map("expires_at") @db.DateTime(0)
+  usedAt        DateTime? @map("used_at") @db.DateTime(0)
+  revokedAt     DateTime? @map("revoked_at") @db.DateTime(0)
+  revokedReason String?   @map("revoked_reason") @db.VarChar(30)
+
+  user User @relation(fields: [userId], references: [id], onDelete: Cascade)
+
+  @@index([userId, expiresAt], name: "ix_refresh_tokens_user")
+  @@index([familyId], name: "ix_refresh_tokens_family")
+  @@index([expiresAt], name: "ix_refresh_tokens_expires")
+  @@map("refresh_tokens")
 }
 
 model Beach {

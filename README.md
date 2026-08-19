@@ -139,6 +139,33 @@ CI(`.github/workflows/ci.yml`)가 위 다섯을 그대로 돌린다.
 
 이 경계는 `test/authz.e2e-spec.ts` 가 실제 HTTP 요청으로 지킨다(`npm run test:e2e`).
 
+### 역할 (`/admin/*`)
+
+**표시가 없으면 닫혀 있다.** `@Roles` 를 붙이지 않은 관리자 경로는 기본값 `operator|admin` 을
+요구한다 — 데코레이터를 깜빡 잊은 컨트롤러가 열려 있는 것보다 닫혀 있는 편이 안전하다.
+
+| 대상 | 허용 역할 |
+|---|---|
+| 제보·알림·해변·관측·위험도·일간리포트·운영 | `operator`, `admin` (기본값) |
+| 계정 등록, 사용자 목록, 감사 로그 | `admin` |
+| 2차 기능 골격(ML 모델·제휴사·구독) | `admin` |
+
+### 세션 (액세스 토큰 · 리프레시 토큰)
+
+| 엔드포인트 | 하는 일 |
+|---|---|
+| `POST /admin/auth/login` | `accessToken`(JWT) + `refreshToken` 발급 |
+| `POST /admin/auth/refresh` | `refreshToken` 으로 새 `accessToken` + **새 `refreshToken`** 발급(회전) |
+| `POST /admin/auth/logout` | 그 로그인에서 파생된 토큰 무효화(`allDevices: true` 면 계정 전체) |
+
+- 재발급 때마다 토큰이 바뀐다. 클라이언트는 응답의 새 값으로 **반드시 덮어써야** 한다.
+- 이미 쓴 토큰이 다시 오면 도난으로 보고 그 사슬 전체를 무효화한다(원래 사용자도 재로그인).
+- 실패는 이유를 가리지 않고 401 `REFRESH_TOKEN_INVALID` 다. 존재 여부를 알려주지 않기 위해서다.
+- ⚠️ **로그아웃은 이미 발급된 `accessToken` 을 취소하지 못한다.** JWT 는 서명만으로 검증되므로
+  남은 수명(`JWT_EXPIRES`)까지 유효하다. 즉시성이 필요하면 `JWT_EXPIRES` 를 줄이는 수밖에 없다.
+- 저장은 해시(SHA-256)만 한다. `refresh_tokens` 테이블은 `prisma/sql/002-refresh-tokens.sql` 로
+  적용하며, **적용 전에도 앱은 뜬다**(로그인이 `refreshToken: null`, 재발급/로그아웃은 503).
+
 ## 운영에서 알아둘 설정
 
 | 환경변수 | 기본값 | 왜 중요한가 |
@@ -148,6 +175,8 @@ CI(`.github/workflows/ci.yml`)가 위 다섯을 그대로 돌린다.
 | `MOCK_COLLECTOR_FALLBACK` | 운영 `false` / 그 외 `true` | 운영에서 켜면 외부 API 장애 시 **가짜 관측치·가짜 해파리 출현이 위험도로 들어간다.** |
 | `SYSTEM_API_KEY` | 없음 | 미설정 시 `/system/*` 전면 차단(fail-closed). |
 | `RISK_CALCULATION_STALE_MINUTES` | `30` | 부팅 시 이보다 오래 `running` 인 산출 배치를 실패로 확정한다(비정상 종료 잔재). |
+| `JWT_EXPIRES` | `12h` | 서버가 취소할 수 없는 토큰의 수명 = 유출 시 최대 노출 시간. 재발급 흐름을 붙였으면 줄일 수 있다. |
+| `REFRESH_TOKEN_EXPIRES_DAYS` | `14` (1~90) | 재로그인 없이 버티는 기간. `refresh_tokens` 테이블(`prisma/sql/002`)이 있어야 동작한다. |
 | `OCCURRENCE_RETENTION_YEARS` | `6` | `PAST_OCCURRENCE` 가 과거 5년을 세므로 그보다 짧으면 **그 룰이 조용히 죽는다**(5로 클램프). |
 | `DB_POOL_LIMIT` + `DATABASE_URL?connection_limit=` | `10` + Prisma 기본 | 커넥션 풀이 **두 개**다. DB 가 보는 접속 수는 합이며, 기동 로그에 둘 다 찍힌다. |
 

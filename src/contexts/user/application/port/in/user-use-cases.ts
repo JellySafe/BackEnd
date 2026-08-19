@@ -25,7 +25,7 @@ export interface RegisterUserUseCase {
 }
 export const REGISTER_USER_USE_CASE = Symbol('REGISTER_USER_USE_CASE');
 
-// ===== AUTH-001 로그인 (세션/토큰은 MVP 범위 밖 — id/role 반환) =====
+// ===== AUTH-001 로그인 =====
 export interface LoginUserCommand {
   email: string;
   password: string;
@@ -38,12 +38,56 @@ export interface LoginUserResult {
   name: string;
   lastLoginAt: Date | null;
   accessToken: string; // 관리자 API 호출용 JWT (Authorization: Bearer)
+  /**
+   * 액세스 토큰 재발급용 토큰. **null 일 수 있다.**
+   * 저장 테이블(prisma/sql/002-refresh-tokens.sql)이 아직 적용되지 않은 환경에서는
+   * 로그인을 실패시키는 대신 액세스 토큰만 발급한다(그 경우 서버 로그에 경고가 남는다).
+   */
+  refreshToken: string | null;
+  refreshTokenExpiresAt: Date | null;
 }
 
 export interface LoginUserUseCase {
   login(command: LoginUserCommand): Promise<LoginUserResult>;
 }
 export const LOGIN_USER_USE_CASE = Symbol('LOGIN_USER_USE_CASE');
+
+// ===== AUTH-001 액세스 토큰 재발급 (리프레시 토큰 회전) =====
+export interface RefreshSessionCommand {
+  refreshToken: string;
+}
+
+export interface RefreshSessionResult {
+  userId: Id;
+  email: string;
+  role: UserRole;
+  accessToken: string;
+  /** 회전으로 새로 발급된 토큰. 이전 토큰은 이 시점부터 쓸 수 없다. */
+  refreshToken: string;
+  refreshTokenExpiresAt: Date;
+}
+
+export interface RefreshSessionUseCase {
+  refresh(command: RefreshSessionCommand): Promise<RefreshSessionResult>;
+}
+export const REFRESH_SESSION_USE_CASE = Symbol('REFRESH_SESSION_USE_CASE');
+
+// ===== AUTH-001 로그아웃 (리프레시 토큰 무효화) =====
+export interface LogoutCommand {
+  refreshToken: string;
+  /** true 면 그 사용자의 모든 기기에서 재발급을 끊는다(기기 분실·비밀번호 유출 대응). */
+  allDevices?: boolean;
+}
+
+export interface LogoutResult {
+  /** 실제로 무효화된 토큰 수. 이미 무효였거나 없는 토큰이면 0(그래도 성공으로 응답한다). */
+  revokedCount: number;
+}
+
+export interface LogoutUseCase {
+  logout(command: LogoutCommand): Promise<LogoutResult>;
+}
+export const LOGOUT_USE_CASE = Symbol('LOGOUT_USE_CASE');
 
 // ===== 사용자 목록 (role 필터) =====
 export interface ListUsersUseCase {

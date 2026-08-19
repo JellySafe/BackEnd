@@ -9,7 +9,8 @@ export type DomainErrorKind =
   | 'CONFLICT' // 상태 충돌/중복 → 409
   | 'FORBIDDEN' // 권한 없음 → 403
   | 'UNAUTHORIZED' // 인증 필요 → 401
-  | 'UNPROCESSABLE'; // 처리 불가(비즈니스 규칙) → 422
+  | 'UNPROCESSABLE' // 처리 불가(비즈니스 규칙) → 422
+  | 'UNAVAILABLE'; // 의존 설비 미비로 지금은 제공 불가 → 503
 
 export class DomainError extends Error {
   constructor(
@@ -50,5 +51,16 @@ export class ForbiddenError extends DomainError {
 export class UnprocessableError extends DomainError {
   constructor(code: string, message: string, details?: Record<string, unknown>) {
     super('UNPROCESSABLE', code, message, details);
+  }
+}
+
+/**
+ * 기능 자체는 있으나 **지금은 제공할 수 없는** 상태 → 503.
+ * 잘못된 요청(4xx)도 아니고 예기치 못한 고장(500)도 아닌, "설비가 아직 없다" 를 구분하기 위한 것이다.
+ * 예: 리프레시 토큰 저장 테이블이 운영 DB 에 아직 적용되지 않은 경우.
+ */
+export class UnavailableError extends DomainError {
+  constructor(code: string, message: string, details?: Record<string, unknown>) {
+    super('UNAVAILABLE', code, message, details);
   }
 }
