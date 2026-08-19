@@ -1,5 +1,6 @@
 import { Body, Controller, Get, Inject, Post, Query } from '@nestjs/common';
 import { ApiBearerAuth, ApiOperation, ApiQuery, ApiTags } from '@nestjs/swagger';
+import { Roles } from '@shared/auth/auth.decorators';
 import { ApiOkData } from '@shared/http/api-response.decorator';
 import { normalizePageRequest, offsetOf } from '@shared/kernel/pagination';
 import {
@@ -16,6 +17,7 @@ import { CreateSubscriptionResponse, ListSubscriptionsResponse } from './dto/sub
  */
 @ApiTags('secondary-subscription')
 @ApiBearerAuth('bearer')
+@Roles('admin')
 @Controller('admin/subscriptions')
 export class AdminSubscriptionController {
   constructor(

@@ -17,6 +17,7 @@
     "typecheck": "tsc --noEmit -p tsconfig.json",
     "test": "jest",
     "test:watch": "jest --watch",
+    "test:cov": "jest --coverage",
     "test:e2e": "jest --config ./test/jest-e2e.json",
     "prisma:generate": "prisma generate",
     "prisma:pull": "prisma db pull",
@@ -87,9 +88,22 @@
       "^.+\\.(t|j)s$": "ts-jest"
     },
     "collectCoverageFrom": [
-      "**/*.(t|j)s"
+      "**/*.ts",
+      "!**/*.spec.ts",
+      "!**/*.module.ts",
+      "!**/dto/**",
+      "!**/generated-db.ts",
+      "!main.ts"
     ],
     "coverageDirectory": "../coverage",
+    "coverageThreshold": {
+      "global": {
+        "statements": 25,
+        "branches": 25,
+        "functions": 20,
+        "lines": 25
+      }
+    },
     "testEnvironment": "node",
     "moduleNameMapper": {
       "^@shared/(.*)$": "<rootDir>/shared/$1",

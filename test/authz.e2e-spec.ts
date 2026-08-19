@@ -7,7 +7,7 @@ import { App } from 'supertest/types';
 
 import { AuthModule } from '@shared/auth/auth.module';
 import { AuthUser } from '@shared/auth/auth-user';
-import { CurrentUser } from '@shared/auth/auth.decorators';
+import { CurrentUser, Roles } from '@shared/auth/auth.decorators';
 import { GlobalExceptionFilter } from '@shared/http/global-exception.filter';
 import { ResponseInterceptor } from '@shared/http/response.interceptor';
 import { PublicOwner } from '@shared/kernel/public-owner';
@@ -71,6 +71,19 @@ class AdminProbeController {
   }
 }
 
+/**
+ * @Roles 로 역할을 **좁힌** 관리자 컨트롤러의 대역(사용자 관리·감사 로그가 이 모양이다).
+ * 기본값(operator|admin)보다 좁게 잠글 수 있는지를 확인한다.
+ */
+@Roles('admin')
+@Controller('admin/_authz-probe-admin-only')
+class AdminOnlyProbeController {
+  @Get()
+  whoami(@CurrentUser() user?: AuthUser) {
+    return { userId: user?.userId ?? null, role: user?.role ?? null };
+  }
+}
+
 describe('공개 API 인가 경계 (e2e)', () => {
   let app: INestApplication<App>;
   let http: App;
@@ -93,6 +106,7 @@ describe('공개 API 인가 경계 (e2e)', () => {
         PublicAlertController,
         PublicPushController,
         AdminProbeController,
+        AdminOnlyProbeController,
       ],
       providers: [
         {
@@ -383,6 +397,48 @@ describe('공개 API 인가 경계 (e2e)', () => {
         .get('/admin/_authz-probe')
         .set('Authorization', 'Bearer not-a-jwt')
         .expect(401);
+    });
+
+    // ↓ 관리자 경로의 기본 역할. @Roles 를 깜빡 잊은 컨트롤러가 열려 있으면 안 된다.
+
+    it('public 역할 토큰은 @Roles 가 없어도 403 (기본 차단)', async () => {
+      const res = await request(http)
+        .get('/admin/_authz-probe')
+        .set('Authorization', bearerFor(4, 'public'))
+        .expect(403);
+      expect(res.body.error.code).toBe('AUTH_FORBIDDEN');
+    });
+
+    it('operator 는 기본 관리자 경로를 쓸 수 있다', async () => {
+      const res = await request(http)
+        .get('/admin/_authz-probe')
+        .set('Authorization', bearerFor(6, 'operator'))
+        .expect(200);
+      expect(res.body.data).toEqual({ userId: 6, role: 'operator' });
+    });
+
+    it('@Roles("admin") 경로는 operator 도 403 (사용자 관리·감사 로그가 이 경우다)', async () => {
+      const res = await request(http)
+        .get('/admin/_authz-probe-admin-only')
+        .set('Authorization', bearerFor(6, 'operator'))
+        .expect(403);
+      expect(res.body.error.code).toBe('AUTH_FORBIDDEN');
+      expect(res.body.error.details).toEqual({ required: ['admin'], actual: 'operator' });
+    });
+
+    it('@Roles("admin") 경로는 admin 이면 통과한다', async () => {
+      await request(http)
+        .get('/admin/_authz-probe-admin-only')
+        .set('Authorization', bearerFor(1, 'admin'))
+        .expect(200);
+    });
+
+    it('공개 경로는 public 역할 토큰을 그대로 받는다 (기본 차단은 /admin 에만 적용)', async () => {
+      await request(http)
+        .get('/public/favorites')
+        .set('Authorization', bearerFor(8, 'public'))
+        .expect(200);
+      expect(captured.owner).toEqual({ userId: 8, userToken: null });
     });
   });
 });

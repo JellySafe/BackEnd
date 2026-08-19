@@ -1,5 +1,6 @@
 import { Body, Controller, Get, Inject, Post, Query } from '@nestjs/common';
 import { ApiBearerAuth, ApiOperation, ApiQuery, ApiTags } from '@nestjs/swagger';
+import { Roles } from '@shared/auth/auth.decorators';
 import { ApiOkData } from '@shared/http/api-response.decorator';
 import { normalizePageRequest, offsetOf } from '@shared/kernel/pagination';
 import {
@@ -16,6 +17,7 @@ import { RegisterModelResponse, ListModelsResponse } from './dto/ml-model.respon
  */
 @ApiTags('secondary-mlmodel')
 @ApiBearerAuth('bearer')
+@Roles('admin')
 @Controller('admin/ml-models')
 export class AdminMlModelController {
   constructor(

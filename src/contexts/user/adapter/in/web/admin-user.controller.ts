@@ -1,5 +1,6 @@
 import { Controller, Get, Inject, Query } from '@nestjs/common';
 import { ApiBearerAuth, ApiOperation, ApiTags } from '@nestjs/swagger';
+import { Roles } from '@shared/auth/auth.decorators';
 import { ApiOkPage } from '@shared/http/api-response.decorator';
 import { normalizePageRequest } from '@shared/kernel/pagination';
 import {
@@ -15,10 +16,14 @@ import { AuditLogListItemResponse } from './dto/list-audit-logs.response';
 
 /**
  * 관리자 사용자/감사 로그 조회 API.
- * 권한 가드는 인증 컨텍스트 확장 시 추가 예정(현재는 조회만).
+ *
+ * **admin 전용이다.** 사용자 목록은 계정 이메일·소속, 감사 로그는 누가 무엇을 했는지를
+ * 그대로 보여준다. 운영자(operator)의 일은 자기 지역의 제보·알림·해변 운영이지 계정 관리가
+ * 아니므로, 이 두 화면은 역할을 좁혀 잠근다(가드 기본값 operator|admin 보다 좁다).
  */
 @ApiTags('user')
 @ApiBearerAuth('bearer')
+@Roles('admin')
 @Controller('admin')
 export class AdminUserController {
   constructor(
