@@ -106,6 +106,16 @@ class EnvSchema {
   @IsOptional()
   @IsIn(['true', 'false'])
   MOCK_COLLECTOR_FALLBACK?: string;
+
+  /**
+   * 리프레시 토큰 유효 일수(기본 14). 재로그인 없이 버티는 기간이자 유출 시 최대 노출 기간이다.
+   * 상한 90일은 "잊힌 기기의 토큰이 반년씩 살아 있는" 상태를 막기 위한 선이다.
+   */
+  @IsOptional()
+  @IsInt()
+  @Min(1)
+  @Max(90)
+  REFRESH_TOKEN_EXPIRES_DAYS?: number;
 }
 
 export function validateEnv(config: Record<string, unknown>): Record<string, unknown> {

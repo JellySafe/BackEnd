@@ -1,0 +1,16 @@
+{
+  "moduleFileExtensions": ["js", "json", "ts"],
+  "rootDir": ".",
+  "testEnvironment": "node",
+  "testRegex": ".smoke-spec\\.ts$",
+  "setupFiles": ["<rootDir>/smoke-env.ts"],
+  "transform": {
+    "^.+\\.(t|j)s$": "ts-jest"
+  },
+  "moduleNameMapper": {
+    "^@shared/(.*)$": "<rootDir>/../src/shared/$1",
+    "^@contexts/(.*)$": "<rootDir>/../src/contexts/$1"
+  },
+  "testTimeout": 60000,
+  "maxWorkers": 1
+}

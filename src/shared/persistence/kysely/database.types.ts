@@ -300,6 +300,17 @@ export type PartnerApiKey = {
     revoked_at: Timestamp | null;
     created_at: Generated<Timestamp>;
 };
+export type RefreshToken = {
+    id: Generated<number>;
+    user_id: number;
+    token_hash: string;
+    family_id: string;
+    issued_at: Timestamp;
+    expires_at: Timestamp;
+    used_at: Timestamp | null;
+    revoked_at: Timestamp | null;
+    revoked_reason: string | null;
+};
 export type ReportConsent = {
     id: Generated<number>;
     report_id: number;
@@ -478,6 +489,7 @@ export type DB = {
     partner_api_call_logs: PartnerApiCallLog;
     partner_api_keys: PartnerApiKey;
     partners: Partner;
+    refresh_tokens: RefreshToken;
     report_consents: ReportConsent;
     report_reviews: ReportReview;
     risk_calculations: RiskCalculation;

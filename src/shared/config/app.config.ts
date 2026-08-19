@@ -106,6 +106,25 @@ export class AppConfig {
   get dailyReportCron(): string {
     return this.config.get<string>('DAILY_REPORT_CRON') ?? '0 10 0 * * *';
   }
+
+  /**
+   * 리프레시 토큰 유효 일수(기본 14일).
+   *
+   * 이 값이 곧 **재로그인 없이 버틸 수 있는 기간**이자, 토큰이 새어 나갔을 때의 최대 노출
+   * 기간이다. 관리자 콘솔은 매일 쓰는 도구가 아니라서 너무 짧으면 올 때마다 로그인해야 하고,
+   * 너무 길면 회전이 없는 기기(오래 안 쓴 노트북)의 토큰이 오래 살아 있는다. 2주는 그 사이다.
+   * 1 미만이면 기본값으로 되돌리고, 90일을 넘기지 않는다.
+   */
+  get refreshTokenExpiresDays(): number {
+    const raw = Number(this.config.get<string>('REFRESH_TOKEN_EXPIRES_DAYS') ?? '14');
+    if (!Number.isFinite(raw) || raw < 1) return 14;
+    return Math.min(Math.floor(raw), 90);
+  }
+
+  /** 만료된 리프레시 토큰 파기 크론. 다른 파기 배치와 겹치지 않게 03:15 로 둔다. */
+  get refreshTokenPurgeCron(): string {
+    return this.config.get<string>('REFRESH_TOKEN_PURGE_CRON') ?? '0 15 3 * * *';
+  }
 }
 
 /** 크론 설정이 비활성('off'/빈 값)인지. */
