@@ -55,7 +55,7 @@ export class TemplateKyselyQuery implements TemplateQueryPort {
       .select(TEMPLATE_COLUMNS)
       .where('t.template_code', '=', templateCode)
       .executeTakeFirst();
-    return row ? toRecord(row as TemplateRow) : null;
+    return row ? toRecord(row) : null;
   }
 
   async findMatch(criteria: TemplateCriteria): Promise<TemplateRecord | null> {
@@ -85,7 +85,7 @@ export class TemplateKyselyQuery implements TemplateQueryPort {
       .orderBy(sql`t.event_type is null`, 'asc')
       .limit(1)
       .executeTakeFirst();
-    return row ? toRecord(row as TemplateRow) : null;
+    return row ? toRecord(row) : null;
   }
 
   async listActive(targetType?: NotificationTarget): Promise<TemplateRecord[]> {
@@ -95,6 +95,6 @@ export class TemplateKyselyQuery implements TemplateQueryPort {
       .where('t.active', '=', 1);
     if (targetType) q = q.where('t.target_type', '=', targetType);
     const rows = await q.orderBy('t.template_code', 'asc').execute();
-    return rows.map((r) => toRecord(r as TemplateRow));
+    return rows.map((r) => toRecord(r));
   }
 }

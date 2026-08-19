@@ -10,8 +10,8 @@ export interface AuditEntry {
   actionType: string;
   targetType: string;
   targetId?: Id | null;
-  beforeJson?: unknown | null;
-  afterJson?: unknown | null;
+  beforeJson?: unknown;
+  afterJson?: unknown;
 }
 
 export interface AuditPort {

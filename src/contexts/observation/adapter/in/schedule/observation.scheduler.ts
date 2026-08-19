@@ -3,6 +3,7 @@ import { ConfigService } from '@nestjs/config';
 import { SchedulerRegistry } from '@nestjs/schedule';
 import { CronJob } from 'cron';
 import { AppConfig, isCronDisabled } from '@shared/config/app.config';
+import { JOB, JobGate } from '@shared/scheduling/job-gate';
 import {
   MapStationsUseCase,
   MAP_STATIONS_USE_CASE,
@@ -30,11 +31,11 @@ const JOB_NAME = 'observation-sync';
 export class ObservationScheduler implements OnModuleInit {
   private readonly logger = new Logger(ObservationScheduler.name);
   private readonly config: AppConfig;
-  private running = false;
 
   constructor(
     configService: ConfigService,
     private readonly registry: SchedulerRegistry,
+    private readonly gate: JobGate,
     @Inject(SYNC_OBSERVATIONS_USE_CASE) private readonly sync: SyncObservationsUseCase,
     @Inject(SYNC_FORECASTS_USE_CASE) private readonly forecasts: SyncForecastsUseCase,
     @Inject(MAP_STATIONS_USE_CASE) private readonly map: MapStationsUseCase,
@@ -62,7 +63,7 @@ export class ObservationScheduler implements OnModuleInit {
         void this.run();
       },
     });
-    this.registry.addCronJob(JOB_NAME, job as unknown as CronJob);
+    this.registry.addCronJob(JOB_NAME, job);
     job.start();
     this.logger.log(`관측 수집 스케줄러 등록됨 (cron="${cronTime}")`);
   }
@@ -70,7 +71,9 @@ export class ObservationScheduler implements OnModuleInit {
   /**
    * 수집(SYS-001) → 예보 수집 → 매핑(SYS-002) → 위험도 재산출(SYS-003, data_sync) 실행.
    * 재산출 중 단계 상승이 감지되면 관심 해변 구독자 알림 확산(SYS-005)까지 이어진다.
-   * 이전 실행이 겹치면 스킵한다. 재산출 실패는 수집/매핑 결과를 가리지 않도록 개별 격리한다.
+   * 이전 실행이 겹치면 스킵한다 — 판정은 **공용 게이트**가 한다. 자체 플래그를 쓰면
+   * `POST /system/observations/sync` 수동 트리거가 그 플래그를 보지 못해 배치가 겹친다.
+   * 재산출 실패는 수집/매핑 결과를 가리지 않도록 개별 격리한다.
    *
    * 예보(기상청 단기 해상예보)를 별도 배치가 아니라 이 배치에 얹은 이유:
    *  - 배치를 하나 더 만들면 스케줄 충돌·중복 실행·장애 지점이 하나 더 생긴다.
@@ -80,11 +83,12 @@ export class ObservationScheduler implements OnModuleInit {
    * 예보 수집 실패가 관측 수집 성공을 무효화하지 않도록 별도 try/catch 로 격리한다.
    */
   async run(): Promise<void> {
-    if (this.running) {
-      this.logger.warn('이전 수집 작업이 진행 중 → 이번 주기 스킵');
-      return;
-    }
-    this.running = true;
+    // 겹치면 이번 주기는 조용히 넘긴다(크론은 30분 뒤 다시 온다).
+    await this.gate.run(JOB.OBSERVATION_SYNC, () => this.runOnce());
+  }
+
+  /** 게이트 안에서 실제로 도는 본문. 게이트가 열렸다는 전제로만 호출한다. */
+  private async runOnce(): Promise<void> {
     try {
       const sync = await this.sync.syncAll();
 
@@ -119,8 +123,6 @@ export class ObservationScheduler implements OnModuleInit {
       }
     } catch (err) {
       this.logger.error(`관측 수집 배치 실패: ${err instanceof Error ? err.message : String(err)}`);
-    } finally {
-      this.running = false;
     }
   }
 }

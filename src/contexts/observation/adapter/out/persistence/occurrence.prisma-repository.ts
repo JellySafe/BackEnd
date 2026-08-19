@@ -23,4 +23,11 @@ export class OccurrencePrismaRepository implements OccurrenceRepositoryPort {
     });
     return res.count;
   }
+
+  async purgeOlderThan(cutoff: Date): Promise<number> {
+    const res = await this.prisma.jellyfishOccurrence.deleteMany({
+      where: { occurredAt: { lt: cutoff } },
+    });
+    return res.count;
+  }
 }

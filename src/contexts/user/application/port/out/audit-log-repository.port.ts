@@ -6,8 +6,8 @@ export interface AuditLogRecord {
   actionType: string;
   targetType: string;
   targetId: Id | null;
-  beforeJson: unknown | null;
-  afterJson: unknown | null;
+  beforeJson: unknown;
+  afterJson: unknown;
   ipAddress: string | null;
 }
 

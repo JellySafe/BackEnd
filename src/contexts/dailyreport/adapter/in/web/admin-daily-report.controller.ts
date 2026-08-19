@@ -29,7 +29,7 @@ import { DailyReportResponse } from './dto/daily-report.response';
 
 /**
  * 관리자 일간 운영 리포트 API (ADM-011, SYS-006, FLOW-ADM-004).
- * createdBy 는 전역 AdminAuthGuard 가 검증한 JWT 주체(@CurrentUser)를 사용한다.
+ * createdBy 는 전역 JwtAuthGuard 가 검증한 JWT 주체(@CurrentUser)를 사용한다.
  *
  * 날짜: `date=2026-07-13` 은 **KST 달력 날짜**로 해석한다(=KST 07-13 00:00~24:00).
  * `new Date('2026-07-13')` 은 UTC 자정이라 그대로 쓰면 KST 09:00~익일 09:00 을 보게 되므로

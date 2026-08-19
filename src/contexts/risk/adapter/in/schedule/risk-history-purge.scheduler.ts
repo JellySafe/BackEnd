@@ -63,7 +63,7 @@ export class RiskHistoryPurgeScheduler implements OnModuleInit {
         void this.run();
       },
     });
-    this.registry.addCronJob(JOB_NAME, job as unknown as CronJob);
+    this.registry.addCronJob(JOB_NAME, job);
     job.start();
     this.logger.log(
       `위험도 이력 파기 스케줄러 등록됨 (cron="${cronTime}", 보관 ${this.config.riskHistoryRetentionDays}일)`,

@@ -14,7 +14,7 @@ import { ResponseInterceptor } from './shared/http/response.interceptor';
 
 // BIGINT PK 가 응답으로 새어나갈 때 JSON 직렬화 오류를 막는다(bigint → string).
 // 도메인은 number 를 쓰지만, Prisma 결과가 직접 노출되는 경로의 방어선.
-(BigInt.prototype as unknown as { toJSON: () => string }).toJSON = function () {
+(BigInt.prototype as unknown as { toJSON: () => string }).toJSON = function (this: bigint) {
   return this.toString();
 };
 
@@ -58,6 +58,15 @@ async function bootstrap(): Promise<void> {
     );
   }
 
+  // SIGTERM/SIGINT 를 Nest 생명주기로 연결한다.
+  //
+  // 이게 없으면 onModuleDestroy 가 **호출되지 않는다.** Fly 는 배포마다 SIGTERM 을 보내는데,
+  // 그때 PrismaService/KyselyService 의 $disconnect·pool.end 가 돌지 않아 커넥션이 정리되지
+  // 않고, 처리 중이던 요청도 드레인 없이 끊긴다. 30분 배치가 도는 중 배포하면 위험도 산출이
+  // 중간에 끊기면서 risk_calculations 가 running 으로 남는다
+  // (그 잔재는 다음 부팅에서 StaleCalculationRecovery 가 정리한다).
+  app.enableShutdownHooks();
+
   app.setGlobalPrefix(prefix);
   app.useGlobalPipes(
     new ValidationPipe({
@@ -77,9 +86,22 @@ async function bootstrap(): Promise<void> {
         '제주 연안 해파리 위험도 예측/대응 지원 서비스 API.',
         '',
         '### 경로 규약',
-        '- `/public/*` : 일반 사용자 앱. 인증 불필요(비로그인 사용 가능). 남용 방지용 레이트 리밋 적용.',
+        '- `/public/*` : 일반 사용자 앱. 로그인 없이 쓸 수 있다. 남용 방지용 레이트 리밋 적용.',
         '- `/admin/*` : 관리자/운영자 웹. `Authorization: Bearer <accessToken>` 필수.',
         '- `/system/*` : 배치·운영 트리거. `x-system-key: <SYSTEM_API_KEY>` 헤더 필수(없으면 401).',
+        '',
+        '### 사용자 식별 (`/public/*` 중 개인 자료를 다루는 API)',
+        '관심 해변·알림함·푸시 구독은 **누구의 것인지**가 있어야 한다. 식별 방법은 둘 중 하나다.',
+        '',
+        '- **로그인 사용자**: `Authorization: Bearer <accessToken>`',
+        '- **비로그인 사용자**: `POST /public/guest-tokens` 로 발급받은 `userToken`',
+        '  - 앱 최초 실행 때 한 번 발급받아 기기에 저장하고, 이후 계속 같은 값을 보낸다.',
+        '  - 등록은 body 의 `userToken`, 조회/해제는 쿼리 `?token=` 으로 보낸다.',
+        '',
+        '⚠️ **클라이언트가 지어낸 토큰이나 `userId` 는 받지 않는다.** 게스트 토큰은 서버가 서명해',
+        '발급한 값만 유효하고(아니면 401 `GUEST_TOKEN_INVALID`), 요청 본문·쿼리·헤더의 `userId` 는',
+        '아예 스키마에 없어 보내면 400 이다. 자칭 신원으로 남의 자료에 닿을 수 없게 하기 위해서다.',
+        '(해변 목록·위험도 조회처럼 개인 자료가 아닌 API 는 아무 식별 없이 그대로 호출하면 된다)',
         '',
         '### 업로드 이미지',
         '제보 사진은 `POST /public/reports/image` 로 올리고, 응답의 `imageUrl`(`/uploads/파일명`)로 조회한다.',

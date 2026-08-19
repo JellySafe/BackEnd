@@ -4,7 +4,7 @@ import { OPERATION_STATUSES, OperationStatus } from '../../../../domain/operatio
 
 /**
  * ADM-007 POST /admin/operation-actions 요청.
- * OP-002 필수값(beachId, operationStatus)은 여기서, createdBy 는 x-user-id 헤더에서 받는다.
+ * OP-002 필수값(beachId, operationStatus)은 여기서, createdBy 는 요청 본문이 아니라 인증된 JWT 주체(@CurrentUser)에서 받는다.
  */
 export class RecordOperationActionRequest {
   @ApiProperty({

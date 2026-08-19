@@ -51,7 +51,7 @@ export interface DailyReportProps {
   id?: Id;
   beachId: Id;
   reportDate: Date;
-  summaryJson: unknown | null;
+  summaryJson: unknown;
   maxRiskLevel: RiskLevel | null;
   riskChangeSummary: string | null;
   reportCount: number;

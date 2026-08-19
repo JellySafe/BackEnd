@@ -1,5 +1,6 @@
 import { Inject, Injectable, Logger } from '@nestjs/common';
 import { RiskRecalcTriggerPort } from '@contexts/observation/application/port/out/risk-recalc-trigger.port';
+import { JOB, JobGate } from '@shared/scheduling/job-gate';
 import {
   CalculateRiskUseCase,
   CALCULATE_RISK_USE_CASE,
@@ -17,13 +18,27 @@ export class ObservationRecalcAdapter implements RiskRecalcTriggerPort {
   private readonly logger = new Logger(ObservationRecalcAdapter.name);
 
   constructor(
+    private readonly gate: JobGate,
     @Inject(CALCULATE_RISK_USE_CASE) private readonly calculateRisk: CalculateRiskUseCase,
   ) {}
 
+  /**
+   * 전 해변 재산출이므로 `POST /system/risk/calculate`(전체) · RISK_RECALC_CRON 과 **같은 게이트**를
+   * 지난다. 셋 다 같은 (beach_id, horizon) 의 is_latest 행을 갈아치우므로, 겹치면 트랜잭션이
+   * 서로를 기다리고 산출 이력만 중복으로 쌓인다.
+   *
+   * 겹쳐서 건너뛰어도 손실이 없다: 이미 도는 재산출이 같은 관측 데이터를 읽어 같은 결과를 낸다.
+   */
   async recalcAll(): Promise<void> {
-    const result = await this.calculateRisk.calculate({ triggerType: 'data_sync' });
+    const outcome = await this.gate.run(JOB.RISK_RECALC_ALL, () =>
+      this.calculateRisk.calculate({ triggerType: 'data_sync' }),
+    );
+    if (!outcome.ran) {
+      this.logger.warn('위험도 재산출이 이미 진행 중 → 관측 배치의 재산출은 건너뛴다');
+      return;
+    }
     this.logger.log(
-      `관측 배치 위험도 재산출: ${result.calculationId} (해변 ${result.affectedBeachCount}개)`,
+      `관측 배치 위험도 재산출: ${outcome.result.calculationId} (해변 ${outcome.result.affectedBeachCount}개)`,
     );
   }
 }

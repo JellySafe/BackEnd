@@ -90,7 +90,7 @@ export class DailyReportResponse {
     nullable: true,
     example: { hourlyRisk: [], reportsByType: {} },
   })
-  summaryJson!: unknown | null;
+  summaryJson!: unknown;
 
   @ApiProperty({ example: true, description: '저장본 여부(false면 즉석 집계본)' })
   persisted!: boolean;

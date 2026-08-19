@@ -29,6 +29,16 @@ export interface CollectOptions {
    * 사실상 모든 해변에 상수 +15 를 더하는 무의미한 신호였다(변별력 0).
    */
   pastSeasonWindowDays: number;
+
+  /**
+   * 과거 이력을 몇 해 전까지 되짚을지.
+   *
+   * 창을 유한하게 두는 이유는 두 가지다.
+   *  1) 의미 — 5년보다 오래된 출현은 해안 환경도 관측 체계도 달라져 오늘의 근거가 되기 어렵다.
+   *  2) 성능 — 이 값이 곧 쿼리가 훑는 날짜 구간의 개수다(연도당 1구간). 유한해야
+   *     `occurred_at` 인덱스의 범위 스캔으로 끝난다(risk-input.kysely-query.ts 참고).
+   */
+  pastSeasonYears: number;
 }
 
 /**

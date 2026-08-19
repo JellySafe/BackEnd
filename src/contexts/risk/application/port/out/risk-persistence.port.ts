@@ -41,6 +41,17 @@ export interface RiskPersistencePort {
   /** 현재 최신본(is_latest=1)의 위험 단계 조회. 없으면 null. (단계 상승 판정용) */
   findLatestLevel(beachId: Id, horizon: RiskHorizon): Promise<RiskLevel | null>;
 
+  /**
+   * 종료 기록 없이 `running` 으로 남은 산출 배치를 실패로 확정하고 그 수를 돌려준다.
+   *
+   * 배치 도중 프로세스가 죽으면(배포로 인한 SIGTERM, OOM, 머신 재시작) finishCalculation 이
+   * 불리지 못해 그 행이 영원히 `running` 으로 남는다. 아무도 지우지 않으므로 운영 화면에서
+   * "산출이 진행 중"으로 계속 보이고, 진짜로 도는 배치와 구분되지 않는다.
+   *
+   * @param startedBefore 이 시각 이전에 시작된 running 행만 대상(현재 도는 배치를 건드리지 않기 위함)
+   */
+  failStaleRunningCalculations(startedBefore: Date): Promise<number>;
+
   /** 배치 종료 처리(상태/영향 해변 수/에러/종료시각). */
   finishCalculation(
     calculationId: Id,

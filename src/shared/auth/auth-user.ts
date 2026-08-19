@@ -1,5 +1,5 @@
 /**
- * 인증된 요청 주체. AdminAuthGuard 가 JWT 를 검증해 req.user 에 채운다.
+ * 인증된 요청 주체. JwtAuthGuard 가 JWT 를 검증해 req.user 에 채운다.
  */
 export interface AuthUser {
   userId: number;

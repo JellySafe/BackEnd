@@ -77,6 +77,18 @@ export class RiskPrismaRepository implements RiskPersistencePort {
     return row ? (row.riskLevel as RiskLevel) : null;
   }
 
+  async failStaleRunningCalculations(startedBefore: Date): Promise<number> {
+    const result = await this.prisma.riskCalculation.updateMany({
+      where: { calcStatus: 'running', startedAt: { lt: startedBefore } },
+      data: {
+        calcStatus: 'failed',
+        finishedAt: new Date(),
+        errorMessage: '종료 기록 없이 중단됨(프로세스 재시작으로 추정). 부팅 시 자동 정리.',
+      },
+    });
+    return result.count;
+  }
+
   async finishCalculation(
     calculationId: Id,
     status: CalcStatus,

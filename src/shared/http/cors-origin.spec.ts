@@ -5,7 +5,7 @@ function allows(raw: string | undefined, origin: string | undefined): boolean {
   const fn = buildCorsOrigin(raw);
   if (typeof fn !== 'function') return fn === true;
   let allowed = false;
-  fn(origin as string, (_err, result) => {
+  fn(origin, (_err, result) => {
     allowed = result === true;
   });
   return allowed;

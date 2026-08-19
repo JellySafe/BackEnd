@@ -9,7 +9,7 @@ export function toDomain(row: PrismaDailyReport): DailyReport {
     id: toId(row.id),
     beachId: toId(row.beachId),
     reportDate: row.reportDate,
-    summaryJson: (row.summaryJson as unknown) ?? null,
+    summaryJson: row.summaryJson ?? null,
     maxRiskLevel: row.maxRiskLevel === null ? null : (row.maxRiskLevel as RiskLevel),
     riskChangeSummary: row.riskChangeSummary,
     reportCount: row.reportCount,
@@ -27,7 +27,7 @@ export function toPersistence(report: DailyReport): Prisma.DailyReportUncheckedC
   return {
     beachId: BigInt(s.beachId),
     reportDate: s.reportDate,
-    summaryJson: (s.summaryJson ?? undefined) as Prisma.InputJsonValue | undefined,
+    summaryJson: s.summaryJson ?? undefined,
     maxRiskLevel: s.maxRiskLevel,
     riskChangeSummary: s.riskChangeSummary,
     reportCount: s.reportCount,

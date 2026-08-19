@@ -64,7 +64,7 @@ export class DailyReportScheduler implements OnModuleInit {
         void this.run();
       },
     });
-    this.registry.addCronJob(JOB_NAME, job as unknown as CronJob);
+    this.registry.addCronJob(JOB_NAME, job);
     job.start();
     this.logger.log(`일간 리포트 스케줄러 등록됨 (cron="${cronTime}", tz=${KST_TIME_ZONE})`);
   }

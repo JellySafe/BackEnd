@@ -130,6 +130,11 @@ export class GlobalExceptionFilter implements ExceptionFilter {
         return 'NOT_FOUND';
       case 409:
         return 'CONFLICT';
+      case 413:
+        // multer LIMIT_FILE_SIZE → Nest PayloadTooLargeException. 업로드 상한 초과.
+        return 'PAYLOAD_TOO_LARGE';
+      case 415:
+        return 'UNSUPPORTED_MEDIA_TYPE';
       case 422:
         return 'UNPROCESSABLE';
       case 429:

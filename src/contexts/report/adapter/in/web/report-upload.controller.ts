@@ -1,18 +1,14 @@
 import { randomBytes } from 'node:crypto';
 import { mkdir, writeFile } from 'node:fs/promises';
-import { extname, join } from 'node:path';
-import {
-  Controller,
-  Post,
-  UploadedFile,
-  UseInterceptors,
-} from '@nestjs/common';
+import { join } from 'node:path';
+import { Controller, Post, UploadedFile, UseInterceptors } from '@nestjs/common';
 import { ConfigService } from '@nestjs/config';
 import { FileInterceptor } from '@nestjs/platform-express';
 import { ApiBody, ApiConsumes, ApiOperation, ApiTags } from '@nestjs/swagger';
 import { AppConfig } from '@shared/config/app.config';
 import { ApiOkData } from '@shared/http/api-response.decorator';
 import { ValidationError } from '@shared/kernel/domain-error';
+import { detectImage } from './image-signature';
 import { UploadImageResponse } from './dto/upload-image.response';
 
 /**
@@ -25,8 +21,21 @@ interface UploadedImageFile {
   buffer: Buffer;
 }
 
-/** 허용 이미지 확장자(원본 확장자 정규화용). */
-const ALLOWED_EXT = new Set(['.jpg', '.jpeg', '.png', '.gif', '.webp', '.heic']);
+/**
+ * 업로드 허용 최대 크기(바이트).
+ *
+ * ── 왜 필요한가 ──────────────────────────────────────────────────────────────────────
+ * 예전에는 limits 를 주지 않아 multer 기본값(무제한)이 적용됐고, 파일 전체가 **메모리 버퍼**로
+ * 올라왔다. 운영 머신은 512MB(shared-cpu-1x) 다. 인증이 필요 없는 이 경로에 큰 요청 하나면
+ * 프로세스가 OOM 으로 죽는다. 레이트 리밋은 요청 '횟수'만 제한하지 바이트를 막지 못한다.
+ *
+ * ── 왜 12MB 인가 ─────────────────────────────────────────────────────────────────────
+ * 최신 휴대폰 카메라 원본이 가장 큰 입력이다. 4800만 화소 JPEG 이 8~10MB, HEIC 는 더 작다.
+ * 12MB 면 원본을 리사이즈 없이 올려도 통과하면서, 동시 업로드가 몰려도 메모리가 버틴다
+ * (레이트 리밋 REPORT_BURST 10회/분 × 12MB = 최악 120MB).
+ * 초과 시 multer 가 LIMIT_FILE_SIZE 를 내고 Nest 가 413 으로 변환한다.
+ */
+const MAX_UPLOAD_BYTES = 12 * 1024 * 1024;
 
 /**
  * 제보 이미지 업로드 API (USR-004 보완).
@@ -50,7 +59,9 @@ export class ReportUploadController {
       '제보 사진을 서버에 올리고 `imageUrl` 을 돌려받는다. 그 값을 `POST /public/reports` 의 body 에 넣는다.',
       '',
       '- `multipart/form-data` 로 보내고, 파일 필드 이름은 **`image`** 여야 한다.',
-      '- 이미지 파일만 허용(jpg, png, gif, webp, heic).',
+      '- 이미지 파일만 허용(jpg, png, gif, webp, heic). **파일 내용으로 판별**하므로',
+      '  확장자나 Content-Type 만 바꿔서는 통과하지 않는다(400 `UPLOAD_IMAGE_INVALID_TYPE`).',
+      '- 최대 **12MB**. 초과하면 413 이다(휴대폰 카메라 원본은 보통 10MB 미만이라 그대로 올려도 된다).',
       '- 인증 불필요(비로그인 제보 지원). 단, 남용 방지를 위해 IP 당 레이트 리밋이 걸린다(초과 시 429).',
       '',
       '서버의 `UPLOAD_DIR`(운영은 영구 볼륨)에 저장하고 `/uploads/파일명` 경로를 준다.',
@@ -71,21 +82,31 @@ export class ReportUploadController {
     },
   })
   @ApiOkData(UploadImageResponse)
-  @UseInterceptors(FileInterceptor('image'))
+  @UseInterceptors(
+    // 파일 1개, 12MB 상한. 상한을 넘으면 multer 가 스트림을 끊고 Nest 가 413 을 낸다
+    // (버퍼가 메모리에 다 쌓인 뒤가 아니라 읽는 도중에 끊긴다 — OOM 방어의 핵심).
+    FileInterceptor('image', { limits: { fileSize: MAX_UPLOAD_BYTES, files: 1 } }),
+  )
   async uploadImage(
     @UploadedFile() file?: UploadedImageFile,
   ): Promise<{ imageUrl: string; thumbnailUrl: string | null }> {
     if (!file) {
       throw new ValidationError('UPLOAD_IMAGE_REQUIRED', '업로드할 이미지 파일이 필요합니다.');
     }
-    if (!file.mimetype?.startsWith('image/')) {
-      throw new ValidationError('UPLOAD_IMAGE_INVALID_TYPE', '이미지 파일만 업로드할 수 있습니다.');
+
+    // 형식은 **파일 내용**으로 판별한다. mimetype 헤더와 원본 확장자는 클라이언트가 주장하는
+    // 값이라 검증 근거가 못 된다(image-signature.ts 참고). 저장 확장자도 판별 결과에서 뽑아
+    // 파일 내용과 확장자가 어긋날 여지를 없앤다.
+    const detected = detectImage(file.buffer);
+    if (detected === null) {
+      throw new ValidationError(
+        'UPLOAD_IMAGE_INVALID_TYPE',
+        '이미지 파일만 업로드할 수 있습니다(jpg, png, gif, webp, heic).',
+      );
     }
 
-    const rawExt = extname(file.originalname ?? '').toLowerCase();
-    const ext = ALLOWED_EXT.has(rawExt) ? rawExt : '.jpg';
-    // 충돌 방지: 타임스탬프 + 난수 + 원본 확장자.
-    const filename = `${Date.now()}-${randomBytes(8).toString('hex')}${ext}`;
+    // 충돌 방지: 타임스탬프 + 난수 + 판별된 확장자.
+    const filename = `${Date.now()}-${randomBytes(8).toString('hex')}${detected.extension}`;
 
     // 저장 위치는 AppConfig.uploadDir(UPLOAD_DIR). main.ts 의 정적 서빙이 같은 값을 보므로
     // 여기서 만든 imageUrl 은 반드시 열린다(하드코딩 상수를 쓰면 둘이 어긋난다).

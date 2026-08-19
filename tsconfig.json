@@ -26,6 +26,6 @@
       "@contexts/*": ["src/contexts/*"]
     }
   },
-  "include": ["src/**/*"],
+  "include": ["src/**/*", "test/**/*", "prisma/**/*", "scripts/**/*", "eslint.config.mjs"],
   "exclude": ["node_modules", "dist"]
 }

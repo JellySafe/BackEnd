@@ -66,7 +66,7 @@ export class NotificationPurgeScheduler implements OnModuleInit {
         void this.run();
       },
     });
-    this.registry.addCronJob(JOB_NAME, job as unknown as CronJob);
+    this.registry.addCronJob(JOB_NAME, job);
     job.start();
     this.logger.log(
       `알림 파기 스케줄러 등록됨 (cron="${cronTime}", 보관 ${this.config.notificationRetentionDays}일)`,

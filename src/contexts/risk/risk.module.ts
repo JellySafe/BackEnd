@@ -19,6 +19,7 @@ import { RiskKyselyQuery } from './adapter/out/persistence/risk.kysely-query';
 import { RiskAlertAdapter } from './adapter/out/risk-alert.adapter';
 import { RiskRecalcScheduler } from './adapter/in/schedule/risk-recalc.scheduler';
 import { RiskHistoryPurgeScheduler } from './adapter/in/schedule/risk-history-purge.scheduler';
+import { StaleCalculationRecovery } from './adapter/in/lifecycle/stale-calculation-recovery';
 import { RiskHistoryPurgePrismaRepository } from './adapter/out/persistence/risk-history-purge.prisma-repository';
 import { RISK_HISTORY_PURGE } from './application/port/out/risk-history-purge.port';
 import { RULE_CONFIG } from './application/port/out/rule-config.port';
@@ -69,6 +70,8 @@ import {
     // 주기적 위험도 재산출 스케줄러 (RISK_RECALC_CRON, triggerType='schedule')
     RiskRecalcScheduler,
     RiskHistoryPurgeScheduler,
+    // 부팅 시 종료 기록 없이 남은 running 산출을 실패로 확정한다(비정상 종료 잔재 정리).
+    StaleCalculationRecovery,
   ],
   exports: [RISK_RECALC, RISK_RECALC_TRIGGER, CALCULATE_RISK_USE_CASE],
 })

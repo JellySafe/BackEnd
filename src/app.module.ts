@@ -9,6 +9,7 @@ import { PrismaModule } from './shared/persistence/prisma/prisma.module';
 import { KyselyModule } from './shared/persistence/kysely/kysely.module';
 import { AuthModule } from './shared/auth/auth.module';
 import { HealthModule } from './shared/health/health.module';
+import { SchedulingModule } from './shared/scheduling/scheduling.module';
 import { validateEnv } from './shared/config/env.validation';
 import { BeachModule } from './contexts/beach/beach.module';
 import { SpeciesModule } from './contexts/species/species.module';
@@ -31,7 +32,7 @@ import { SecondaryModule } from './contexts/secondary/secondary.module';
  *
  * 전역 가드는 셋이다(등록 순서 무관 — 각자 자기 경로만 검사한다):
  *  - ApiThrottlerGuard(여기)   : IP 레이트 리밋. /system, /health, /docs 제외.
- *  - AdminAuthGuard(AuthModule): /admin/* JWT.
+ *  - JwtAuthGuard(AuthModule)  : /admin/* JWT 필수, 그 외 경로는 Bearer 가 있으면 검증.
  *  - SystemAuthGuard(AuthModule): /system/* x-system-key.
  */
 @Module({
@@ -44,6 +45,8 @@ import { SecondaryModule } from './contexts/secondary/secondary.module';
     KyselyModule,
     AuthModule,
     HealthModule,
+    // 배치 중복 실행 방지 게이트(크론과 /system 수동 트리거가 같은 인스턴스를 공유해야 한다).
+    SchedulingModule,
     // 바운디드 컨텍스트
     RiskModule,
     ReportModule,
