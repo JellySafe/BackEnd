@@ -23,7 +23,7 @@ import { OperationStatusResponse } from './dto/operation-status.response';
 
 /**
  * 관리자 운영 대응 API (ADM-006 대응 권고, ADM-007 운영상태/대응기록).
- * 전역 AdminAuthGuard 가 /admin 경로를 보호하며, 기록 주체(createdBy)는
+ * 전역 JwtAuthGuard 가 /admin 경로를 보호하며, 기록 주체(createdBy)는
  * @CurrentUser 로 꺼낸 인증 주체(user.userId)를 사용한다.
  */
 @ApiTags('operation')

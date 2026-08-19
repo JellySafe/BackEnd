@@ -10,6 +10,7 @@ import {
   VerifiedReportInput,
 } from '../../../domain/risk-assessment';
 import { ForecastPoint } from '../../../domain/risk-forecast';
+import { pastSeasonRanges } from '../../../domain/past-season-window';
 import {
   ActiveBeachRef,
   CollectOptions,
@@ -55,11 +56,40 @@ function numOrNull(v: unknown): number | null {
  * 같은 시군구의 광역 출현 경보는 그 해변에 대한 유효한 근거다.
  */
 function nearBeach(lat: number, lng: number, radiusKm: number, region: string) {
+  const box = boundingBox(lat, lng, radiusKm);
   return sql<boolean>`(
     (j.lat IS NOT NULL AND j.lng IS NOT NULL
+      AND j.lat BETWEEN ${box.minLat} AND ${box.maxLat}
+      AND j.lng BETWEEN ${box.minLng} AND ${box.maxLng}
       AND ST_Distance_Sphere(POINT(${lng}, ${lat}), POINT(j.lng, j.lat)) <= ${sql.lit(radiusKm * 1000)})
     OR (j.lat IS NULL AND j.region = ${region})
   )`;
+}
+
+/**
+ * 반경을 감싸는 위경도 사각형. **정확한 판정이 아니라 값싼 사전 필터**다.
+ *
+ * ST_Distance_Sphere 는 행마다 POINT 를 만들어 구면 거리를 계산한다. 사각형 비교는 단순
+ * 숫자 비교라 훨씬 싸고, 무엇보다 `ix_jellyfish_occurrences_geo (lat, lng)` 를 쓸 수 있는
+ * 형태다(컬럼에 함수를 씌우지 않는다). 사각형을 통과한 소수의 행만 정확한 거리 계산을 받는다.
+ *
+ * 사각형은 원보다 넓으므로(모서리) 사각형만으로는 판정할 수 없다 — 그래서 거리 조건을
+ * AND 로 그대로 남긴다. 결과 집합은 예전과 **정확히 같고** 계산량만 준다.
+ *
+ * 경도 1도의 거리는 위도에 따라 줄어들어 cos(lat) 로 나눈다. 제주(33°N)에서는 약 1.19배지만,
+ * 극지방에서 0 으로 나누는 일이 없도록 하한을 둔다.
+ */
+function boundingBox(lat: number, lng: number, radiusKm: number) {
+  const KM_PER_DEG_LAT = 111.32;
+  const latDelta = radiusKm / KM_PER_DEG_LAT;
+  const cosLat = Math.max(Math.cos((lat * Math.PI) / 180), 0.01);
+  const lngDelta = radiusKm / (KM_PER_DEG_LAT * cosLat);
+  return {
+    minLat: lat - latDelta,
+    maxLat: lat + latDelta,
+    minLng: lng - lngDelta,
+    maxLng: lng + lngDelta,
+  };
 }
 
 /**
@@ -167,6 +197,8 @@ export class RiskInputKyselyQuery implements RiskInputPort {
               options.nearbyRadiusKm,
               beach.region,
               options.pastSeasonWindowDays,
+              options.pastSeasonYears,
+              new Date(now),
             ),
           ]);
 
@@ -322,17 +354,30 @@ export class RiskInputKyselyQuery implements RiskInputPort {
     radiusKm: number,
     region: string,
     windowDays: number,
+    years: number,
+    now: Date,
   ): Promise<number> {
-    // DAYOFYEAR 차이를 연말/연초를 넘어서도 올바르게 재려면 365 를 감안한 순환 거리를 써야 한다.
-    const seasonalGap = sql<number>`LEAST(
-      ABS(DAYOFYEAR(j.occurred_at) - DAYOFYEAR(CURDATE())),
-      365 - ABS(DAYOFYEAR(j.occurred_at) - DAYOFYEAR(CURDATE()))
-    )`;
+    // 계절 창을 **애플리케이션에서 구체적인 날짜 구간으로** 만든다(domain/past-season-window.ts).
+    //
+    // 예전에는 SQL 안에서 DAYOFYEAR 차이를 계산했다. 컬럼에 함수를 씌운 조건이라 인덱스를
+    // 쓸 수 없어 매 산출마다 테이블 전체를 훑었고(해변 12곳 × 30분 = 하루 576회),
+    // 윤년이 섞이면 365 고정 나머지 계산이 하루씩 어긋나기도 했다.
+    //
+    // 지금은 연도별 `occurred_at >= ? AND occurred_at < ?` 만 남는다. 전부 상수 구간이라
+    // ix_jellyfish_occurrences_time_region 의 선두 컬럼으로 범위 스캔이 되고, 구간이 여러 개여도
+    // MySQL 의 range 접근이 그대로 처리한다. 결과 집합은 종전과 같다.
+    const ranges = pastSeasonRanges(now, windowDays, years);
+    if (ranges.length === 0) return 0;
 
     const row = await this.db
       .selectFrom('jellyfish_occurrences as j')
-      .where(sql<boolean>`j.occurred_at < CURDATE() - INTERVAL 1 YEAR + INTERVAL ${sql.lit(windowDays)} DAY`)
-      .where(sql<boolean>`${seasonalGap} <= ${sql.lit(windowDays)}`)
+      .where((eb) =>
+        eb.or(
+          ranges.map((r) =>
+            eb.and([eb('j.occurred_at', '>=', r.from), eb('j.occurred_at', '<', r.to)]),
+          ),
+        ),
+      )
       .where(nearBeach(lat, lng, radiusKm, region))
       .select((eb) => eb.fn.countAll<number>().as('cnt'))
       .executeTakeFirst();

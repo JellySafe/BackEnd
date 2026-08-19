@@ -1,16 +1,10 @@
-import {
-  Body,
-  Controller,
-  Delete,
-  Get,
-  Headers,
-  HttpCode,
-  Inject,
-  Post,
-  Query,
-} from '@nestjs/common';
-import { ApiNoContentResponse, ApiOperation, ApiTags } from '@nestjs/swagger';
+import { Body, Controller, Delete, Get, HttpCode, Inject, Post, Query } from '@nestjs/common';
+import { ApiBearerAuth, ApiNoContentResponse, ApiOperation, ApiTags } from '@nestjs/swagger';
 import { ApiOkData } from '@shared/http/api-response.decorator';
+import { AuthUser } from '@shared/auth/auth-user';
+import { CurrentUser, Public } from '@shared/auth/auth.decorators';
+import { GuestTokenService } from '@shared/auth/guest-token.service';
+import { resolvePublicOwner } from '@shared/auth/public-owner';
 import {
   GetPushPublicKeyUseCase,
   GET_PUSH_PUBLIC_KEY_USE_CASE,
@@ -19,7 +13,6 @@ import {
   RevokePushSubscriptionUseCase,
   REVOKE_PUSH_SUBSCRIPTION_USE_CASE,
 } from '../../../application/port/in/notification-use-cases';
-import { PushConsentOwner } from '../../../application/port/out/push-consent-repository.port';
 import { RegisterPushSubscriptionRequest } from './dto/register-push-subscription.request';
 import { RevokePushSubscriptionQuery } from './dto/revoke-push-subscription.query';
 import {
@@ -49,6 +42,7 @@ export class PublicPushController {
     private readonly registerSubscription: RegisterPushSubscriptionUseCase,
     @Inject(REVOKE_PUSH_SUBSCRIPTION_USE_CASE)
     private readonly revokeSubscription: RevokePushSubscriptionUseCase,
+    private readonly guestTokens: GuestTokenService,
   ) {}
 
   @ApiOperation({
@@ -69,6 +63,7 @@ export class PublicPushController {
     ].join('\n'),
   })
   @ApiOkData(PushPublicKeyResponse)
+  @Public()
   @Get('public-key')
   publicKey(): PushPublicKeyResponse {
     return this.getPublicKey.getPublicKey();
@@ -81,22 +76,21 @@ export class PublicPushController {
       '(이 API 를 호출하지 않으면 알림함을 열어봐야만 알림을 볼 수 있다)',
       '',
       '**사용자 식별 (둘 중 하나)**',
-      '- 비로그인: body 의 `userToken` — **관심 해변 등록에 쓴 것과 같은 값이어야 한다.**',
+      '- 로그인: `Authorization: Bearer <accessToken>` 헤더',
+      '- 비로그인: body 의 `userToken` — `POST /public/guest-tokens` 발급값이며',
+      '  **관심 해변 등록에 쓴 것과 같은 값이어야 한다.**',
       '  다른 값을 쓰면 구독은 저장되지만 알림이 오지 않는다(관심 해변과 매칭되지 않는다).',
-      '- 로그인: `x-user-id` 헤더 또는 body 의 `userId`',
       '',
       '**멱등하다.** 같은 endpoint 를 다시 보내면 행이 늘지 않고 갱신된다(created=false).',
       '브라우저는 앱을 열 때마다 구독을 다시 보내는 게 정상 패턴이므로 매번 호출해도 된다.',
     ].join('\n'),
   })
+  @ApiBearerAuth('bearer')
   @ApiOkData(RegisterPushSubscriptionResponse)
   @Post('subscriptions')
-  register(
-    @Body() body: RegisterPushSubscriptionRequest,
-    @Headers('x-user-id') userIdHeader?: string,
-  ) {
+  register(@Body() body: RegisterPushSubscriptionRequest, @CurrentUser() user?: AuthUser) {
     return this.registerSubscription.register({
-      owner: resolveOwner(body.userToken, body.userId, userIdHeader),
+      owner: resolvePublicOwner(user, body.userToken, this.guestTokens),
       subscription: body.subscription,
     });
   }
@@ -111,34 +105,24 @@ export class PublicPushController {
       '',
       '프론트는 이 호출과 함께 `subscription.unsubscribe()` 도 같이 해주는 게 좋다.',
       '',
+      '**남의 구독은 해제할 수 없다** — 자기 자격증명에 묶인 구독만 대상이다.',
+      '',
       '⚠️ 관심 해변은 그대로 남는다. 알림함(GET /public/alerts)에는 계속 알림이 쌓인다 —',
       '"브라우저 알림창으로 밀어주는 것"만 끄는 것이다.',
     ].join('\n'),
   })
+  @ApiBearerAuth('bearer')
   @ApiNoContentResponse()
   @Delete('subscriptions')
   @HttpCode(204)
   async revoke(
     @Query() query: RevokePushSubscriptionQuery,
-    @Headers('x-user-id') userIdHeader?: string,
+    @CurrentUser() user?: AuthUser,
   ): Promise<void> {
     await this.revokeSubscription.revoke({
-      owner: resolveOwner(query.token, undefined, userIdHeader),
+      owner: resolvePublicOwner(user, query.token, this.guestTokens),
       endpoint: query.endpoint ?? null,
     });
   }
 }
 
-/**
- * 토큰/바디 userId/헤더 x-user-id 를 소유자로 정규화. 로그인(userId) 우선.
- * 관심 해변(PublicFavoriteController)과 같은 규칙이라야 구독과 관심 해변이 같은 사람으로 묶인다.
- */
-function resolveOwner(
-  token: string | undefined,
-  bodyUserId: number | undefined,
-  userIdHeader: string | undefined,
-): PushConsentOwner {
-  const headerId = Number(userIdHeader);
-  const userId = bodyUserId ?? (Number.isInteger(headerId) && headerId > 0 ? headerId : null);
-  return { userId: userId ?? null, userToken: token ?? null };
-}

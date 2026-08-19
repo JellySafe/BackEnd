@@ -7,9 +7,10 @@ import { IsOptional, IsString, MaxLength } from 'class-validator';
  */
 export class RevokePushSubscriptionQuery {
   @ApiPropertyOptional({
-    example: 'guest-9f2c1a7b4e',
+    example: 'gV1sYQ2n8Kd0pZ7mR4tXbwQ.9fH2kLm3QaZ1cV8nT0yPxA',
     maxLength: 64,
-    description: '비로그인 사용자의 게스트 토큰. 로그인 사용자는 x-user-id 헤더를 쓴다.',
+    description:
+      '비로그인 사용자의 게스트 토큰(`POST /public/guest-tokens` 발급값). 로그인 사용자는 대신 `Authorization: Bearer` 를 쓴다.',
   })
   @IsOptional()
   @IsString()

@@ -3,6 +3,7 @@ import { ConfigService } from '@nestjs/config';
 import { SchedulerRegistry } from '@nestjs/schedule';
 import { CronJob } from 'cron';
 import { AppConfig, isCronDisabled } from '@shared/config/app.config';
+import { JOB, JobGate } from '@shared/scheduling/job-gate';
 import {
   CalculateRiskUseCase,
   CALCULATE_RISK_USE_CASE,
@@ -30,11 +31,11 @@ const JOB_NAME = 'risk-recalc';
 export class RiskRecalcScheduler implements OnModuleInit {
   private readonly logger = new Logger(RiskRecalcScheduler.name);
   private readonly config: AppConfig;
-  private running = false;
 
   constructor(
     configService: ConfigService,
     private readonly registry: SchedulerRegistry,
+    private readonly gate: JobGate,
     @Inject(CALCULATE_RISK_USE_CASE) private readonly calculateRisk: CalculateRiskUseCase,
   ) {
     this.config = new AppConfig(configService);
@@ -59,18 +60,20 @@ export class RiskRecalcScheduler implements OnModuleInit {
         void this.run();
       },
     });
-    this.registry.addCronJob(JOB_NAME, job as unknown as CronJob);
+    this.registry.addCronJob(JOB_NAME, job);
     job.start();
     this.logger.log(`위험도 재산출 스케줄러 등록됨 (cron="${cronTime}")`);
   }
 
   /** 전체 활성 해변 위험도 재산출. 이전 실행이 겹치면 스킵한다. */
   async run(): Promise<void> {
-    if (this.running) {
-      this.logger.warn('이전 재산출 작업이 진행 중 → 이번 주기 스킵');
-      return;
-    }
-    this.running = true;
+    // 전 해변 재산출은 `POST /system/risk/calculate`(beachId 미지정)로도 들어온다.
+    // 두 입구가 같은 게이트를 지나야 is_latest 갱신 트랜잭션이 서로를 기다리지 않는다.
+    await this.gate.run(JOB.RISK_RECALC_ALL, () => this.runOnce());
+  }
+
+  /** 게이트 안에서 실제로 도는 본문. */
+  private async runOnce(): Promise<void> {
     try {
       const result = await this.calculateRisk.calculate({ triggerType: 'schedule' });
       this.logger.log(
@@ -80,8 +83,6 @@ export class RiskRecalcScheduler implements OnModuleInit {
       this.logger.error(
         `위험도 재산출 배치 실패: ${err instanceof Error ? err.message : String(err)}`,
       );
-    } finally {
-      this.running = false;
     }
   }
 }

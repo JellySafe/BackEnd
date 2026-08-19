@@ -14,7 +14,7 @@ export const SYSTEM_KEY_SECURITY = 'system-key';
 const SYSTEM_PATH = /\/system(\/|$)/;
 
 /**
- * 전역 시스템 인증 가드. `/system/*` 만 보호한다(그 외 경로는 통과 → AdminAuthGuard 가 처리).
+ * 전역 시스템 인증 가드. `/system/*` 만 보호한다(그 외 경로는 통과 → JwtAuthGuard 가 처리).
  *
  * 왜 필요한가:
  *   `/system/*` 은 인증 없이 열려 있었고(`POST /api/system/risk/calculate` → 201),

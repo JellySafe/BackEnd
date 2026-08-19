@@ -84,14 +84,20 @@ npm run start:prod       # 빌드 후 dist 실행
 
 ### 검증 스크립트
 ```bash
-npm run typecheck        # tsc --noEmit (전체 타입 검사)
+npm run typecheck        # tsc --noEmit (src + test + prisma + scripts)
+npm run lint             # eslint (--max-warnings 0, 소스를 고치지 않는다)
+npm run lint:fix         # 자동 수정
+npm test                 # jest 단위 테스트 (DB 불필요)
+npm run test:e2e         # 인가 경계 테스트 (DB 불필요)
 npm run build            # nest build
 ```
+CI(`.github/workflows/ci.yml`)가 위 다섯을 그대로 돌린다.
 
 ## 주요 엔드포인트 (일부)
 
 | 메서드 | 경로 | 기능 |
 |---|---|---|
+| POST | `/api/public/guest-tokens` | 비로그인 사용자 식별 토큰 발급 (앱 최초 1회) |
 | POST | `/api/public/reports` | 해파리 제보 (USR-004) |
 | GET | `/api/public/reports/:id` | 제보 결과/AI 안내 (USR-005) |
 | GET | `/api/public/beaches` | 해변 목록/검색 + 현재 위험단계 (USR-001) |
@@ -108,13 +114,78 @@ npm run build            # nest build
 | GET/POST | `/api/admin/daily-reports` | 일간 리포트 (ADM-011) |
 | POST | `/api/system/risk/calculate` | 위험도 산출 (SYS-003, 내부/배치) |
 
+## 인증 · 인가
+
+경로 프리픽스가 곧 인증 정책이다. 전역 가드 셋이 각자 자기 경로만 검사한다.
+
+| 경로 | 자격증명 | 가드 |
+|---|---|---|
+| `/public/*` | 없음(공개 조회) 또는 아래 "사용자 식별" | `JwtAuthGuard`(Bearer 가 있으면 검증) |
+| `/admin/*` | `Authorization: Bearer <accessToken>` | `JwtAuthGuard`(필수) + `@Roles` |
+| `/system/*` | `x-system-key: <SYSTEM_API_KEY>` | `SystemAuthGuard`(미설정 시 fail-closed) |
+
+### 사용자 식별 (`/public/*` 중 개인 자료)
+
+관심 해변·알림함·푸시 구독은 소유자가 있어야 한다. **신원은 자격증명에서만 나온다.**
+
+- 로그인: `Authorization: Bearer <accessToken>` → `@CurrentUser` 의 `userId`
+- 비로그인: `POST /public/guest-tokens` 가 발급한 `userToken`(46자, HMAC 서명)
+  - 앱 최초 실행 때 한 번 발급받아 기기에 저장하고 이후 계속 같은 값을 보낸다.
+  - 등록은 body 의 `userToken`, 조회/해제는 쿼리 `?token=`.
+
+요청 본문·쿼리·헤더의 `userId`(`x-user-id` 포함)는 **받지 않는다.** 스키마에 없으므로 보내면 400 이고,
+서버가 서명하지 않은 게스트 토큰은 401 이다. 자칭 신원으로 남의 자료에 닿을 수 없게 하기 위해서다
+(관심 해변은 위험 알림의 발송 대상이라, 사칭이 곧 **타인의 안전 알림 무력화**가 된다).
+
+이 경계는 `test/authz.e2e-spec.ts` 가 실제 HTTP 요청으로 지킨다(`npm run test:e2e`).
+
+## 운영에서 알아둘 설정
+
+| 환경변수 | 기본값 | 왜 중요한가 |
+|---|---|---|
+| `JWT_SECRET` | (필수, 32자 이상) | 관리자 토큰 + 게스트 토큰 HMAC 의 원본. 회전하면 발급된 게스트 토큰이 전부 무효가 된다. |
+| `RISK_RULE_VERSION` | `v1` (운영 `v3`) | `v1\|v2\|v3` 외의 값이면 **기동하지 않는다.** 오타는 조용한 v1 롤백이 되기 때문. |
+| `MOCK_COLLECTOR_FALLBACK` | 운영 `false` / 그 외 `true` | 운영에서 켜면 외부 API 장애 시 **가짜 관측치·가짜 해파리 출현이 위험도로 들어간다.** |
+| `SYSTEM_API_KEY` | 없음 | 미설정 시 `/system/*` 전면 차단(fail-closed). |
+| `RISK_CALCULATION_STALE_MINUTES` | `30` | 부팅 시 이보다 오래 `running` 인 산출 배치를 실패로 확정한다(비정상 종료 잔재). |
+| `OCCURRENCE_RETENTION_YEARS` | `6` | `PAST_OCCURRENCE` 가 과거 5년을 세므로 그보다 짧으면 **그 룰이 조용히 죽는다**(5로 클램프). |
+| `DB_POOL_LIMIT` + `DATABASE_URL?connection_limit=` | `10` + Prisma 기본 | 커넥션 풀이 **두 개**다. DB 가 보는 접속 수는 합이며, 기동 로그에 둘 다 찍힌다. |
+
+## 배치와 중복 실행
+
+같은 배치로 들어오는 입구가 여럿이다. 전부 **하나의 게이트**(`shared/scheduling/job-gate.ts`)를 지난다.
+
+| 배치 | 입구 |
+|---|---|
+| `observation-sync` | `OBSERVATION_SYNC_CRON` 크론 · `POST /system/observations/sync` |
+| `risk-recalc-all` | `RISK_RECALC_CRON` 크론 · `POST /system/risk/calculate`(beachId 미지정) · 관측 배치의 재산출 |
+
+겹치면 크론은 조용히 다음 주기를 기다리고, `/system/*` 수동 트리거는 **409** 를 준다
+(조용히 넘기면 운영자는 눌렀는데 아무 일도 안 일어난 이유를 알 수 없다).
+해변 1곳 재산출(`beachId` 지정)은 제보 검수가 부르는 경로라 게이트를 타지 않는다 — 스킵하면
+검수는 끝났는데 위험도가 그대로인 상태가 된다.
+
+게이트는 **인프로세스**다. 머신을 늘리면 분산 락으로 바꿔야 하고, 고칠 곳은 그 파일 하나다.
+
+## DB 스키마 변경
+
+DB-first 라 `prisma migrate` 를 운영에 쓰지 않는다. 인덱스 조정처럼 코드만으로 반영되지 않는
+작업은 `prisma/sql/` 에 SQL 로 두고 운영자가 확인 후 적용한다.
+
+```bash
+mysql -h <host> -u <user> -p <db> < prisma/sql/001-index-cleanup.sql
+npx prisma db pull        # 적용 후 schema.prisma 와 대조
+```
+
 ## 후속 작업(TODO)
 
-MVP 골격은 완성돼 부팅·라우팅·DI 가 검증됐다. 다음은 통합/운영 전 보완 항목이다.
-
-1. **인증/인가 가드**: 현재 관리자 식별은 `x-user-id` 헤더 임시 방식. `user` 컨텍스트의 로그인 위에 JWT/세션 가드 + `@CurrentUser` 데코레이터로 교체.
-2. **자동 알림 트리거**: `risk`(단계 상승)·`report`(독성/쏘임 제보) 발생 시 `notification` 의 `CreateNotificationUseCase` 를 호출하도록 각 컨텍스트에 아웃바운드 포트를 추가 배선. (현재 알림 생성/조회 API 자체는 동작.)
-3. **감사 로그 연결**: `report`/`operation` 검수·기록 시 `user` 의 `RecordAuditLogUseCase` 호출 배선 (AUTH-002).
-4. **룰 시드**: `risk_rule_configs` 초기 점수표(`../db` 기준 03_Data_AI 값)와 `beaches`(협재/함덕/이호테우/중문/표선), `notification_templates`, `static_guides` 시드 스크립트.
-5. **이미지 업로드**: 제보 사진은 현재 업로드 완료된 `imageUrl` 을 받는 전제. 실제 업로드(S3 등) 파이프라인 추가.
-6. **PRIV-003 보관정책**: 제보 사진/위치정보 파기 스케줄 (`purge_scheduled_at`).
+1. **이미지 업로드 파이프라인**: 현재는 로컬 볼륨(`UPLOAD_DIR`)에 저장한다. 다중 머신으로 확장하려면
+   S3 등 오브젝트 스토리지로 옮겨야 한다(볼륨은 머신에 묶인다).
+   파기 쪽은 이미 포트로 분리돼 있어 `REPORT_IMAGE_STORAGE` 어댑터만 교체하면 된다.
+2. **수평 확장 준비**: 지금은 단일 머신 전제다. 머신을 늘리려면 세 곳을 **함께** 고쳐야 한다 —
+   레이트 리밋 스토리지(인메모리 → Redis), 배치 중복 방지(`JobGate` → 분산 락),
+   업로드 저장소(로컬 볼륨 → 오브젝트 스토리지).
+3. **어댑터 계층 테스트**: Kysely 로 쓴 SQL(대시보드 집계, `is_latest` 트릭, 파기 배치의 보존 규칙)은
+   아직 회귀 안전망이 없다. testcontainers 기반 통합 테스트가 비용 대비 효과가 가장 크다.
+4. **2차 확장(`secondary/`)**: 제휴/구독/ML/발송 골격은 MVP 연동 대상이 아니며 테스트가 없다.
+   실제로 쓸 때 유스케이스부터 다시 설계한다.

@@ -18,7 +18,7 @@ export interface DailyReportView {
   stingCount: number;
   actionCount: number;
   memo: string | null;
-  summaryJson: unknown | null;
+  summaryJson: unknown;
   persisted: boolean;
   /** 그날의 위험도 산출 이력(시간순). 화면의 "위험도 변화" 그래프 원자료. */
   riskTrend?: RiskTrendPoint[];

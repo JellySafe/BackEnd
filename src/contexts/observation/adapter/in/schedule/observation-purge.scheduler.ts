@@ -12,6 +12,10 @@ import {
   ForecastRepositoryPort,
   FORECAST_REPOSITORY,
 } from '../../../application/port/out/forecast-repository.port';
+import {
+  OccurrenceRepositoryPort,
+  OCCURRENCE_REPOSITORY,
+} from '../../../application/port/out/occurrence-repository.port';
 
 const JOB_NAME = 'observation-purge';
 
@@ -35,6 +39,15 @@ const MIN_RETENTION_DAYS = 7;
 const MS_PER_DAY = 24 * 60 * 60 * 1000;
 
 /**
+ * 해파리 출현 보관 연수의 하한.
+ *
+ * PAST_OCCURRENCE 가 과거 5년의 같은 시기를 세므로(CollectOptions.pastSeasonYears),
+ * 그보다 짧게 지우면 그 룰은 점수표에 남아 있으면서 **실제로는 절대 발화하지 않는** 상태가 된다.
+ * 설정값을 잘못 낮게 잡아도 그 사고가 나지 않도록 하한을 강제한다.
+ */
+const MIN_OCCURRENCE_RETENTION_YEARS = 5;
+
+/**
  * 관측 시계열 파기 스케줄러 (adapter/in/schedule).
  *
  * 관측소 19곳 × 30분마다 수집 → 하루 700행 이상 쌓인다. 위험도 산출은 최근 7일치만 보고,
@@ -56,6 +69,7 @@ export class ObservationPurgeScheduler implements OnModuleInit {
     private readonly registry: SchedulerRegistry,
     @Inject(OBSERVATION_PURGE) private readonly purge: ObservationPurgePort,
     @Inject(FORECAST_REPOSITORY) private readonly forecasts: ForecastRepositoryPort,
+    @Inject(OCCURRENCE_REPOSITORY) private readonly occurrences: OccurrenceRepositoryPort,
   ) {
     this.appConfig = new AppConfig(configService);
     this.config = new ObservationConfig(configService);
@@ -82,7 +96,7 @@ export class ObservationPurgeScheduler implements OnModuleInit {
         void this.run();
       },
     });
-    this.registry.addCronJob(JOB_NAME, job as unknown as CronJob);
+    this.registry.addCronJob(JOB_NAME, job);
     job.start();
     this.logger.log(
       `관측 파기 스케줄러 등록됨 (cron="${cronTime}", 보관 ${this.config.observationRetentionDays}일)`,
@@ -116,6 +130,28 @@ export class ObservationPurgeScheduler implements OnModuleInit {
       } catch (err) {
         this.logger.error(
           `예보 파기 실패: ${err instanceof Error ? err.message : String(err)}`,
+        );
+      }
+
+      // 오래된 해파리 출현 파기. 이 테이블만 보관정책이 없어 무한히 자라고 있었고,
+      // 위험도 산출에서 가장 무거운 조회가 훑는 대상이라 커질수록 배치가 느려진다.
+      // 관측/예보와 마찬가지로 실패를 격리한다.
+      try {
+        const years = Math.max(
+          this.config.occurrenceRetentionYears,
+          MIN_OCCURRENCE_RETENTION_YEARS,
+        );
+        if (years > 0) {
+          const cutoff = new Date();
+          cutoff.setUTCFullYear(cutoff.getUTCFullYear() - years);
+          const purgedOccurrences = await this.occurrences.purgeOlderThan(cutoff);
+          if (purgedOccurrences > 0) {
+            this.logger.log(`해파리 출현 파기 완료: ${purgedOccurrences}행 (${years}년 이전)`);
+          }
+        }
+      } catch (err) {
+        this.logger.error(
+          `해파리 출현 파기 실패: ${err instanceof Error ? err.message : String(err)}`,
         );
       }
     } catch (err) {

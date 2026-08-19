@@ -197,7 +197,7 @@ export class NifsJellyfishCollector {
    * NIFS OpenAPI 호출(Node 내장 fetch + AbortController 타임아웃).
    * 실패(네트워크/HTTP/JSON/resultCode 비정상)는 null 반환 + warn. 인증키는 로그에서 마스킹한다.
    */
-  private async callApi(params: Record<string, string>): Promise<unknown | null> {
+  private async callApi(params: Record<string, string>): Promise<unknown> {
     const url = new URL(NIFS_BASE_URL);
     for (const [k, v] of Object.entries(params)) url.searchParams.set(k, v);
 
@@ -298,7 +298,9 @@ function formatYmd(d: Date): string {
  * occurred_at 폴백으로 쓰이므로 서버 타임존에 흔들리면 안 된다.
  */
 function parseNifsDate(raw: unknown): Date | null {
-  if (raw === null || raw === undefined) return null;
+  // 스칼라만 받는다. 객체가 오면 String() 이 '[object Object]' 를 만들어 아래 검사를 통과할
+  // 여지를 주므로, 애초에 날짜가 될 수 없는 형태는 여기서 잘라낸다.
+  if (typeof raw !== 'string' && typeof raw !== 'number') return null;
   const digits = String(raw).replace(/\D/g, '');
   if (digits.length < 8) return null;
   const y = Number(digits.slice(0, 4));
@@ -309,8 +311,12 @@ function parseNifsDate(raw: unknown): Date | null {
   return Number.isNaN(dt.getTime()) ? null : dt;
 }
 
+/**
+ * 응답 필드를 문자열로 정규화한다. 스칼라(문자열/숫자)만 받고 그 외는 null.
+ * 객체/배열을 String() 하면 '[object Object]' 가 값으로 저장되므로 받지 않는다.
+ */
 function str(v: unknown): string | null {
-  if (v === null || v === undefined) return null;
+  if (typeof v !== 'string' && typeof v !== 'number') return null;
   const s = String(v).trim();
   return s === '' ? null : s;
 }
@@ -326,8 +332,9 @@ function isAbort(err: unknown): boolean {
 // ---------------------------------------------------------------- 응답 파싱 (방어적)
 
 /** BOM/공백/JSONP 래핑을 걷어내고 JSON 파싱. 실패 시 null. */
-function parseJsonLoose(text: string): unknown | null {
-  const cleaned = text.replace(/^﻿/, '').trim();
+function parseJsonLoose(text: string): unknown {
+  // BOM 은 이스케이프로 적는다(소스에 보이지 않는 문자를 두지 않는다).
+  const cleaned = text.replace(/^\uFEFF/, '').trim();
   if (cleaned === '') return null;
   try {
     return JSON.parse(cleaned);
@@ -384,7 +391,8 @@ function deepFind(root: unknown, keys: string[], maxDepth = 6): unknown {
     for (const node of frontier) {
       if (node === null || typeof node !== 'object') continue;
       if (Array.isArray(node)) {
-        next.push(...node);
+        // Array.isArray 는 node 를 any[] 로 좁힌다. unknown[] 로 받아 any 가 아래로 번지지 않게 한다.
+        next.push(...(node as unknown[]));
         continue;
       }
       for (const [k, v] of Object.entries(node as Record<string, unknown>)) {

@@ -1,7 +1,7 @@
 import { Injectable } from '@nestjs/common';
 import { KyselyService } from '@shared/persistence/kysely/kysely.service';
 import { Id } from '@shared/kernel/id';
-import { RiskLevel, isRiskLevel } from '@shared/kernel/risk-level';
+import { isRiskLevel } from '@shared/kernel/risk-level';
 import {
   BeachSubscriber,
   FavoriteListItem,
@@ -54,7 +54,7 @@ export class FavoriteBeachKyselyQuery implements FavoriteQueryPort {
       beachName: row.beachName,
       region: row.region,
       currentRiskLevel: isRiskLevel(row.currentRiskLevel)
-        ? (row.currentRiskLevel as RiskLevel)
+        ? (row.currentRiskLevel)
         : null,
       currentRiskScore: row.currentRiskScore === null ? null : Number(row.currentRiskScore),
       createdAt: new Date(row.createdAt),

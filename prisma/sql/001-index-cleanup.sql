@@ -1,0 +1,46 @@
+-- =====================================================================================
+--  운영 DB 에 수동으로 적용하는 DDL
+--
+--  이 프로젝트는 DB-first 다 — 스키마 원본은 `../db/jellysafe_schema.sql`(ERwin/MySQL DDL)이고
+--  `prisma migrate` 를 운영에 쓰지 않는다. 그래서 인덱스 조정처럼 코드 변경만으로는 반영되지
+--  않는 작업은 여기에 모아 두고, 운영자가 확인한 뒤 직접 적용한다.
+--
+--  적용:
+--    mysql -h <host> -u <user> -p <db> < prisma/sql/001-index-cleanup.sql
+--
+--  적용 후 `npx prisma db pull` 로 schema.prisma 를 대조하면 코드와 DB 가 맞는지 확인할 수 있다.
+--  ⚠️ 적용 전에 `SHOW INDEX FROM <table>` 로 현재 상태를 먼저 확인한다. 이미 없는 인덱스를
+--     지우려 하면 오류가 나고(스크립트가 거기서 멈춘다), 그건 문제가 아니라 이미 정리됐다는 뜻이다.
+-- =====================================================================================
+
+-- -------------------------------------------------------------------------------------
+-- 1. observations: 중복 인덱스 제거
+--
+--    uk_observations_station_time(station_id, observed_at)  ← UNIQUE
+--    ix_observations_station_time(station_id, observed_at)  ← 일반 인덱스, 컬럼 순서까지 동일
+--
+--    UNIQUE 인덱스가 같은 컬럼을 같은 순서로 이미 덮는다. 조회 계획이 고를 수 있는 인덱스가
+--    하나 늘 뿐 얻는 것은 없고, INSERT 마다 두 인덱스를 갱신하는 비용만 든다.
+--    이 테이블은 관측소 19곳 × 30분마다 쓰기가 들어오는 곳이라 그 비용이 계속 발생한다.
+--
+--    ※ prisma/schema.prisma 에서도 @@index 를 함께 지워야 다음 `db pull` 때 되살아나지 않는다.
+--      (이 파일과 schema.prisma 를 같은 커밋에서 함께 바꾼다)
+-- -------------------------------------------------------------------------------------
+ALTER TABLE observations DROP INDEX ix_observations_station_time;
+
+-- -------------------------------------------------------------------------------------
+-- 2. jellyfish_occurrences: 계절 조회용 인덱스 확인 (선택)
+--
+--    PAST_OCCURRENCE 는 과거 5년의 같은 시기를 센다. 애플리케이션이 계절 창을 구체적인
+--    날짜 구간으로 만들어 넘기므로(risk/domain/past-season-window.ts) `occurred_at` 선두
+--    인덱스면 범위 스캔으로 처리된다 — ix_jellyfish_occurrences_time_region 이 그 역할을 한다.
+--
+--    아래는 실행문이 아니라 점검용이다. 계획에 `range` 가 아닌 `ALL`(풀스캔)이 보이면
+--    인덱스가 없거나 통계가 낡은 것이므로 ANALYZE TABLE 을 한 번 돌린다.
+--
+--      EXPLAIN SELECT COUNT(*) FROM jellyfish_occurrences j
+--       WHERE (j.occurred_at >= '2025-08-04' AND j.occurred_at < '2025-09-02')
+--          OR (j.occurred_at >= '2024-08-04' AND j.occurred_at < '2024-09-02');
+--
+--      ANALYZE TABLE jellyfish_occurrences;
+-- -------------------------------------------------------------------------------------

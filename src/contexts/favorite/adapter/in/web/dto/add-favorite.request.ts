@@ -3,8 +3,10 @@ import { IsInt, IsOptional, IsString, MaxLength, Min } from 'class-validator';
 
 /**
  * USR-003 POST /public/favorites 요청.
- * MVP 는 비로그인(userToken) 또는 로그인(userId) 중 하나로 저장한다.
- * 소유자 필수 불변식은 도메인에서 최종 검증한다.
+ *
+ * ⚠️ `userId` 필드는 **의도적으로 없다.** 예전에는 body 의 userId 를 그대로 소유자로 삼아
+ * 아무나 남의 즐겨찾기를 조작할 수 있었다. 로그인 사용자의 신원은 이제 `Authorization: Bearer`
+ * 토큰에서만 나온다(shared/auth/public-owner.ts). 비로그인은 서버가 발급한 게스트 토큰을 쓴다.
  */
 export class AddFavoriteRequest {
   @ApiProperty({
@@ -17,24 +19,13 @@ export class AddFavoriteRequest {
   beachId!: number;
 
   @ApiPropertyOptional({
-    example: 'guest-9f2c1a7b4e',
+    example: 'gV1sYQ2n8Kd0pZ7mR4tXbwQ.9fH2kLm3QaZ1cV8nT0yPxA',
     maxLength: 64,
     description:
-      '비로그인 사용자를 식별하는 게스트 토큰. 앱이 기기에 저장해 두고 매번 같은 값을 보낸다. 로그인 사용자라면 대신 userId(또는 x-user-id 헤더)를 쓴다 — 둘 중 하나는 반드시 있어야 한다.',
+      '비로그인 사용자의 게스트 토큰. **`POST /public/guest-tokens` 가 발급한 값이어야 한다**(직접 지어낸 문자열은 401). 앱이 기기에 저장해 두고 매번 같은 값을 보낸다. 로그인 사용자는 이 값 대신 `Authorization: Bearer <accessToken>` 을 보내면 되고, 그때는 이 필드를 생략한다.',
   })
   @IsOptional()
   @IsString()
   @MaxLength(64)
   userToken?: string;
-
-  @ApiPropertyOptional({
-    example: 2,
-    minimum: 1,
-    description:
-      '로그인 사용자의 id. userToken 대신 쓴다(둘 다 없으면 소유자를 특정할 수 없어 거부된다). x-user-id 헤더로도 보낼 수 있다.',
-  })
-  @IsOptional()
-  @IsInt()
-  @Min(1)
-  userId?: number;
 }

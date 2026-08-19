@@ -10,7 +10,7 @@ export interface AuditEntry {
   actionType: string;
   targetType: string;
   targetId?: Id | null;
-  afterJson?: unknown | null;
+  afterJson?: unknown;
 }
 
 export interface AuditPort {

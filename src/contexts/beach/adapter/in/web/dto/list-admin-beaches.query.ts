@@ -32,7 +32,13 @@ export class ListAdminBeachesQuery {
     description: '사용 여부 필터. true 면 운영 중인 해변만, false 면 비활성 해변만. 생략하면 전부.',
   })
   @IsOptional()
-  @Transform(({ value }) => (value === 'true' || value === true ? true : value === 'false' || value === false ? false : value))
+  // 쿼리스트링은 항상 문자열이라 'true'/'false' 를 불리언으로 바꿔 준다.
+  // 그 외 값은 그대로 흘려보내 @IsBoolean 이 400 으로 거르게 한다(여기서 삼키지 않는다).
+  @Transform(({ value }): unknown => {
+    if (value === 'true' || value === true) return true;
+    if (value === 'false' || value === false) return false;
+    return value;
+  })
   @IsBoolean()
   isActive?: boolean;
 

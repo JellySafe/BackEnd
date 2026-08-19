@@ -1,4 +1,5 @@
 import { Id } from '@shared/kernel/id';
+import { PublicOwner } from '@shared/kernel/public-owner';
 import { Page, PageRequest } from '@shared/kernel/pagination';
 import { RiskLevel } from '@shared/kernel/risk-level';
 import { NotificationEvent, NotificationTarget } from '../../../domain/notification-enums';
@@ -120,7 +121,8 @@ export interface MarkAlertReadResult {
 }
 
 export interface MarkAlertReadUseCase {
-  markRead(notificationId: Id): Promise<MarkAlertReadResult>;
+  /** 소유자는 자격증명에서 확정된 값이어야 한다(요청 본문의 자칭 userId 를 받지 않는다). */
+  markRead(notificationId: Id, owner: PublicOwner): Promise<MarkAlertReadResult>;
 }
 export const MARK_ALERT_READ_USE_CASE = Symbol('MARK_ALERT_READ_USE_CASE');
 

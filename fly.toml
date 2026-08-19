@@ -15,9 +15,14 @@ primary_region = 'nrt'
   PORT = '3000'
   SCHEDULER_ENABLED = 'true'
 
-  # 위험도 점수표 버전. 백테스트로 재조정한 v2 를 쓴다(docs/risk-rules-v2.md).
-  # 문제가 생기면 'v1' 로 바꾸고 재배포하면 즉시 롤백된다(두 버전이 DB 에 나란히 있다).
+  # 위험도 점수표 버전. 인근 출현을 밀도별로 채점하는 v3 를 쓴다(docs/risk-rules-v3.md).
+  # 문제가 생기면 'v2'/'v1' 로 바꿔 재배포하면 즉시 롤백된다(세 버전이 DB 에 나란히 있다).
+  # 허용값은 v1|v2|v3 뿐이며, 다른 값이면 기동 자체가 실패한다(오타로 인한 조용한 롤백 방지).
   RISK_RULE_VERSION = 'v3'
+
+  # 실 수집기 실패/키 미설정 시 mock 대체 금지. NODE_ENV=production 이라 기본값도 false 지만,
+  # 이 설정이 안전에 직접 닿기 때문에(가짜 관측치가 위험도로 들어간다) 명시해 둔다.
+  MOCK_COLLECTOR_FALLBACK = 'false'
   # 프론트엔드 도메인만 브라우저에서 API 호출 허용. 미지정 시 모든 origin 허용이라 반드시 명시한다.
   # `*` 는 호스트 한 세그먼트 안에서만 확장된다(cors-origin.ts).
   #   - 프로덕션 도메인 2개
@@ -37,6 +42,8 @@ primary_region = 'nrt'
   # (제보 03:30 / 위험도 03:40 과 겹치지 않게 관측 03:20, 알림 03:50).
   OBSERVATION_RETENTION_DAYS = '30'
   OBSERVATION_PURGE_CRON = '0 20 3 * * *'
+  # 해파리 출현은 PAST_OCCURRENCE(과거 5년)보다 넉넉히 남긴다. 짧게 잡으면 그 룰이 죽는다.
+  OCCURRENCE_RETENTION_YEARS = '6'
   NOTIFICATION_RETENTION_DAYS = '90'
   NOTIFICATION_PURGE_CRON = '0 50 3 * * *'
 

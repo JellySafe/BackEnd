@@ -29,7 +29,7 @@ import { ReviewReportResponse } from './dto/review-report.response';
 
 /**
  * 관리자 제보 검수 API (ADM-008, ADM-009).
- * 검수자(reviewerId)는 전역 AdminAuthGuard 가 검증한 JWT 주체(@CurrentUser)를 사용한다.
+ * 검수자(reviewerId)는 전역 JwtAuthGuard 가 검증한 JWT 주체(@CurrentUser)를 사용한다.
  */
 @ApiTags('report')
 @ApiBearerAuth('bearer')
@@ -121,7 +121,7 @@ export class AdminReportController {
     @Body() body: ReviewReportRequest,
     @CurrentUser() user: AuthUser,
   ) {
-    // 검수자 식별은 전역 AdminAuthGuard 가 검증한 JWT 주체(user.userId)를 사용한다.
+    // 검수자 식별은 전역 JwtAuthGuard 가 검증한 JWT 주체(user.userId)를 사용한다.
     return this.reviewReport.review({
       reportId,
       reviewStatus: body.reviewStatus,

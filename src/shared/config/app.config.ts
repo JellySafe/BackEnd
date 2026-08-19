@@ -94,6 +94,15 @@ export class AppConfig {
     return this.config.get<string>('RISK_HISTORY_PURGE_CRON') ?? '0 40 3 * * *';
   }
 
+  /**
+   * 부팅 시 '고아 산출'로 간주할 경과 시간(분). 0 이면 정리하지 않는다.
+   * 기본 30분 = 관측 수집 배치 주기. 그보다 오래 running 인 행은 정상 진행 중일 수 없다.
+   */
+  get riskCalculationStaleMinutes(): number {
+    const raw = Number(this.config.get<string>('RISK_CALCULATION_STALE_MINUTES') ?? '30');
+    return Number.isFinite(raw) && raw >= 0 ? raw : 30;
+  }
+
   get dailyReportCron(): string {
     return this.config.get<string>('DAILY_REPORT_CRON') ?? '0 10 0 * * *';
   }

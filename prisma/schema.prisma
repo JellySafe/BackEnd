@@ -219,7 +219,9 @@ model Observation {
   station ObservationStation @relation(fields: [stationId], references: [id], onDelete: Cascade)
 
   @@unique([stationId, observedAt], name: "uk_observations_station_time")
-  @@index([stationId, observedAt], name: "ix_observations_station_time")
+  // ix_observations_station_time(station_id, observed_at) 은 위 UNIQUE 와 컬럼·순서가 같아
+  // 조회에 보태는 것 없이 쓰기 비용만 늘리므로 제거했다(prisma/sql/001-index-cleanup.sql).
+  // 운영 DB 에 그 스크립트를 적용해야 `db pull` 결과와 이 파일이 일치한다.
   @@map("observations")
 }
 

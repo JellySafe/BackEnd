@@ -2,13 +2,11 @@ import { Type } from 'class-transformer';
 import { ApiProperty, ApiPropertyOptional } from '@nestjs/swagger';
 import {
   IsDefined,
-  IsInt,
   IsNotEmpty,
   IsObject,
   IsOptional,
   IsString,
   MaxLength,
-  Min,
   ValidateNested,
 } from 'class-validator';
 
@@ -56,9 +54,11 @@ export class PushSubscriptionRequest {
 /**
  * POST /public/push/subscriptions 요청.
  *
- * 비로그인(userToken) 또는 로그인(userId / x-user-id 헤더) 중 하나로 소유자를 특정한다.
- * **관심 해변 등록(POST /public/favorites)에 쓴 것과 같은 userToken 을 보내야** 그 해변의
- * 알림이 이 구독으로 나간다. 다른 토큰을 쓰면 구독은 등록되지만 알림은 오지 않는다.
+ * 소유자는 로그인이면 `Authorization: Bearer`, 비로그인이면 서버 발급 게스트 토큰으로 정한다.
+ * (예전의 body `userId` / `x-user-id` 헤더는 사칭이 가능해 제거했다 — shared/auth/public-owner.ts)
+ *
+ * **관심 해변 등록(POST /public/favorites)과 같은 자격증명을 써야** 그 해변의 알림이 이 구독으로
+ * 나간다. 다른 게스트 토큰을 쓰면 구독은 등록되지만 알림은 오지 않는다.
  */
 export class RegisterPushSubscriptionRequest {
   @ApiProperty({
@@ -72,23 +72,13 @@ export class RegisterPushSubscriptionRequest {
   subscription!: PushSubscriptionRequest;
 
   @ApiPropertyOptional({
-    example: 'guest-9f2c1a7b4e',
+    example: 'gV1sYQ2n8Kd0pZ7mR4tXbwQ.9fH2kLm3QaZ1cV8nT0yPxA',
     maxLength: 64,
     description:
-      '비로그인 사용자의 게스트 토큰. **관심 해변 등록에 쓴 값과 같아야 한다** — 그래야 그 해변의 알림이 이 구독으로 발송된다.',
+      '비로그인 사용자의 게스트 토큰(`POST /public/guest-tokens` 발급값). **관심 해변 등록에 쓴 값과 같아야 한다** — 그래야 그 해변의 알림이 이 구독으로 발송된다. 로그인 사용자는 이 필드 대신 `Authorization: Bearer` 를 쓴다.',
   })
   @IsOptional()
   @IsString()
   @MaxLength(64)
   userToken?: string;
-
-  @ApiPropertyOptional({
-    example: 2,
-    minimum: 1,
-    description: '로그인 사용자의 id. userToken 대신 쓴다(x-user-id 헤더로도 보낼 수 있다).',
-  })
-  @IsOptional()
-  @IsInt()
-  @Min(1)
-  userId?: number;
 }

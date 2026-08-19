@@ -1,5 +1,21 @@
 import { plainToInstance } from 'class-transformer';
-import { IsIn, IsInt, IsNotEmpty, IsOptional, IsString, Max, Min, validateSync } from 'class-validator';
+import {
+  IsIn,
+  IsInt,
+  IsNotEmpty,
+  IsOptional,
+  IsString,
+  Max,
+  Min,
+  MinLength,
+  validateSync,
+} from 'class-validator';
+
+/**
+ * 배포된 위험도 점수표 버전 목록. prisma/seed.ts 가 이 세 버전을 DB 에 나란히 넣는다.
+ * 새 버전을 시드에 추가하면 여기에도 넣어야 기동한다(둘이 어긋나는 것을 막는 장치다).
+ */
+export const RISK_RULE_VERSIONS = ['v1', 'v2', 'v3'] as const;
 
 /**
  * 환경 변수 스키마. ConfigModule.forRoot({ validate }) 에 연결해
@@ -24,8 +40,19 @@ class EnvSchema {
   @IsNotEmpty({ message: 'DATABASE_URL 이 필요합니다(mysql://...).' })
   DATABASE_URL!: string;
 
+  /**
+   * JWT 서명키 겸 게스트 토큰 HMAC 키의 원본(shared/auth/guest-token.ts).
+   *
+   * 길이를 강제하는 이유: `.env.example` 의 개발용 기본값을 그대로 운영에 올려도 예전에는
+   * 부팅됐다. 그 키를 아는 사람은 관리자 토큰과 게스트 토큰을 **둘 다** 위조할 수 있다.
+   * 32자 하한은 무차별 대입을 실용적으로 불가능하게 만드는 최소선이다
+   * (운영 권장: `openssl rand -hex 32`).
+   */
   @IsString()
   @IsNotEmpty({ message: 'JWT_SECRET 이 필요합니다.' })
+  @MinLength(32, {
+    message: 'JWT_SECRET 은 32자 이상이어야 합니다(권장: openssl rand -hex 32).',
+  })
   JWT_SECRET!: string;
 
   @IsOptional()
@@ -56,6 +83,29 @@ class EnvSchema {
   @IsOptional()
   @IsIn(['true', 'false'])
   SCHEDULER_ENABLED?: string;
+
+  /**
+   * 운영 위험도 점수표 버전.
+   *
+   * ⚠️ **오타가 조용한 롤백이 된다** — 그래서 여기서 값을 고정한다.
+   * 예전에는 검증이 없어 `V3` 나 `v33` 같은 오타가 그대로 통과했고, DB 에 그 버전이 없으니
+   * 룰 로드가 0건 → 엔진이 코드 상수 폴백(= v1 점수표)으로 조용히 되돌아갔다.
+   * v1 은 인근 출현을 밀도 구분 없이 채점하던 버전이라, v3 에서 고친
+   * "저밀도가 고밀도보다 위험해 보이던" 문제가 **로그 한 줄 없이 부활**한다.
+   * 안전 서비스에서 점수표 버전은 기동 시점에 틀리면 뜨지 않아야 하는 값이다.
+   *
+   * (버전은 맞지만 DB 에 룰이 없는 경우는 CalculateRiskService 가 산출 시점에 막는다)
+   */
+  @IsOptional()
+  @IsIn(RISK_RULE_VERSIONS, {
+    message: `RISK_RULE_VERSION 은 ${RISK_RULE_VERSIONS.join(' | ')} 중 하나여야 합니다.`,
+  })
+  RISK_RULE_VERSION?: string;
+
+  /** 실 수집기 실패/키 미설정 시 mock 대체 여부. 미지정 시 운영은 off, 그 외는 on. */
+  @IsOptional()
+  @IsIn(['true', 'false'])
+  MOCK_COLLECTOR_FALLBACK?: string;
 }
 
 export function validateEnv(config: Record<string, unknown>): Record<string, unknown> {

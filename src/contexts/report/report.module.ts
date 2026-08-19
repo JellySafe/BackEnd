@@ -28,6 +28,8 @@ import { VISION_RESULT_REPOSITORY } from './application/port/out/vision-result-r
 import { NOTIFICATION_TRIGGER } from './application/port/out/notification-trigger.port';
 import { AUDIT_PORT } from './application/port/out/audit.port';
 import { REPORT_PURGE } from './application/port/out/report-purge.port';
+import { REPORT_IMAGE_STORAGE } from './application/port/out/report-image-storage.port';
+import { LocalImageStorageAdapter } from './adapter/out/storage/local-image-storage.adapter';
 import { BEACH_LOCATION } from './application/port/out/beach-location.port';
 import {
   GET_REPORT_DETAIL_USE_CASE,
@@ -69,6 +71,9 @@ import {
     { provide: NOTIFICATION_TRIGGER, useClass: NotificationTriggerAdapter },
     { provide: AUDIT_PORT, useClass: AuditAdapter },
     { provide: REPORT_PURGE, useClass: ReportPurgePrismaRepository },
+    // PRIV-003 파기가 DB 마스킹뿐 아니라 실제 이미지 파일까지 지우게 한다.
+    // S3/CDN 으로 옮기면 이 어댑터만 교체하면 된다.
+    { provide: REPORT_IMAGE_STORAGE, useClass: LocalImageStorageAdapter },
     // 해변 좌표 조회(최근접 배정 / 관리자 지도) → beach 컨텍스트 조회 포트 위임
     { provide: BEACH_LOCATION, useClass: BeachLocationAdapter },
     // 보관정책 파기 스케줄러 (adapter/in/schedule)
