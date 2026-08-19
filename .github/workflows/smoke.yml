@@ -1,0 +1,64 @@
+name: Smoke (실 DB)
+
+# 실제 MySQL 위에서 주요 흐름(로그인·세션·인가·위험도 산출·제보 검수)이 끝까지 도는지 본다.
+# 빠른 게이트(ci.yml: typecheck/lint/unit/e2e/build)와 분리한 이유는 DB 를 띄우는 만큼 느리고,
+# 실패했을 때 "DB 가 없어서" 인지 "코드가 틀려서" 인지 한눈에 갈라 보기 위해서다.
+on:
+  push:
+    branches: [release, main]
+  pull_request:
+  workflow_dispatch:
+
+concurrency:
+  group: smoke-${{ github.workflow }}-${{ github.ref }}
+  cancel-in-progress: true
+
+jobs:
+  smoke:
+    name: 실 DB 스모크
+    runs-on: ubuntu-latest
+
+    services:
+      mysql:
+        image: mysql:8.0
+        env:
+          MYSQL_ROOT_PASSWORD: root
+          MYSQL_DATABASE: jellysafe_test
+          MYSQL_USER: jellysafe
+          MYSQL_PASSWORD: jellysafe
+          TZ: UTC
+        ports:
+          - 3306:3306
+        options: >-
+          --health-cmd="mysqladmin ping -h 127.0.0.1 -uroot -proot"
+          --health-interval=5s
+          --health-timeout=5s
+          --health-retries=20
+
+    env:
+      # 준비 스크립트와 테스트가 같은 DB 를 본다.
+      TEST_DATABASE_URL: mysql://jellysafe:jellysafe@127.0.0.1:3306/jellysafe_test
+      DATABASE_URL: mysql://jellysafe:jellysafe@127.0.0.1:3306/jellysafe_test
+
+    steps:
+      - uses: actions/checkout@v4
+
+      - name: Setup Node
+        uses: actions/setup-node@v4
+        with:
+          node-version: '22'
+          cache: npm
+
+      - name: Install dependencies
+        run: npm ci
+
+      - name: Generate Prisma Client
+        run: npx prisma generate
+
+      # ⚠️ 러너에는 스키마 원본(`../db/jellysafe_schema.sql`)이 없다. 저장소 밖 파일이기 때문이다.
+      #    그래서 여기서는 `prisma db push` 로 스키마를 만든다 — 테이블·컬럼·인덱스·FK 는 같지만
+      #    **CHECK 제약과 bin 콜레이션은 재현되지 않는다.** 즉 이 잡이 초록이라고 해서
+      #    "DDL 제약까지 검증됐다" 는 뜻은 아니다(예: #22 의 CHECK 위반은 여기서 안 잡힌다).
+      #    원본 DDL 로 검증하려면 개발자 로컬에서 `npm run db:test:up && npm run test:smoke` 를 돈다.
+      - name: Smoke (스키마 준비 + 시드 + 흐름 검증)
+        run: npm run test:smoke

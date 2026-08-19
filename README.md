@@ -88,10 +88,32 @@ npm run typecheck        # tsc --noEmit (src + test + prisma + scripts)
 npm run lint             # eslint (--max-warnings 0, 소스를 고치지 않는다)
 npm run lint:fix         # 자동 수정
 npm test                 # jest 단위 테스트 (DB 불필요)
+npm run test:cov         # 단위 테스트 + 커버리지 기준선
 npm run test:e2e         # 인가 경계 테스트 (DB 불필요)
 npm run build            # nest build
 ```
-CI(`.github/workflows/ci.yml`)가 위 다섯을 그대로 돌린다.
+CI(`.github/workflows/ci.yml`)가 위를 그대로 돌린다.
+
+### 실 DB 스모크 (`npm run test:smoke`)
+
+단위 테스트와 인가 e2e 는 DB 를 타지 않는다. SQL·제약·트랜잭션에서 나는 결함은 원리적으로
+거기서 잡히지 않으므로(실제 사례: 다중 테이블 DELETE 제약 #28, 예보 저장이 CHECK 에 막히던 #22),
+**진짜 MySQL 위에서** 주요 흐름이 끝까지 도는지 따로 본다.
+
+```bash
+npm run db:test:up       # 테스트용 MySQL 컨테이너 (3399 포트, tmpfs — 내리면 데이터 소멸)
+npm run test:smoke       # 스키마 준비 + 시드 + 흐름 검증
+npm run db:test:down     # 정리
+```
+
+검증 흐름: 기동·헬스체크 → 로그인 → 리프레시 토큰 회전/재사용 감지/로그아웃 → 인가 경계
+(`/admin` 401, `/system` 401, operator 403) → 위험도 산출(`POST /system/risk/calculate`)과
+공개 조회 → 제보 등록 → AI 판별 대기 → 관리자 검수.
+
+스키마는 두 경로로 만든다. **로컬**은 스키마 원본(`../db/jellysafe_schema.sql`)을 그대로 적용해
+CHECK 제약·콜레이션까지 운영과 같고, **CI** 는 그 파일이 저장소 밖이라 `prisma db push` 로 만든다
+(테이블·인덱스·FK 는 같지만 CHECK 제약은 재현되지 않는다). 어느 경로로 돌았는지는 실행 로그에 찍힌다.
+준비 스크립트는 시작할 때 테이블을 전부 지우므로, DB 이름에 `test` 가 없으면 실행을 거부한다.
 
 ## 주요 엔드포인트 (일부)
 

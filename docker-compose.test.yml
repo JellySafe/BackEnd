@@ -1,0 +1,32 @@
+# 스모크 테스트용 일회성 MySQL (npm run test:smoke 가 쓴다).
+#
+# 개발용 DB 와 섞이지 않게 **포트도 데이터도 분리**한다:
+#   - 3399 로 노출한다(다른 프로젝트 컨테이너가 3306·3307 을 쓰고 있어도 충돌하지 않는다).
+#     이미 쓰는 포트라면 TEST_MYSQL_PORT 로 바꾼다(접속 URL 은 TEST_DATABASE_URL 로 함께 지정).
+#   - 데이터는 tmpfs 라 컨테이너를 내리면 사라진다. 매번 같은 상태에서 시작하기 위해서다.
+#     (스모크는 시드 직후 상태를 전제로 검증한다 — 이전 실행의 잔재가 남으면 그 전제가 깨진다)
+services:
+  mysql:
+    image: mysql:8.0
+    container_name: jellysafe-test-mysql
+    environment:
+      MYSQL_ROOT_PASSWORD: root
+      MYSQL_DATABASE: jellysafe_test
+      MYSQL_USER: jellysafe
+      MYSQL_PASSWORD: jellysafe
+      # 스키마 원본이 "모든 DATETIME 은 UTC" 를 전제한다. 서버 타임존을 UTC 로 고정해
+      # 호스트 타임존(개발자 노트북은 KST)이 결과를 바꾸지 않게 한다.
+      TZ: UTC
+    command:
+      - --character-set-server=utf8mb4
+      - --collation-server=utf8mb4_0900_ai_ci
+      - --default-time-zone=+00:00
+    ports:
+      - '${TEST_MYSQL_PORT:-3399}:3306'
+    tmpfs:
+      - /var/lib/mysql
+    healthcheck:
+      test: ['CMD', 'mysqladmin', 'ping', '-h', '127.0.0.1', '-uroot', '-proot']
+      interval: 3s
+      timeout: 3s
+      retries: 40
