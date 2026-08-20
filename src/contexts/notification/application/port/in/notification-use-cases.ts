@@ -252,3 +252,72 @@ export const DISPATCH_NOTIFICATION_PUSH_USE_CASE = Symbol('DISPATCH_NOTIFICATION
 
 /** WebPushSubscription 을 인바운드 계약에서도 참조할 수 있게 재노출한다. */
 export type { WebPushSubscription };
+
+// ===== EX-002 SMS 발송 =====
+export interface DispatchNotificationSmsCommand {
+  notificationId: Id;
+  owner: PushConsentOwner;
+  message: string;
+  riskLevel?: RiskLevel | null;
+  now?: Date;
+}
+
+export interface DispatchNotificationSmsResult {
+  /** 사업자 미설정·수신 동의 없음·위험 단계 미달로 보내지 않은 경우 true. */
+  skipped: boolean;
+  sent: boolean;
+  /** 보내지 않았거나 실패한 이유(below_threshold / provider_disabled / failed / rejected). */
+  reason: string | null;
+}
+
+/**
+ * 알림을 수신 동의한 번호로 문자 발송한다.
+ * 푸시와 같은 계약이다 — **절대 예외를 던지지 않는다.**
+ */
+export interface DispatchNotificationSmsUseCase {
+  dispatch(command: DispatchNotificationSmsCommand): Promise<DispatchNotificationSmsResult>;
+}
+export const DISPATCH_NOTIFICATION_SMS_USE_CASE = Symbol('DISPATCH_NOTIFICATION_SMS_USE_CASE');
+
+// ===== EX-002 수신 동의 관리 (채널별) =====
+export interface RegisterSmsConsentCommand {
+  owner: PushConsentOwner;
+  /** 사용자가 입력한 그대로. 정규화는 도메인이 한다. */
+  phoneNumber: string;
+}
+
+export interface RegisterSmsConsentResult {
+  consentId: Id;
+  /** 새 동의면 true, 번호 변경·재동의면 false. */
+  created: boolean;
+  /** 마스킹된 번호(010-****-5678). 원문은 응답에 넣지 않는다. */
+  phoneNumber: string;
+}
+
+export interface RevokeSmsConsentResult {
+  revoked: number;
+}
+
+/** 채널별 수신 동의 현황. 사용자가 "무엇으로 알림을 받고 있는지" 확인하는 화면용. */
+export interface NotificationConsentStatus {
+  push: {
+    /** 살아있는 브라우저 구독 수(기기 수). */
+    subscriptions: number;
+  };
+  sms: {
+    agreed: boolean;
+    /** 마스킹된 번호. 동의가 없으면 null. */
+    phoneNumber: string | null;
+    /** 발송 사업자가 설정돼 실제로 문자가 나갈 수 있는 환경인지. */
+    available: boolean;
+    /** 문자를 보내는 최소 위험 단계(caution|danger). */
+    minRiskLevel: string;
+  };
+}
+
+export interface ManageNotificationConsentUseCase {
+  status(owner: PushConsentOwner): Promise<NotificationConsentStatus>;
+  registerSms(command: RegisterSmsConsentCommand): Promise<RegisterSmsConsentResult>;
+  revokeSms(owner: PushConsentOwner): Promise<RevokeSmsConsentResult>;
+}
+export const MANAGE_NOTIFICATION_CONSENT_USE_CASE = Symbol('MANAGE_NOTIFICATION_CONSENT_USE_CASE');

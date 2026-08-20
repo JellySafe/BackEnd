@@ -80,4 +80,48 @@ export class NotificationConfig {
     );
     return Number.isFinite(raw) && raw >= 1 ? Math.floor(raw) : DEFAULT_PUSH_CONCURRENCY;
   }
+
+  /** SMS 발송 사업자. 기본 none(발송하지 않음). */
+  get smsProvider(): SmsProvider {
+    return (this.config.get<string>('SMS_PROVIDER') ?? 'none') as SmsProvider;
+  }
+
+  /**
+   * SENS 설정. **네 값이 한 세트라 하나라도 비면 null** 을 돌려주고 발송을 켜지 않는다.
+   *
+   * 부분 설정으로 켜지면 발송할 때마다 401/400 이 나고, 그 실패는 사용자에게 "알림이 안 온다"
+   * 로만 보인다. 없는 것과 잘못된 것을 구분해 두는 편이 낫다.
+   */
+  get sens(): SensConfig | null {
+    const serviceId = (this.config.get<string>('SENS_SERVICE_ID') ?? '').trim();
+    const accessKey = (this.config.get<string>('SENS_ACCESS_KEY') ?? '').trim();
+    const secretKey = (this.config.get<string>('SENS_SECRET_KEY') ?? '').trim();
+    const from = (this.config.get<string>('SENS_FROM') ?? '').trim();
+    if (serviceId === '' || accessKey === '' || secretKey === '' || from === '') return null;
+    return { serviceId, accessKey, secretKey, from };
+  }
+
+  /**
+   * SMS 를 보낼 최소 위험 단계. 기본 danger.
+   *
+   * SMS 는 **건당 과금**이고 사용자에게도 방해가 크다. 주의 단계까지 문자로 보내면 비용과
+   * 알림 피로가 함께 늘고, 정작 위험 단계 문자가 묻힌다. 푸시는 무료라 지금처럼 모든 상승에
+   * 보내되, 문자는 danger 로 올라갈 때만 보낸다.
+   */
+  get smsMinRiskLevel(): 'caution' | 'danger' {
+    const raw = (this.config.get<string>('SMS_MIN_RISK_LEVEL') ?? 'danger').trim();
+    return raw === 'caution' ? 'caution' : 'danger';
+  }
 }
+
+/** 네이버 클라우드 SENS 설정. 네 값이 한 세트다(하나라도 비면 발송을 켤 수 없다). */
+export interface SensConfig {
+  serviceId: string;
+  accessKey: string;
+  secretKey: string;
+  /** 발신번호. **사전등록된 번호만** 쓸 수 있다(전기통신사업법). */
+  from: string;
+}
+
+/** SMS 발송 사업자. none 이면 발송하지 않는다(기본). */
+export type SmsProvider = 'none' | 'sens';

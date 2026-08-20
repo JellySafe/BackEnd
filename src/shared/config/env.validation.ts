@@ -177,6 +177,37 @@ class EnvSchema {
   @Min(30)
   @Max(3600)
   S3_PRESIGN_EXPIRES_SECONDS?: number;
+
+  /**
+   * 문자 발송 사업자(EX-002). 기본 none — **문자는 건당 과금이고 발신번호 사전등록이 필요한**
+   * 채널이라, 설정하지 않은 환경에서 실수로 나가지 않게 기본을 꺼 둔다.
+   * (자격증명이 불완전하면 어댑터가 스스로 비활성이 된다. 부팅은 막지 않는다 — 부가 채널이다)
+   */
+  @IsOptional()
+  @IsIn(['none', 'sens'], { message: "SMS_PROVIDER 는 none | sens 중 하나여야 합니다." })
+  SMS_PROVIDER?: string;
+
+  @IsOptional()
+  @IsString()
+  SENS_SERVICE_ID?: string;
+
+  @IsOptional()
+  @IsString()
+  SENS_ACCESS_KEY?: string;
+
+  @IsOptional()
+  @IsString()
+  SENS_SECRET_KEY?: string;
+
+  /** 발신번호. 사전등록된 번호만 쓸 수 있다(전기통신사업법). */
+  @IsOptional()
+  @IsString()
+  SENS_FROM?: string;
+
+  /** 문자를 보내는 최소 위험 단계. 기본 danger. */
+  @IsOptional()
+  @IsIn(['caution', 'danger'])
+  SMS_MIN_RISK_LEVEL?: string;
 }
 
 export function validateEnv(config: Record<string, unknown>): Record<string, unknown> {

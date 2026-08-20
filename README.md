@@ -129,6 +129,8 @@ CHECK 제약·콜레이션까지 운영과 같고, **CI** 는 그 파일이 저�
 | GET | `/api/public/beaches/:id/risk` | 해변 위험도 상세 (USR-002) |
 | POST | `/api/public/favorites` | 관심 해변 저장 (USR-003) |
 | GET | `/api/public/alerts` | 알림함 (USR-003) |
+| GET | `/api/public/notification-consents` | 내 알림 수신 상태(푸시 기기 수·문자 동의) |
+| POST | `/api/public/notification-consents/sms` | 문자 수신 동의 (EX-002) |
 | GET | `/api/admin/dashboard/summary` | 대시보드 요약 (ADM-001) |
 | GET | `/api/admin/risks/latest` | 지도/리스트 위험도 (ADM-002/003) |
 | GET | `/api/admin/beaches/:id/risk` | 해변 위험도 상세 (ADM-004/005) |
@@ -202,6 +204,8 @@ CHECK 제약·콜레이션까지 운영과 같고, **CI** 는 그 파일이 저�
 | `RISK_CALCULATION_STALE_MINUTES` | `30` | 부팅 시 이보다 오래 `running` 인 산출 배치를 실패로 확정한다(비정상 종료 잔재). |
 | `JWT_EXPIRES` | `12h` | 서버가 취소할 수 없는 토큰의 수명 = 유출 시 최대 노출 시간. 재발급 흐름을 붙였으면 줄일 수 있다. |
 | `REPORT_RETENTION_DAYS` | `90` | 제보 사진·위치 보관 기간(PRIV-003). 접수 시점에 행에 박히므로 **기존 제보에는 소급되지 않는다.** |
+| `SMS_PROVIDER` | `none` | 문자 발송 사업자. 기본은 꺼짐 — 건당 과금 + 발신번호 사전등록이 필요한 채널이라 켤 때만 켠다. |
+| `SMS_MIN_RISK_LEVEL` | `danger` | 문자를 보내는 최소 위험 단계. 낮추면 비용·알림 피로가 늘고 위험 단계 문자가 묻힌다. |
 | `STORAGE_DRIVER` | `local` | `local` 은 **단일 머신 전용**(볼륨은 머신에 붙는다). 머신을 늘리기 전에 `s3` 로 바꾼다. 오타는 기동 실패. |
 | `S3_PUBLIC_BASE_URL` | 없음 | 저장된 사진을 읽는 기준 URL. **DB 에 남는 값의 앞부분이라 한 번 정하면 바꾸지 않는다.** |
 | `CONSENT_RETENTION_DAYS` | `365` | 동의 기록 보관 기간. 제보보다 길게 두는 것이 의도다(적법성 증명 자료가 먼저 사라지면 안 된다). |
