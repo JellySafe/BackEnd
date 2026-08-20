@@ -220,6 +220,17 @@ class EnvSchema {
   @IsIn(['caution', 'danger'])
   SMS_MIN_RISK_LEVEL?: string;
 
+  /**
+   * 배치 락 구현. mysql(기본) | memory.
+   *
+   * ⚠️ 오타를 조용히 어느 한쪽으로 떨어뜨리지 않는다. `memroy` 같은 오타가 mysql 로 읽히면
+   * 의도와 다르게 동작하고, 반대로 memory 로 읽히면 **머신이 여럿일 때 게이트가 사라진다.**
+   * 둘 다 조용한 오작동이라 기동 시점에 막는 편이 낫다.
+   */
+  @IsOptional()
+  @IsIn(['mysql', 'memory'], { message: 'JOB_LOCK_DRIVER 는 mysql | memory 중 하나여야 합니다.' })
+  JOB_LOCK_DRIVER?: string;
+
   /** 원격 Vision 모델 응답 대기 상한(ms, 기본 8000). 1000 미만이면 기본값으로 되돌린다. */
   @IsOptional()
   @IsInt()

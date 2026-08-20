@@ -122,6 +122,17 @@ export class AppConfig {
     return Number.isFinite(raw) && raw >= 0 ? raw : 30;
   }
 
+  /**
+   * 배치 중복 실행을 막는 락의 구현. `mysql`(기본) | `memory`.
+   *
+   * `memory` 는 프로세스 안에서만 유효해 **머신이 하나일 때만** 맞다. `mysql` 은 MySQL 의
+   * 사용자 락(GET_LOCK)을 써서 인스턴스가 여럿이어도 하나만 실행되게 한다 — 머신이
+   * 하나일 때도 동작이 같으므로 기본값으로 둔다(scheduling.module.ts 참고).
+   */
+  get jobLockDriver(): 'mysql' | 'memory' {
+    return this.config.get<string>('JOB_LOCK_DRIVER') === 'memory' ? 'memory' : 'mysql';
+  }
+
   get dailyReportCron(): string {
     return this.config.get<string>('DAILY_REPORT_CRON') ?? '0 10 0 * * *';
   }
