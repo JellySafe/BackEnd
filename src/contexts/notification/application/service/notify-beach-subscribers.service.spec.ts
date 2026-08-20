@@ -27,6 +27,7 @@ describe('NotifyBeachSubscribersService (SYS-005 관심 해변 알림 확산)', 
   function setup(
     subscribers: BeachSubscriber[],
     createImpl: (command: CreateNotificationCommand) => Promise<CreateNotificationResult>,
+    areaSubscribers: { userId: number; areaLabel: string | null }[] = [],
   ) {
     const getSubscribers = jest.fn<Promise<BeachSubscriber[]>, [number]>().mockResolvedValue(
       subscribers,
@@ -34,10 +35,13 @@ describe('NotifyBeachSubscribersService (SYS-005 관심 해변 알림 확산)', 
     const create = jest.fn(createImpl);
     const subscribersUseCase: GetBeachSubscribersUseCase = { getSubscribers };
     const createUseCase: CreateNotificationUseCase = { create };
-    const service = new NotifyBeachSubscribersService(subscribersUseCase, createUseCase);
+    const findByBeach = jest.fn().mockResolvedValue(areaSubscribers);
+    const service = new NotifyBeachSubscribersService(subscribersUseCase, createUseCase, {
+      findByBeach,
+    });
     // 로그 소음 억제 (부분 실패 warn).
     jest.spyOn(service['logger'], 'warn').mockImplementation(() => undefined);
-    return { service, getSubscribers, create };
+    return { service, getSubscribers, create, findByBeach };
   }
 
   it('모든 관심 등록자에게 public 알림을 생성하고 생성 수를 집계한다', async () => {
@@ -108,5 +112,41 @@ describe('NotifyBeachSubscribersService (SYS-005 관심 해변 알림 확산)', 
     expect(create).toHaveBeenCalledTimes(20);
     const ids = create.mock.calls.map((c) => c[0].targetUserId).sort((a, b) => Number(a) - Number(b));
     expect(ids).toEqual(subs.map((s) => s.userId));
+  });
+
+  // --- 해역 구독자 확산 (EX-004) -----------------------------------------------------
+
+  it('그 해변을 감시 구역에 둔 유료 구독자에게도 알림이 간다', async () => {
+    const { service, create } = setup([subscriber(1)], () => Promise.resolve(result(true)), [
+      { userId: 50, areaLabel: '한림 양식장 앞' },
+    ]);
+
+    const res = await service.notifySubscribers({ beachId: BEACH_ID, eventType: 'level_up' });
+
+    expect(res.subscriberCount).toBe(2);
+    expect(create.mock.calls.map((c) => c[0].targetUserId)).toEqual([1, 50]);
+  });
+
+  it('관심 해변과 해역 구독 양쪽에 걸린 사람에게는 한 번만 보낸다', async () => {
+    const { service, create } = setup([subscriber(7)], () => Promise.resolve(result(true)), [
+      { userId: 7, areaLabel: null },
+    ]);
+
+    const res = await service.notifySubscribers({ beachId: BEACH_ID, eventType: 'level_up' });
+
+    expect(res.subscriberCount).toBe(1);
+    expect(create).toHaveBeenCalledTimes(1);
+  });
+
+  it('해역 구독자 조회가 실패해도 관심 해변 알림은 그대로 나간다', async () => {
+    const { service, create, findByBeach } = setup([subscriber(1)], () =>
+      Promise.resolve(result(true)),
+    );
+    findByBeach.mockRejectedValue(new Error('DB 연결 끊김'));
+
+    const res = await service.notifySubscribers({ beachId: BEACH_ID, eventType: 'level_up' });
+
+    expect(res.createdCount).toBe(1);
+    expect(create).toHaveBeenCalledTimes(1);
   });
 });

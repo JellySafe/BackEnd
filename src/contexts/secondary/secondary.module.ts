@@ -25,11 +25,13 @@ import {
 import { AdminSubscriptionController } from './subscription/adapter/in/web/admin-subscription.controller';
 import { SubscriptionPrismaRepository } from './subscription/adapter/out/persistence/subscription.prisma-repository';
 import { CreateSubscriptionService } from './subscription/application/service/create-subscription.service';
+import { ManageSubscriptionService } from './subscription/application/service/manage-subscription.service';
 import { ListSubscriptionsService } from './subscription/application/service/list-subscriptions.service';
 import { SUBSCRIPTION_REPOSITORY } from './subscription/application/port/out/subscription-repository.port';
 import {
   CREATE_SUBSCRIPTION_USE_CASE,
   LIST_SUBSCRIPTIONS_USE_CASE,
+  MANAGE_SUBSCRIPTION_USE_CASE,
 } from './subscription/application/port/in/subscription-use-cases';
 // mlmodel (EX-003)
 import { AdminMlModelController } from './mlmodel/adapter/in/web/admin-ml-model.controller';
@@ -81,6 +83,8 @@ import { NOTIFICATION_CONSENT_REPOSITORY } from './dispatch/application/port/out
     { provide: PARTNER_REPOSITORY, useClass: PartnerPrismaRepository },
     // subscription
     { provide: CREATE_SUBSCRIPTION_USE_CASE, useClass: CreateSubscriptionService },
+    // 상태·결제·감시 구역 (EX-004). 활성 구독만 해역 알림을 받는다.
+    { provide: MANAGE_SUBSCRIPTION_USE_CASE, useClass: ManageSubscriptionService },
     { provide: LIST_SUBSCRIPTIONS_USE_CASE, useClass: ListSubscriptionsService },
     { provide: SUBSCRIPTION_REPOSITORY, useClass: SubscriptionPrismaRepository },
     // mlmodel

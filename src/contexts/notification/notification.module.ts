@@ -13,6 +13,7 @@ import { NotificationPurgePrismaRepository } from './adapter/out/persistence/not
 import { NotificationKyselyQuery } from './adapter/out/persistence/notification.kysely-query';
 import { TemplateKyselyQuery } from './adapter/out/persistence/template.kysely-query';
 import { BeachRiskKyselyQuery } from './adapter/out/persistence/beach-risk.kysely-query';
+import { AreaSubscriberKyselyQuery } from './adapter/out/persistence/area-subscriber.kysely-query';
 import { PushConsentPrismaRepository } from './adapter/out/persistence/push-consent.prisma-repository';
 import { SmsConsentPrismaRepository } from './adapter/out/persistence/sms-consent.prisma-repository';
 import { NotificationDispatchPrismaRepository } from './adapter/out/persistence/notification-dispatch.prisma-repository';
@@ -37,6 +38,7 @@ import { NOTIFICATION_QUERY } from './application/port/out/notification-query.po
 import { NOTIFICATION_PURGE } from './application/port/out/notification-purge.port';
 import { TEMPLATE_QUERY } from './application/port/out/template-query.port';
 import { BEACH_RISK_QUERY } from './application/port/out/beach-risk-query.port';
+import { AREA_SUBSCRIBER_QUERY } from './application/port/out/area-subscriber-query.port';
 import { PUSH_CONSENT_REPOSITORY } from './application/port/out/push-consent-repository.port';
 import { SMS_CONSENT_REPOSITORY } from './application/port/out/sms-consent-repository.port';
 import { NOTIFICATION_DISPATCH_REPOSITORY } from './application/port/out/notification-dispatch-repository.port';
@@ -103,6 +105,8 @@ import {
     { provide: TEMPLATE_QUERY, useClass: TemplateKyselyQuery },
     // ADM-010 문구 {riskLevel} 자동 채움: 해변 현재 위험도(risk_scores) 읽기 전용 조회.
     { provide: BEACH_RISK_QUERY, useClass: BeachRiskKyselyQuery },
+    // EX-004 해역 구독자(어민·양식장) — 관심 해변과 함께 알림 대상이 된다.
+    { provide: AREA_SUBSCRIBER_QUERY, useClass: AreaSubscriberKyselyQuery },
     // 푸시 수신 동의(notification_consents) / 발송 이력(notification_dispatches)
     { provide: PUSH_CONSENT_REPOSITORY, useClass: PushConsentPrismaRepository },
     { provide: SMS_CONSENT_REPOSITORY, useClass: SmsConsentPrismaRepository },

@@ -143,6 +143,8 @@ CHECK 제약·콜레이션까지 운영과 같고, **CI** 는 그 파일이 저�
 | POST | `/api/admin/partners/:id/api-keys` | 제휴사 API 키 발급 (EX-001) |
 | GET | `/api/partner/v1/beaches` | **제휴사용** 해변별 현재 위험도 (x-api-key) |
 | GET | `/api/partner/v1/beaches/:id/risk` | **제휴사용** 해변 위험도 상세 (x-api-key) |
+| PATCH | `/api/admin/subscriptions/:id/status` | 구독 상태 변경 (EX-004) — 활성 구독만 해역 알림을 받는다 |
+| POST | `/api/admin/subscriptions/:id/areas` | 감시 해역 등록 (해변 또는 좌표+반경) |
 
 ## 인증 · 인가
 

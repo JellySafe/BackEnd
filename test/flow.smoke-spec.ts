@@ -344,6 +344,114 @@ describe('실 DB 스모크', () => {
     });
   });
 
+  // ------------------------------------------------------------------ 구독 (EX-004)
+
+  describe('어민·양식장 구독', () => {
+    /** 구독 하나를 만든다(구독자는 관리자 계정을 빌려 쓴다 — 여기서는 생애주기만 본다). */
+    async function createSubscription(): Promise<number> {
+      const admin = await prisma.user.findUnique({ where: { email: ADMIN.email } });
+      const res = await request(http)
+        .post(`${prefix}/admin/subscriptions`)
+        .set('Authorization', `Bearer ${adminToken}`)
+        .send({ userId: Number(admin!.id), subscriberType: 'aquafarm', planCode: 'basic' })
+        .expect(201);
+      return body<{ subscription: { subscriptionId: number } }>(res).subscription.subscriptionId;
+    }
+
+    it('결제 전에는 활성화되지 않는다 — 활성은 곧 유료 서비스 제공이다', async () => {
+      const subscriptionId = await createSubscription();
+
+      await request(http)
+        .patch(`${prefix}/admin/subscriptions/${subscriptionId}/status`)
+        .set('Authorization', `Bearer ${adminToken}`)
+        .send({ status: 'active' })
+        .expect(422);
+    });
+
+    it('결제 기록 후 활성화되고, 환불하면 해지된다', async () => {
+      const subscriptionId = await createSubscription();
+
+      await request(http)
+        .post(`${prefix}/admin/subscriptions/${subscriptionId}/payments`)
+        .set('Authorization', `Bearer ${adminToken}`)
+        .send({ paymentStatus: 'paid', amount: 30000 })
+        .expect(201);
+
+      const activated = await request(http)
+        .patch(`${prefix}/admin/subscriptions/${subscriptionId}/status`)
+        .set('Authorization', `Bearer ${adminToken}`)
+        .send({ status: 'active' })
+        .expect(200);
+      expect(body<{ subscriptionStatus: string }>(activated).subscriptionStatus).toBe('active');
+
+      const refunded = await request(http)
+        .post(`${prefix}/admin/subscriptions/${subscriptionId}/payments`)
+        .set('Authorization', `Bearer ${adminToken}`)
+        .send({ paymentStatus: 'refunded' })
+        .expect(201);
+      // 돈을 돌려주고도 알림이 계속 가면 안 된다.
+      expect(body<{ subscriptionStatus: string }>(refunded).subscriptionStatus).toBe('canceled');
+    });
+
+    it('해지된 구독은 다시 활성화되지 않는다 (종착 상태)', async () => {
+      const subscriptionId = await createSubscription();
+      await request(http)
+        .patch(`${prefix}/admin/subscriptions/${subscriptionId}/status`)
+        .set('Authorization', `Bearer ${adminToken}`)
+        .send({ status: 'canceled' })
+        .expect(200);
+
+      await request(http)
+        .patch(`${prefix}/admin/subscriptions/${subscriptionId}/status`)
+        .set('Authorization', `Bearer ${adminToken}`)
+        .send({ status: 'active' })
+        .expect(422);
+    });
+
+    it('감시 구역을 해변·좌표 두 형태로 등록하고 지운다', async () => {
+      const subscriptionId = await createSubscription();
+      const beach = await prisma.beach.findFirst({ where: { isActive: true } });
+
+      const byBeach = await request(http)
+        .post(`${prefix}/admin/subscriptions/${subscriptionId}/areas`)
+        .set('Authorization', `Bearer ${adminToken}`)
+        .send({ beachId: Number(beach!.id), label: '앞바다' })
+        .expect(201);
+
+      await request(http)
+        .post(`${prefix}/admin/subscriptions/${subscriptionId}/areas`)
+        .set('Authorization', `Bearer ${adminToken}`)
+        .send({ centerLat: 33.39, centerLng: 126.24, radiusKm: 999, label: '양식장' })
+        .expect(201);
+
+      const areas = await request(http)
+        .get(`${prefix}/admin/subscriptions/${subscriptionId}/areas`)
+        .set('Authorization', `Bearer ${adminToken}`)
+        .expect(200);
+      const list = body<{ areaId: number; radiusKm: number | null }[]>(areas);
+      expect(list).toHaveLength(2);
+      // 반경은 거부하지 않고 허용 범위(30km)로 접는다.
+      expect(list.find((a) => a.radiusKm !== null)?.radiusKm).toBe(30);
+
+      const areaId = body<{ areaId: number }>(byBeach).areaId;
+      const removed = await request(http)
+        .delete(`${prefix}/admin/subscriptions/${subscriptionId}/areas/${areaId}`)
+        .set('Authorization', `Bearer ${adminToken}`)
+        .expect(200);
+      expect(body<{ removed: boolean }>(removed).removed).toBe(true);
+    });
+
+    it('감시할 대상이 없는 구역은 거부한다', async () => {
+      const subscriptionId = await createSubscription();
+
+      await request(http)
+        .post(`${prefix}/admin/subscriptions/${subscriptionId}/areas`)
+        .set('Authorization', `Bearer ${adminToken}`)
+        .send({ label: '이름만 있는 구역' })
+        .expect(400);
+    });
+  });
+
   // ------------------------------------------------------------------ 제보 → 검수
 
   describe('제보 등록 → 검수', () => {
