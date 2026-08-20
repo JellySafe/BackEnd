@@ -134,6 +134,49 @@ class EnvSchema {
   @IsInt()
   @Min(1)
   CONSENT_RETENTION_DAYS?: number;
+
+  /**
+   * 제보 이미지 저장 드라이버.
+   *
+   * ⚠️ 오타를 local 로 떨어뜨리지 않고 **기동을 막는다.** `s3` 로 쓰려던 값이 오타 하나로
+   * 로컬 볼륨 저장이 되면, 머신이 둘 이상일 때 사진이 갈라지고 머신을 옮기면 사라진다.
+   * 그 증상은 "가끔 사진이 안 열린다" 로 한참 뒤에야 사용자 신고로 드러난다.
+   * (s3 인데 S3_BUCKET 이 비어 있는 경우도 부팅 시점에 막는다 — image-storage.provider.ts)
+   */
+  @IsOptional()
+  @IsIn(['local', 's3'], { message: 'STORAGE_DRIVER 는 local | s3 중 하나여야 합니다.' })
+  STORAGE_DRIVER?: string;
+
+  @IsOptional()
+  @IsString()
+  S3_BUCKET?: string;
+
+  @IsOptional()
+  @IsString()
+  S3_REGION?: string;
+
+  @IsOptional()
+  @IsString()
+  S3_ENDPOINT?: string;
+
+  @IsOptional()
+  @IsString()
+  S3_PUBLIC_BASE_URL?: string;
+
+  @IsOptional()
+  @IsString()
+  S3_KEY_PREFIX?: string;
+
+  @IsOptional()
+  @IsIn(['true', 'false'])
+  S3_FORCE_PATH_STYLE?: string;
+
+  /** 사전 서명 URL 유효 시간(초, 기본 300). 30~3600 범위 밖은 기본값으로 되돌린다. */
+  @IsOptional()
+  @IsInt()
+  @Min(30)
+  @Max(3600)
+  S3_PRESIGN_EXPIRES_SECONDS?: number;
 }
 
 export function validateEnv(config: Record<string, unknown>): Record<string, unknown> {

@@ -1,6 +1,7 @@
 import { Inject, Injectable, Logger } from '@nestjs/common';
 import { ConfigService } from '@nestjs/config';
 import { AppConfig } from '@shared/config/app.config';
+import { ValidationError } from '@shared/kernel/domain-error';
 import { Id } from '@shared/kernel/id';
 import { JellyfishReport } from '../../domain/jellyfish-report';
 import {
@@ -18,6 +19,10 @@ import {
 } from '../port/in/report-use-cases';
 import { BeachLocationPort, BEACH_LOCATION } from '../port/out/beach-location.port';
 import { ReportRepositoryPort, REPORT_REPOSITORY } from '../port/out/report-repository.port';
+import {
+  ReportImageStoragePort,
+  REPORT_IMAGE_STORAGE,
+} from '../port/out/report-image-storage.port';
 
 /** 접수 시점에 확정된 해변 배정 결과. */
 interface ResolvedBeach {
@@ -54,6 +59,7 @@ export class SubmitReportService implements SubmitReportUseCase {
     @Inject(REPORT_REPOSITORY) private readonly repository: ReportRepositoryPort,
     @Inject(PROCESS_VISION_USE_CASE) private readonly processVision: ProcessVisionUseCase,
     @Inject(BEACH_LOCATION) private readonly beachLocations: BeachLocationPort,
+    @Inject(REPORT_IMAGE_STORAGE) private readonly images: ReportImageStoragePort,
     configService: ConfigService,
   ) {
     this.config = new AppConfig(configService);
@@ -61,6 +67,21 @@ export class SubmitReportService implements SubmitReportUseCase {
 
   async submit(command: SubmitReportCommand): Promise<SubmitReportResult> {
     const now = new Date();
+
+    // 사진이 **정말 우리 저장소에 있는 이미지인지** 확인한다.
+    //
+    // imageUrl 은 업로드 응답을 그대로 넣는 것이 전제지만, 실제로는 요청 본문이라 아무 문자열이나
+    // 올 수 있다. 확인하지 않으면 (a) 사진 없는 제보가 검수 화면에 깨진 채로 쌓이고 (b) 외부 URL 을
+    // 넣어 관리자 브라우저가 남의 서버를 호출하게 만들 수 있으며 (c) 사전 서명 업로드에서는
+    // 이미지가 아닌 바이트가 그대로 서빙된다. 저장소가 앞부분만 읽어 형식까지 본다.
+    if (!(await this.images.verifyStored(command.imageUrl))) {
+      throw new ValidationError(
+        'REPORT_IMAGE_UNKNOWN',
+        '업로드된 사진을 찾을 수 없습니다. 사진을 다시 올린 뒤 제보해 주세요.',
+        { imageUrl: command.imageUrl },
+      );
+    }
+
     const beach = await this.resolveBeach(command);
 
     const report = JellyfishReport.create(

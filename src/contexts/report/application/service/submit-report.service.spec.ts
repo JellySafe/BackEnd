@@ -51,15 +51,24 @@ describe('SubmitReportService (REPORT-005 최근접 해변 자동 배정)', () =
 
     const processVision = { process: jest.fn().mockResolvedValue(undefined), processPending: jest.fn() };
 
+    // 저장소는 "사진이 실제로 있다" 만 답하면 된다(그 검증 자체는 별도 테스트에서 본다).
+    const images = {
+      save: jest.fn(),
+      deleteByUrl: jest.fn(),
+      verifyStored: jest.fn().mockResolvedValue(true),
+      presignUpload: jest.fn().mockResolvedValue(null),
+    };
+
     const service = new SubmitReportService(
       repository,
       processVision,
       beachLocations,
+      images,
       new ConfigService({}),
     );
     jest.spyOn(service['logger'], 'log').mockImplementation(() => undefined);
     jest.spyOn(service['logger'], 'warn').mockImplementation(() => undefined);
-    return { service, save, listBeachLocations };
+    return { service, save, listBeachLocations, images };
   }
 
   /** save 에 넘어간 제보의 beach_id (실제로 DB 에 들어갈 값). */
@@ -133,5 +142,34 @@ describe('SubmitReportService (REPORT-005 최근접 해변 자동 배정)', () =
 
     expect(result.aiStatus).toBe('pending');
     expect(result.status).toBe('received');
+  });
+
+  // --- 사진 존재 확인 (#7) ------------------------------------------------------------
+
+  it('저장소에 없는 사진이면 접수하지 않는다 — imageUrl 은 요청 본문이라 지어낼 수 있다', async () => {
+    const { service, save, images } = setup();
+    images.verifyStored.mockResolvedValue(false);
+
+    await expect(service.submit(command())).rejects.toMatchObject({
+      code: 'REPORT_IMAGE_UNKNOWN',
+    });
+    expect(save).not.toHaveBeenCalled();
+  });
+
+  it('확인은 저장하기 전에 한다 (사진 없는 제보가 검수 화면에 쌓이지 않게)', async () => {
+    const { service, save, images } = setup();
+    const order: string[] = [];
+    images.verifyStored.mockImplementation(() => {
+      order.push('verify');
+      return Promise.resolve(true);
+    });
+    save.mockImplementation((report: JellyfishReport) => {
+      order.push('save');
+      return Promise.resolve(JellyfishReport.reconstitute({ ...report.snapshot(), id: 1024 }));
+    });
+
+    await service.submit(command());
+
+    expect(order).toEqual(['verify', 'save']);
   });
 });

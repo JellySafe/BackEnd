@@ -8,6 +8,12 @@ import { GlobalExceptionFilter } from '@shared/http/global-exception.filter';
 import { ResponseInterceptor } from '@shared/http/response.interceptor';
 import { PrismaService } from '@shared/persistence/prisma/prisma.service';
 
+/** 최소한의 JPEG(매직 바이트 + 패딩). 업로드가 내용으로 형식을 판별하므로 진짜 헤더가 필요하다. */
+const JPEG_BYTES = Buffer.concat([
+  Buffer.from([0xff, 0xd8, 0xff, 0xe0, 0x00, 0x10, 0x4a, 0x46, 0x49, 0x46, 0x00, 0x01]),
+  Buffer.alloc(256),
+]);
+
 /**
  * 실 DB 스모크 (#10) — **진짜 MySQL 위에서 주요 흐름이 끝까지 도는지**만 본다.
  *
@@ -266,13 +272,22 @@ describe('실 DB 스모크', () => {
       const consentLogIds = body<{ consentLogIds: number[] }>(consented).consentLogIds;
       expect(consentLogIds).toHaveLength(3);
 
+      // 사진도 실제로 올린다. 제보 접수가 "그 사진이 저장소에 있는 이미지인지" 를 되짚어 보므로
+      // 지어낸 URL 로는 접수되지 않는다(#7).
+      const uploaded = await request(http)
+        .post(`${prefix}/public/reports/image`)
+        .attach('image', JPEG_BYTES, { filename: 'jelly.jpg', contentType: 'image/jpeg' })
+        .expect(201);
+      const imageUrl = body<{ imageUrl: string }>(uploaded).imageUrl;
+      expect(imageUrl).toMatch(/^\/uploads\//);
+
       const beach = await prisma.beach.findFirst({ where: { isActive: true } });
 
       const submitted = await request(http)
         .post(`${prefix}/public/reports`)
         .send({
           beachId: Number(beach!.id),
-          imageUrl: '/uploads/1752460800000-3f9a2c1b7d4e5a6f.jpg',
+          imageUrl,
           reportType: 'general',
           occurredAt: new Date().toISOString(),
           consentLogIds,
