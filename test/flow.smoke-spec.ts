@@ -452,6 +452,72 @@ describe('실 DB 스모크', () => {
     });
   });
 
+  // ------------------------------------------------------------------ 모델 레지스트리 (EX-003)
+
+  describe('ML 모델 레지스트리', () => {
+    async function registerModel(version: string): Promise<number> {
+      const res = await request(http)
+        .post(`${prefix}/admin/ml-models`)
+        .set('Authorization', `Bearer ${adminToken}`)
+        .send({ modelName: 'jelly-vit', version, algorithm: 'ViT-B/16', modelPurpose: 'vision' })
+        .expect(201);
+      return body<{ model: { modelId: number } }>(res).model.modelId;
+    }
+
+    function changeStatus(modelId: number, status: string) {
+      return request(http)
+        .patch(`${prefix}/admin/ml-models/${modelId}/status`)
+        .set('Authorization', `Bearer ${adminToken}`)
+        .send({ status });
+    }
+
+    it('학습 중인 모델을 곧바로 운영에 올릴 수 없다', async () => {
+      const modelId = await registerModel(`t-${Date.now()}`);
+
+      await changeStatus(modelId, 'active').expect(422);
+    });
+
+    it('검증을 거쳐 활성화하면 같은 용도의 기존 활성 모델이 내려간다', async () => {
+      const first = await registerModel(`a-${Date.now()}`);
+      await changeStatus(first, 'staging').expect(200);
+      await changeStatus(first, 'active').expect(200);
+
+      const second = await registerModel(`b-${Date.now()}`);
+      await changeStatus(second, 'staging').expect(200);
+      await changeStatus(second, 'active').expect(200);
+
+      // 한 용도에 활성 모델은 하나여야 한다("그 판단은 어느 모델이 했나"에 답할 수 있어야 한다).
+      const active = await request(http)
+        .get(`${prefix}/admin/ml-models/active?purpose=vision`)
+        .set('Authorization', `Bearer ${adminToken}`)
+        .expect(200);
+      expect(body<{ modelId: number }>(active).modelId).toBe(second);
+
+      const previous = await prisma.mlModel.findUnique({ where: { id: BigInt(first) } });
+      expect(previous?.modelStatus).toBe('archived');
+      expect(await prisma.mlModel.count({ where: { modelPurpose: 'vision', modelStatus: 'active' } })).toBe(1);
+    });
+
+    it('성능 지표는 숫자만 받는다', async () => {
+      const modelId = await registerModel(`m-${Date.now()}`);
+
+      await request(http)
+        .patch(`${prefix}/admin/ml-models/${modelId}/metrics`)
+        .set('Authorization', `Bearer ${adminToken}`)
+        .send({ metrics: { auc: 0.886, recall: 0.731 } })
+        .expect(200);
+
+      await request(http)
+        .patch(`${prefix}/admin/ml-models/${modelId}/metrics`)
+        .set('Authorization', `Bearer ${adminToken}`)
+        .send({ metrics: { note: '좋음' } })
+        .expect(400);
+
+      const saved = await prisma.mlModel.findUnique({ where: { id: BigInt(modelId) } });
+      expect(saved?.metricsJson).toEqual({ auc: 0.886, recall: 0.731 });
+    });
+  });
+
   // ------------------------------------------------------------------ 제보 → 검수
 
   describe('제보 등록 → 검수', () => {

@@ -37,10 +37,12 @@ import {
 import { AdminMlModelController } from './mlmodel/adapter/in/web/admin-ml-model.controller';
 import { MlModelPrismaRepository } from './mlmodel/adapter/out/persistence/ml-model.prisma-repository';
 import { RegisterModelService } from './mlmodel/application/service/register-model.service';
+import { ManageModelService } from './mlmodel/application/service/manage-model.service';
 import { ListModelsService } from './mlmodel/application/service/list-models.service';
 import { ML_MODEL_REPOSITORY } from './mlmodel/application/port/out/ml-model-repository.port';
 import {
   LIST_MODELS_USE_CASE,
+  MANAGE_MODEL_USE_CASE,
   REGISTER_MODEL_USE_CASE,
 } from './mlmodel/application/port/in/ml-model-use-cases';
 // dispatch / notification consent (EX-004) — repository 스텁만 (컨트롤러 없음)
@@ -89,6 +91,8 @@ import { NOTIFICATION_CONSENT_REPOSITORY } from './dispatch/application/port/out
     { provide: SUBSCRIPTION_REPOSITORY, useClass: SubscriptionPrismaRepository },
     // mlmodel
     { provide: REGISTER_MODEL_USE_CASE, useClass: RegisterModelService },
+    // 상태 전이·지표·활성 모델 조회 (EX-003). 한 용도에 활성 모델은 하나다.
+    { provide: MANAGE_MODEL_USE_CASE, useClass: ManageModelService },
     { provide: LIST_MODELS_USE_CASE, useClass: ListModelsService },
     { provide: ML_MODEL_REPOSITORY, useClass: MlModelPrismaRepository },
     // dispatch (스텁)

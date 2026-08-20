@@ -208,6 +208,12 @@ class EnvSchema {
   @IsOptional()
   @IsIn(['caution', 'danger'])
   SMS_MIN_RISK_LEVEL?: string;
+
+  /** 원격 Vision 모델 응답 대기 상한(ms, 기본 8000). 1000 미만이면 기본값으로 되돌린다. */
+  @IsOptional()
+  @IsInt()
+  @Min(1000)
+  VISION_AI_TIMEOUT_MS?: number;
 }
 
 export function validateEnv(config: Record<string, unknown>): Record<string, unknown> {

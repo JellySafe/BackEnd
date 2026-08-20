@@ -12,7 +12,7 @@ import { ReportKyselyQuery } from './adapter/out/persistence/report.kysely-query
 import { VisionResultPrismaRepository } from './adapter/out/persistence/vision-result.prisma-repository';
 import { ReportPurgePrismaRepository } from './adapter/out/persistence/report-purge.prisma-repository';
 import { ConsentPrismaRepository } from './adapter/out/persistence/consent.prisma-repository';
-import { MockVisionAiAdapter } from './adapter/out/ai/mock-vision-ai.adapter';
+import { visionAiProvider } from './adapter/out/ai/vision-ai.provider';
 import { NotificationTriggerAdapter } from './adapter/out/notification-trigger.adapter';
 import { AuditAdapter } from './adapter/out/audit.adapter';
 import { BeachLocationAdapter } from './adapter/out/beach-location.adapter';
@@ -26,7 +26,6 @@ import { ReviewReportService } from './application/service/review-report.service
 import { ProcessVisionService } from './application/service/process-vision.service';
 import { REPORT_REPOSITORY } from './application/port/out/report-repository.port';
 import { REPORT_QUERY } from './application/port/out/report-query.port';
-import { VISION_AI } from './application/port/out/vision-ai.port';
 import { VISION_RESULT_REPOSITORY } from './application/port/out/vision-result-repository.port';
 import { NOTIFICATION_TRIGGER } from './application/port/out/notification-trigger.port';
 import { AUDIT_PORT } from './application/port/out/audit.port';
@@ -76,7 +75,8 @@ import {
     // 아웃바운드 포트 → 어댑터
     { provide: REPORT_REPOSITORY, useClass: ReportPrismaRepository },
     { provide: REPORT_QUERY, useClass: ReportKyselyQuery },
-    { provide: VISION_AI, useClass: MockVisionAiAdapter },
+    // AI 판별 어댑터(VISION_AI_MODE). remote 인데 엔드포인트가 없으면 기동을 막는다.
+    visionAiProvider,
     { provide: VISION_RESULT_REPOSITORY, useClass: VisionResultPrismaRepository },
     // 자동 알림/감사/보관정책 아웃바운드 포트 → 어댑터
     { provide: NOTIFICATION_TRIGGER, useClass: NotificationTriggerAdapter },
