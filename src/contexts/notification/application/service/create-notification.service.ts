@@ -8,6 +8,8 @@ import {
   CreateNotificationUseCase,
   DispatchNotificationPushUseCase,
   DISPATCH_NOTIFICATION_PUSH_USE_CASE,
+  DispatchNotificationSmsUseCase,
+  DISPATCH_NOTIFICATION_SMS_USE_CASE,
 } from '../port/in/notification-use-cases';
 import {
   NotificationRepositoryPort,
@@ -36,6 +38,8 @@ export class CreateNotificationService implements CreateNotificationUseCase {
     @Inject(TEMPLATE_QUERY) private readonly templates: TemplateQueryPort,
     @Inject(DISPATCH_NOTIFICATION_PUSH_USE_CASE)
     private readonly push: DispatchNotificationPushUseCase,
+    @Inject(DISPATCH_NOTIFICATION_SMS_USE_CASE)
+    private readonly sms: DispatchNotificationSmsUseCase,
   ) {}
 
   async create(command: CreateNotificationCommand): Promise<CreateNotificationResult> {
@@ -124,7 +128,9 @@ export class CreateNotificationService implements CreateNotificationUseCase {
     }
 
     if (saved.id !== null) {
+      // 채널별로 독립 실행한다(한쪽 실패가 다른 쪽을 막지 않는다).
       await this.dispatchPush(saved.id, value, now);
+      await this.dispatchSms(saved.id, value, now);
     }
 
     return { notificationId: saved.id, created: saved.created, dedupKey, message };
@@ -160,6 +166,34 @@ export class CreateNotificationService implements CreateNotificationUseCase {
     } catch (err) {
       this.logger.error(
         `푸시 발송 실패 (notificationId=${notificationId}): ` +
+          `${err instanceof Error ? err.message : String(err)}. 알림 자체는 저장됐다.`,
+      );
+    }
+  }
+
+  /**
+   * 문자 발송(EX-002). 푸시와 **나란히** 시도하되, 서로의 실패에 영향을 주지 않는다.
+   *
+   * 채널마다 실패 이유가 다르다(푸시는 구독 만료, 문자는 사업자 장애·잔액). 한 채널의 실패로
+   * 다른 채널까지 건너뛰면, 하나만 살아 있어도 받을 수 있었을 사람이 아무것도 못 받는다.
+   * 발송 여부·문턱(위험 단계)·수신 동의 확인은 유스케이스가 판단한다.
+   */
+  private async dispatchSms(
+    notificationId: Id,
+    value: NotificationValue,
+    now: Date,
+  ): Promise<void> {
+    try {
+      await this.sms.dispatch({
+        notificationId,
+        owner: { userId: value.targetUserId, userToken: value.targetUserToken },
+        message: value.message,
+        riskLevel: value.riskLevel,
+        now,
+      });
+    } catch (err) {
+      this.logger.error(
+        `문자 발송 실패 (notificationId=${notificationId}): ` +
           `${err instanceof Error ? err.message : String(err)}. 알림 자체는 저장됐다.`,
       );
     }

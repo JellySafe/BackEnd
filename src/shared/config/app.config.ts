@@ -125,6 +125,34 @@ export class AppConfig {
   get refreshTokenPurgeCron(): string {
     return this.config.get<string>('REFRESH_TOKEN_PURGE_CRON') ?? '0 15 3 * * *';
   }
+
+  /**
+   * 제보 사진·위치 보관 일수 (PRIV-003). 기본 90일.
+   *
+   * 접수 시점 + 이 기간이 `purge_scheduled_at` 이 되고, 그 시각이 지나면 파기 배치가 사진 파일을
+   * 지우고 좌표를 마스킹한다. **접수 때 계산해 행에 박아 넣는 값이라, 값을 바꿔도 이미 접수된
+   * 제보의 파기 시점은 바뀌지 않는다**(사용자가 동의한 그 시점의 정책이 그대로 적용된다).
+   *
+   * 하한 1일: 0 을 넣으면 접수 즉시 파기 대상이 되어 사진이 검수 전에 사라진다.
+   */
+  get reportRetentionDays(): number {
+    const raw = Number(this.config.get<string>('REPORT_RETENTION_DAYS') ?? '90');
+    if (!Number.isFinite(raw) || raw < 1) return 90;
+    return Math.floor(raw);
+  }
+
+  /**
+   * 동의 기록 보관 일수 (PRIV-001~003). 기본 365일.
+   *
+   * 제보 데이터(90일)보다 **길게 두는 것이 의도다.** 제보 사진·위치는 목적을 다하면 지워야 하지만,
+   * 동의 기록은 그 수집이 적법했음을 사후에 증명하는 자료라 조금 더 남아 있어야 한다.
+   * 다만 동의 기록도 개인정보(토큰·IP)이므로 무기한 보관하지 않는다.
+   */
+  get consentRetentionDays(): number {
+    const raw = Number(this.config.get<string>('CONSENT_RETENTION_DAYS') ?? '365');
+    if (!Number.isFinite(raw) || raw < 1) return 365;
+    return Math.floor(raw);
+  }
 }
 
 /** 크론 설정이 비활성('off'/빈 값)인지. */

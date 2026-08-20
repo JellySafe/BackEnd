@@ -1,15 +1,16 @@
-import { randomBytes } from 'node:crypto';
-import { mkdir, writeFile } from 'node:fs/promises';
-import { join } from 'node:path';
-import { Controller, Post, UploadedFile, UseInterceptors } from '@nestjs/common';
-import { ConfigService } from '@nestjs/config';
+import { Body, Controller, Inject, Post, UploadedFile, UseInterceptors } from '@nestjs/common';
 import { FileInterceptor } from '@nestjs/platform-express';
 import { ApiBody, ApiConsumes, ApiOperation, ApiTags } from '@nestjs/swagger';
-import { AppConfig } from '@shared/config/app.config';
 import { ApiOkData } from '@shared/http/api-response.decorator';
-import { ValidationError } from '@shared/kernel/domain-error';
-import { detectImage } from './image-signature';
+import { UnavailableError, ValidationError } from '@shared/kernel/domain-error';
+import {
+  ReportImageStoragePort,
+  REPORT_IMAGE_STORAGE,
+} from '../../../application/port/out/report-image-storage.port';
+import { detectImage, extensionOfMimeType } from './image-signature';
 import { UploadImageResponse } from './dto/upload-image.response';
+import { PresignUploadRequest } from './dto/presign-upload.request';
+import { PresignUploadResponse } from './dto/presign-upload.response';
 
 /**
  * 업로드된 파일의 최소 구조(Multer). @types/multer 미설치 환경에서도
@@ -46,11 +47,9 @@ const MAX_UPLOAD_BYTES = 12 * 1024 * 1024;
 @ApiTags('report')
 @Controller('public/reports')
 export class ReportUploadController {
-  private readonly config: AppConfig;
-
-  constructor(configService: ConfigService) {
-    this.config = new AppConfig(configService);
-  }
+  constructor(
+    @Inject(REPORT_IMAGE_STORAGE) private readonly storage: ReportImageStoragePort,
+  ) {}
 
   /** USR-004 제보 이미지 업로드 */
   @ApiOperation({
@@ -105,28 +104,62 @@ export class ReportUploadController {
       );
     }
 
-    // 충돌 방지: 타임스탬프 + 난수 + 판별된 확장자.
-    const filename = `${Date.now()}-${randomBytes(8).toString('hex')}${detected.extension}`;
-
-    // 저장 위치는 AppConfig.uploadDir(UPLOAD_DIR). main.ts 의 정적 서빙이 같은 값을 보므로
-    // 여기서 만든 imageUrl 은 반드시 열린다(하드코딩 상수를 쓰면 둘이 어긋난다).
-    const uploadDir = this.config.uploadDir;
-    await mkdir(uploadDir, { recursive: true });
-    await writeFile(join(uploadDir, filename), file.buffer);
-
-    // 정적 서빙 경로 규약(/uploads/*) — DB 에 저장되는 값이므로 형식을 바꾸지 않는다.
-    // 실제 CDN/스토리지 연동 시 이 매핑만 교체.
-    const imageUrl = `${this.config.uploadUrlPrefix}${filename}`;
+    // 저장 위치·파일명 규칙은 저장소 어댑터가 정한다(로컬 볼륨 또는 S3 호환).
+    // 컨트롤러가 직접 파일을 쓰면 저장소를 바꿀 때 쓰기 경로가 남는다.
+    const stored = await this.storage.save(file.buffer, {
+      extension: detected.extension,
+      mimeType: detected.mimeType,
+    });
 
     // 썸네일은 생성하지 않는다(의도적). 판단 근거:
     //  - 이미지 리사이즈에는 네이티브 모듈(sharp/libvips)이 필요하다. 컨테이너는 돌지만
     //    런타임 이미지가 수십 MB 커지고, 빌드/런너 두 스테이지 모두 영향을 받는다.
-    //  - 저장 파일이 원본 + 썸네일 2배가 된다. 운영 볼륨은 1GB 다. 게다가 PRIV-003 파기는
-    //    지금 DB 마스킹만 하고 파일은 지우지 않는다 — 파일이 2배로 쌓이면 그 빚도 2배가 된다.
-    //  - 얻는 것이 적다: 관리자 목록은 페이지당 20건이고 원본은 같은 오리진에서 정적 서빙된다.
-    //    표시 크기 제한 + lazy loading 으로 충분하다.
-    // 대신 조회 응답이 imageUrl 을 항상 함께 내려주고, 클라이언트는 `thumbnailUrl ?? imageUrl` 로 폴백한다.
-    // thumbnail_url 컬럼/필드는 그대로 둔다 — 스키마에 이미 있고, S3/CDN 전환 시 파생 URL 을 채울 자리다.
-    return { imageUrl, thumbnailUrl: null };
+    //  - 저장 파일이 원본 + 썸네일 2배가 된다. 운영 볼륨은 1GB 다.
+    //  - 얻는 것이 적다: 관리자 목록은 페이지당 20건이고, 표시 크기 제한 + lazy loading 으로 충분하다.
+    //  - S3/CDN 으로 옮긴 뒤에는 **CDN 의 이미지 변환**(요청 시 리사이즈)이 더 낫다. 원본 하나만
+    //    보관하면서 필요한 크기를 그때 만들므로, 저장 용량도 파기 대상도 늘지 않는다.
+    // 클라이언트는 `thumbnailUrl ?? imageUrl` 로 폴백한다. thumbnail_url 컬럼은 그 자리로 남겨 둔다.
+    return stored;
+  }
+
+  /** USR-004 제보 이미지 사전 서명 업로드 (S3 드라이버 전용) */
+  @ApiOperation({
+    summary: '[앱] 제보 사진 업로드용 사전 서명 URL 발급 — 스토리지로 직접 올린다',
+    description: [
+      '서버를 거치지 않고 오브젝트 스토리지에 **직접** 올릴 1회용 URL 을 받는다.',
+      '응답의 `uploadUrl` 로 `PUT` 하고(헤더 `Content-Type` 은 응답의 `contentType` 과 정확히 일치해야 한다),',
+      '올린 뒤 `imageUrl` 을 제보 접수에 넣는다.',
+      '',
+      '**언제 쓰나** — 큰 사진을 올릴 때. 서버 경유 업로드(`POST /public/reports/image`)는 파일이',
+      '앱 메모리를 지나가지만, 이 방식은 그렇지 않다. 회선이 느린 모바일에서도 서버 타임아웃과 무관하다.',
+      '',
+      '**주의**',
+      '- `S3` 드라이버가 아닌 환경(로컬 볼륨 저장)에서는 503 이다. 그때는 서버 경유 업로드를 쓴다.',
+      '- 서버가 파일 내용을 보지 못하므로, **제보 접수 시점에 서버가 저장된 객체를 되짚어 검사한다.**',
+      '  이미지가 아니면 그 제보는 400 으로 거부된다(형식 위조를 막는 지점이 뒤로 밀렸을 뿐 사라지지 않았다).',
+      '- URL 은 짧게 만료된다(기본 5분). 만료 후에는 다시 발급받는다.',
+    ].join('\n'),
+  })
+  @ApiOkData(PresignUploadResponse)
+  @Post('image/presign')
+  async presignUpload(@Body() body: PresignUploadRequest): Promise<PresignUploadResponse> {
+    // 형식은 클라이언트가 "무엇을 올릴 것인지" 알려주는 값이다. 여기서는 우리가 허용하는
+    // 형식 목록 안에 있는지만 확인하고, **실제 내용 검사는 제보 접수 때** 한다(위 설명 참고).
+    const extension = extensionOfMimeType(body.contentType);
+    if (extension === null) {
+      throw new ValidationError(
+        'UPLOAD_IMAGE_INVALID_TYPE',
+        '이미지 형식만 업로드할 수 있습니다(jpg, png, gif, webp, heic).',
+      );
+    }
+
+    const presigned = await this.storage.presignUpload({ extension, mimeType: body.contentType });
+    if (presigned === null) {
+      throw new UnavailableError(
+        'PRESIGNED_UPLOAD_UNAVAILABLE',
+        '이 환경은 사전 서명 업로드를 지원하지 않습니다. POST /public/reports/image 로 올려주세요.',
+      );
+    }
+    return presigned;
   }
 }

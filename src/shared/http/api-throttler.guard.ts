@@ -7,6 +7,7 @@ import {
   isCostlyRoute,
   isRateLimitExcluded,
 } from './rate-limit.config';
+import { clientIpKeyOf } from './client-ip';
 
 /**
  * 전역 레이트 리밋 가드(IP 기준).
@@ -49,13 +50,8 @@ export class ApiThrottlerGuard extends ThrottlerGuard {
    * Fly 밖(로컬/다른 호스팅)에서는 express 의 req.ip(trust proxy 설정 반영)로 폴백한다.
    */
   protected async getTracker(req: Record<string, unknown>): Promise<string> {
-    const headers = (req.headers ?? {}) as Record<string, string | string[] | undefined>;
-    const flyIp = headers['fly-client-ip'];
-    if (typeof flyIp === 'string' && flyIp.length > 0) return flyIp;
-
-    const ip = req.ip as string | undefined;
-    const remote = (req.socket as { remoteAddress?: string } | undefined)?.remoteAddress;
-    return ip ?? remote ?? 'unknown';
+    // 같은 규칙을 동의 기록(PRIV-001)도 쓴다. 규칙이 두 벌이 되면 한쪽만 고쳐지므로 공유한다.
+    return clientIpKeyOf(req);
   }
 
   /** 핸들러별로 쪼개지 않고 `이름:IP` 로 버킷을 만든다. suffix 는 tracker(IP). */

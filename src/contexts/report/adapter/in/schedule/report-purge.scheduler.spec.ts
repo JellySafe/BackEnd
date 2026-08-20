@@ -3,6 +3,24 @@ import { SchedulerRegistry } from '@nestjs/schedule';
 import { ReportPurgeScheduler } from './report-purge.scheduler';
 import { PurgeTarget, ReportPurgePort } from '../../../application/port/out/report-purge.port';
 import { ReportImageStoragePort } from '../../../application/port/out/report-image-storage.port';
+import { ConsentRepositoryPort } from '../../../application/port/out/consent-repository.port';
+
+/** 파기 배치가 쓰지 않는 저장소 기능(업로드·검증·사전서명)의 자리를 메운다. */
+function storageStub() {
+  return {
+    save: jest.fn(),
+    verifyStored: jest.fn().mockResolvedValue(true),
+    presignUpload: jest.fn().mockResolvedValue(null),
+  };
+}
+
+/** 만료 동의 파기는 여기서 검증 대상이 아니다. 호출만 받아 0건을 돌려준다. */
+function noopConsents(purged = 0): ConsentRepositoryPort {
+  return {
+    saveAll: jest.fn().mockResolvedValue([]),
+    purgeExpired: jest.fn().mockResolvedValue(purged),
+  };
+}
 
 /**
  * PRIV-003 파기 배치.
@@ -18,10 +36,11 @@ describe('ReportPurgeScheduler', () => {
   function build(targets: PurgeTarget[], deleteResult: (url: string) => boolean = () => true) {
     const purge: ReportPurgePort = { purgeExpired: jest.fn().mockResolvedValue(targets) };
     const images: ReportImageStoragePort = {
+      ...storageStub(),
       deleteByUrl: jest.fn((url: string) => Promise.resolve(deleteResult(url))),
     };
     return {
-      scheduler: new ReportPurgeScheduler(configService, registry, purge, images),
+      scheduler: new ReportPurgeScheduler(configService, registry, purge, images, noopConsents()),
       purge,
       images,
     };
@@ -50,13 +69,14 @@ describe('ReportPurgeScheduler', () => {
       }),
     };
     const images: ReportImageStoragePort = {
+      ...storageStub(),
       deleteByUrl: jest.fn(() => {
         order.push('unlink');
         return Promise.resolve(true);
       }),
     };
 
-    await new ReportPurgeScheduler(configService, registry, purge, images).run();
+    await new ReportPurgeScheduler(configService, registry, purge, images, noopConsents()).run();
 
     expect(order).toEqual(['mask', 'unlink']);
   });
@@ -100,13 +120,53 @@ describe('ReportPurgeScheduler', () => {
     const purge: ReportPurgePort = {
       purgeExpired: jest.fn().mockRejectedValue(new Error('DB 연결 끊김')),
     };
-    const images: ReportImageStoragePort = { deleteByUrl: jest.fn() };
+    const images: ReportImageStoragePort = {
+      ...storageStub(), deleteByUrl: jest.fn() };
 
     // 배치는 예외를 삼키고 로그만 남긴다(다음 주기에 다시 시도한다).
     await expect(
-      new ReportPurgeScheduler(configService, registry, purge, images).run(),
+      new ReportPurgeScheduler(configService, registry, purge, images, noopConsents()).run(),
     ).resolves.toBeUndefined();
 
     expect(images.deleteByUrl).not.toHaveBeenCalled();
+  });
+
+  // --- PRIV-001 만료 동의 기록 파기 -------------------------------------------------
+
+  it('제보를 파기한 뒤에 만료 동의를 파기한다 — 근거를 먼저 지우지 않는다', async () => {
+    const order: string[] = [];
+    const purge: ReportPurgePort = {
+      purgeExpired: jest.fn(() => {
+        order.push('report');
+        return Promise.resolve([]);
+      }),
+    };
+    const images: ReportImageStoragePort = {
+      ...storageStub(), deleteByUrl: jest.fn() };
+    const consents: ConsentRepositoryPort = {
+      saveAll: jest.fn(),
+      purgeExpired: jest.fn(() => {
+        order.push('consent');
+        return Promise.resolve(3);
+      }),
+    };
+
+    await new ReportPurgeScheduler(configService, registry, purge, images, consents).run();
+
+    expect(order).toEqual(['report', 'consent']);
+  });
+
+  it('파기할 제보가 없어도 만료 동의는 정리한다', async () => {
+    const consents = noopConsents(5);
+
+    await new ReportPurgeScheduler(
+      configService,
+      registry,
+      { purgeExpired: jest.fn().mockResolvedValue([]) },
+      { ...storageStub(), deleteByUrl: jest.fn() },
+      consents,
+    ).run();
+
+    expect(consents.purgeExpired).toHaveBeenCalled();
   });
 });

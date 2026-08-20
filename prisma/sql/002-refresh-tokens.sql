@@ -35,8 +35,9 @@ CREATE TABLE IF NOT EXISTS refresh_tokens (
   used_at         DATETIME     NULL,
 
   revoked_at      DATETIME     NULL,
-  -- logout | logout_all | reuse_detected | rotated
-  revoked_reason  VARCHAR(30)  NULL,
+  -- 값 목록은 CHECK 로 고정하고 콜레이션을 bin 으로 둔다. 이 저장소의 상태값 규약이며
+  -- (스키마 원본 상단 ★ 항목), 대문자 'LOGOUT' 같은 값이 조용히 들어가는 것을 INSERT 시점에 막는다.
+  revoked_reason  VARCHAR(30) COLLATE utf8mb4_bin NULL,
 
   PRIMARY KEY (id),
 
@@ -54,7 +55,11 @@ CREATE TABLE IF NOT EXISTS refresh_tokens (
 
   -- 계정이 사라지면 그 계정의 재발급 권한도 함께 사라져야 한다.
   CONSTRAINT fk_refresh_tokens_user FOREIGN KEY (user_id)
-    REFERENCES users (id) ON DELETE CASCADE
+    REFERENCES users (id) ON DELETE CASCADE,
+
+  CONSTRAINT ck_refresh_tokens_reason CHECK (
+    revoked_reason IS NULL OR revoked_reason IN ('logout','logout_all','reuse_detected','rotated')
+  )
 ) ENGINE=InnoDB DEFAULT CHARSET=utf8mb4 COLLATE=utf8mb4_general_ci
   COMMENT='관리자/운영자 리프레시 토큰 (해시 저장, 회전·재사용 감지)';
 

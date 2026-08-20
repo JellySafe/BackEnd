@@ -116,6 +116,104 @@ class EnvSchema {
   @Min(1)
   @Max(90)
   REFRESH_TOKEN_EXPIRES_DAYS?: number;
+
+  /**
+   * 제보 사진·위치 보관 일수(PRIV-003, 기본 90).
+   * 하한 1: 0 을 넣으면 접수 즉시 파기 대상이 되어 검수 전에 사진이 사라진다.
+   */
+  @IsOptional()
+  @IsInt()
+  @Min(1)
+  REPORT_RETENTION_DAYS?: number;
+
+  /**
+   * 동의 기록 보관 일수(PRIV-001, 기본 365).
+   * 제보 데이터보다 길게 두는 것이 의도다 — 수집이 적법했음을 증명할 자료가 먼저 사라지면 안 된다.
+   */
+  @IsOptional()
+  @IsInt()
+  @Min(1)
+  CONSENT_RETENTION_DAYS?: number;
+
+  /**
+   * 제보 이미지 저장 드라이버.
+   *
+   * ⚠️ 오타를 local 로 떨어뜨리지 않고 **기동을 막는다.** `s3` 로 쓰려던 값이 오타 하나로
+   * 로컬 볼륨 저장이 되면, 머신이 둘 이상일 때 사진이 갈라지고 머신을 옮기면 사라진다.
+   * 그 증상은 "가끔 사진이 안 열린다" 로 한참 뒤에야 사용자 신고로 드러난다.
+   * (s3 인데 S3_BUCKET 이 비어 있는 경우도 부팅 시점에 막는다 — image-storage.provider.ts)
+   */
+  @IsOptional()
+  @IsIn(['local', 's3'], { message: 'STORAGE_DRIVER 는 local | s3 중 하나여야 합니다.' })
+  STORAGE_DRIVER?: string;
+
+  @IsOptional()
+  @IsString()
+  S3_BUCKET?: string;
+
+  @IsOptional()
+  @IsString()
+  S3_REGION?: string;
+
+  @IsOptional()
+  @IsString()
+  S3_ENDPOINT?: string;
+
+  @IsOptional()
+  @IsString()
+  S3_PUBLIC_BASE_URL?: string;
+
+  @IsOptional()
+  @IsString()
+  S3_KEY_PREFIX?: string;
+
+  @IsOptional()
+  @IsIn(['true', 'false'])
+  S3_FORCE_PATH_STYLE?: string;
+
+  /** 사전 서명 URL 유효 시간(초, 기본 300). 30~3600 범위 밖은 기본값으로 되돌린다. */
+  @IsOptional()
+  @IsInt()
+  @Min(30)
+  @Max(3600)
+  S3_PRESIGN_EXPIRES_SECONDS?: number;
+
+  /**
+   * 문자 발송 사업자(EX-002). 기본 none — **문자는 건당 과금이고 발신번호 사전등록이 필요한**
+   * 채널이라, 설정하지 않은 환경에서 실수로 나가지 않게 기본을 꺼 둔다.
+   * (자격증명이 불완전하면 어댑터가 스스로 비활성이 된다. 부팅은 막지 않는다 — 부가 채널이다)
+   */
+  @IsOptional()
+  @IsIn(['none', 'sens'], { message: "SMS_PROVIDER 는 none | sens 중 하나여야 합니다." })
+  SMS_PROVIDER?: string;
+
+  @IsOptional()
+  @IsString()
+  SENS_SERVICE_ID?: string;
+
+  @IsOptional()
+  @IsString()
+  SENS_ACCESS_KEY?: string;
+
+  @IsOptional()
+  @IsString()
+  SENS_SECRET_KEY?: string;
+
+  /** 발신번호. 사전등록된 번호만 쓸 수 있다(전기통신사업법). */
+  @IsOptional()
+  @IsString()
+  SENS_FROM?: string;
+
+  /** 문자를 보내는 최소 위험 단계. 기본 danger. */
+  @IsOptional()
+  @IsIn(['caution', 'danger'])
+  SMS_MIN_RISK_LEVEL?: string;
+
+  /** 원격 Vision 모델 응답 대기 상한(ms, 기본 8000). 1000 미만이면 기본값으로 되돌린다. */
+  @IsOptional()
+  @IsInt()
+  @Min(1000)
+  VISION_AI_TIMEOUT_MS?: number;
 }
 
 export function validateEnv(config: Record<string, unknown>): Record<string, unknown> {

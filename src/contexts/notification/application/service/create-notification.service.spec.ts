@@ -3,6 +3,7 @@ import {
   CreateNotificationCommand,
   DispatchNotificationPushResult,
   DispatchNotificationPushUseCase,
+  DispatchNotificationSmsUseCase,
 } from '../port/in/notification-use-cases';
 import {
   NotificationRepositoryPort,
@@ -45,11 +46,16 @@ function setup(options: {
     dispatch: jest.fn(options.dispatch ?? (() => Promise.resolve(NO_PUSH))),
   };
 
-  const service = new CreateNotificationService(repository, query, templates, push);
+  // 문자 채널은 여기서 검증 대상이 아니다(별도 스펙). 호출만 받아 "보내지 않음" 으로 답한다.
+  const sms: DispatchNotificationSmsUseCase = {
+    dispatch: jest.fn(() => Promise.resolve({ skipped: true, sent: false, reason: null })),
+  };
+
+  const service = new CreateNotificationService(repository, query, templates, push, sms);
   jest.spyOn(service['logger'], 'debug').mockImplementation(() => undefined);
   jest.spyOn(service['logger'], 'error').mockImplementation(() => undefined);
 
-  return { service, repository, push };
+  return { service, repository, push, sms };
 }
 
 function command(overrides: Partial<CreateNotificationCommand> = {}): CreateNotificationCommand {

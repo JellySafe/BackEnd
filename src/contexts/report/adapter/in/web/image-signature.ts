@@ -25,6 +25,12 @@ export interface DetectedImage {
 /** 판별에 필요한 최소 바이트 수(HEIC 의 브랜드까지 읽어야 한다). */
 const MIN_HEADER_BYTES = 12;
 
+/**
+ * 저장된 파일을 되짚어 확인할 때 읽을 앞부분 크기.
+ * 판별에는 12바이트면 되지만, 저장소에서 범위 조회를 할 때는 여유를 둔다(32바이트도 한 요청이다).
+ */
+export const SIGNATURE_PROBE_BYTES = 32;
+
 function startsWith(buf: Buffer, bytes: readonly number[], offset = 0): boolean {
   if (buf.length < offset + bytes.length) return false;
   return bytes.every((b, i) => buf[offset + i] === b);
@@ -76,4 +82,29 @@ export function detectImage(buffer: Buffer): DetectedImage | null {
   }
 
   return null;
+}
+
+/**
+ * 우리가 받아들이는 MIME → 저장 확장자. 아는 형식이 아니면 null.
+ *
+ * 사전 서명 업로드에서만 쓴다. 그때는 서버가 바이트를 보지 못하므로 클라이언트가 알려준 형식으로
+ * 서명할 수밖에 없는데, **아무 형식이나 서명해 주지는 않는다.** 실제 내용 검사는 제보 접수 때
+ * detectImage 로 되짚는다(형식 위조를 막는 지점이 뒤로 밀렸을 뿐 사라지지 않았다).
+ * SVG 가 목록에 없는 이유는 detectImage 와 같다 — 텍스트 포맷이라 스크립트를 품을 수 있다.
+ */
+export function extensionOfMimeType(mimeType: string): string | null {
+  switch (mimeType) {
+    case 'image/jpeg':
+      return '.jpg';
+    case 'image/png':
+      return '.png';
+    case 'image/gif':
+      return '.gif';
+    case 'image/webp':
+      return '.webp';
+    case 'image/heic':
+      return '.heic';
+    default:
+      return null;
+  }
 }

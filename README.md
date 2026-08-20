@@ -120,12 +120,17 @@ CHECK 제약·콜레이션까지 운영과 같고, **CI** 는 그 파일이 저�
 | 메서드 | 경로 | 기능 |
 |---|---|---|
 | POST | `/api/public/guest-tokens` | 비로그인 사용자 식별 토큰 발급 (앱 최초 1회) |
+| POST | `/api/public/consents` | 개인정보 동의 기록 (PRIV-001) — 제보 전에 먼저 호출 |
+| POST | `/api/public/reports/image` | 제보 사진 업로드 (서버 경유) |
+| POST | `/api/public/reports/image/presign` | 제보 사진 업로드용 사전 서명 URL (S3 드라이버 전용) |
 | POST | `/api/public/reports` | 해파리 제보 (USR-004) |
 | GET | `/api/public/reports/:id` | 제보 결과/AI 안내 (USR-005) |
 | GET | `/api/public/beaches` | 해변 목록/검색 + 현재 위험단계 (USR-001) |
 | GET | `/api/public/beaches/:id/risk` | 해변 위험도 상세 (USR-002) |
 | POST | `/api/public/favorites` | 관심 해변 저장 (USR-003) |
 | GET | `/api/public/alerts` | 알림함 (USR-003) |
+| GET | `/api/public/notification-consents` | 내 알림 수신 상태(푸시 기기 수·문자 동의) |
+| POST | `/api/public/notification-consents/sms` | 문자 수신 동의 (EX-002) |
 | GET | `/api/admin/dashboard/summary` | 대시보드 요약 (ADM-001) |
 | GET | `/api/admin/risks/latest` | 지도/리스트 위험도 (ADM-002/003) |
 | GET | `/api/admin/beaches/:id/risk` | 해변 위험도 상세 (ADM-004/005) |
@@ -135,6 +140,11 @@ CHECK 제약·콜레이션까지 운영과 같고, **CI** 는 그 파일이 저�
 | POST | `/api/admin/notifications/preview` | 알림 문구 생성 (ADM-010) |
 | GET/POST | `/api/admin/daily-reports` | 일간 리포트 (ADM-011) |
 | POST | `/api/system/risk/calculate` | 위험도 산출 (SYS-003, 내부/배치) |
+| POST | `/api/admin/partners/:id/api-keys` | 제휴사 API 키 발급 (EX-001) |
+| GET | `/api/partner/v1/beaches` | **제휴사용** 해변별 현재 위험도 (x-api-key) |
+| GET | `/api/partner/v1/beaches/:id/risk` | **제휴사용** 해변 위험도 상세 (x-api-key) |
+| PATCH | `/api/admin/subscriptions/:id/status` | 구독 상태 변경 (EX-004) — 활성 구독만 해역 알림을 받는다 |
+| POST | `/api/admin/subscriptions/:id/areas` | 감시 해역 등록 (해변 또는 좌표+반경) |
 
 ## 인증 · 인가
 
@@ -145,6 +155,7 @@ CHECK 제약·콜레이션까지 운영과 같고, **CI** 는 그 파일이 저�
 | `/public/*` | 없음(공개 조회) 또는 아래 "사용자 식별" | `JwtAuthGuard`(Bearer 가 있으면 검증) |
 | `/admin/*` | `Authorization: Bearer <accessToken>` | `JwtAuthGuard`(필수) + `@Roles` |
 | `/system/*` | `x-system-key: <SYSTEM_API_KEY>` | `SystemAuthGuard`(미설정 시 fail-closed) |
+| `/partner/*` | `x-api-key: <제휴사 키>` | `PartnerAuthGuard`(키·범위·키별 호출 제한) |
 
 ### 사용자 식별 (`/public/*` 중 개인 자료)
 
@@ -172,6 +183,20 @@ CHECK 제약·콜레이션까지 운영과 같고, **CI** 는 그 파일이 저�
 | 계정 등록, 사용자 목록, 감사 로그 | `admin` |
 | 2차 기능 골격(ML 모델·제휴사·구독) | `admin` |
 
+### 제휴 API (`/partner/v1/*`, EX-001)
+
+숙박·레저 플랫폼에 위험도를 제공하는 경로. `/public/*` 을 그대로 열지 않은 이유는 두 가지다 —
+우리 화면 사정으로 응답을 바꿀 때마다 **남의 서비스가 깨지고**, 누가 얼마나 쓰는지 몰라 계약·
+과금·차단의 단위가 없기 때문이다. 그래서 응답 스펙을 따로 고정하고 경로에 버전을 둔다.
+
+- **키**: 관리자가 발급(`POST /admin/partners/:id/api-keys`). 원문은 **발급 응답에서만** 볼 수
+  있고 서버는 해시만 저장한다. 잃어버리면 폐기 후 재발급이 유일한 방법이다.
+- **범위(scope)**: 키에 담긴 범위만 호출된다. 엔드포인트에 범위 표시가 없으면 **가드가 거부**한다
+  (표시를 잊은 경로가 열려 있는 것보다 닫혀 있는 편이 안전하다).
+- **호출 제한**: 키 단위 분당 한도(기본 60). 전역 리밋은 IP 기준이라 제휴사를 구분하지 못한다.
+- **호출 로그**: 모든 호출을 `partner_api_call_logs` 에 남긴다. 인증 실패(401/403)와 서버
+  오류(5xx)는 **과금하지 않는다** — 앞은 서비스를 쓴 것이 아니고, 뒤는 우리 잘못이다.
+
 ### 세션 (액세스 토큰 · 리프레시 토큰)
 
 | 엔드포인트 | 하는 일 |
@@ -198,6 +223,12 @@ CHECK 제약·콜레이션까지 운영과 같고, **CI** 는 그 파일이 저�
 | `SYSTEM_API_KEY` | 없음 | 미설정 시 `/system/*` 전면 차단(fail-closed). |
 | `RISK_CALCULATION_STALE_MINUTES` | `30` | 부팅 시 이보다 오래 `running` 인 산출 배치를 실패로 확정한다(비정상 종료 잔재). |
 | `JWT_EXPIRES` | `12h` | 서버가 취소할 수 없는 토큰의 수명 = 유출 시 최대 노출 시간. 재발급 흐름을 붙였으면 줄일 수 있다. |
+| `REPORT_RETENTION_DAYS` | `90` | 제보 사진·위치 보관 기간(PRIV-003). 접수 시점에 행에 박히므로 **기존 제보에는 소급되지 않는다.** |
+| `SMS_PROVIDER` | `none` | 문자 발송 사업자. 기본은 꺼짐 — 건당 과금 + 발신번호 사전등록이 필요한 채널이라 켤 때만 켠다. |
+| `SMS_MIN_RISK_LEVEL` | `danger` | 문자를 보내는 최소 위험 단계. 낮추면 비용·알림 피로가 늘고 위험 단계 문자가 묻힌다. |
+| `STORAGE_DRIVER` | `local` | `local` 은 **단일 머신 전용**(볼륨은 머신에 붙는다). 머신을 늘리기 전에 `s3` 로 바꾼다. 오타는 기동 실패. |
+| `S3_PUBLIC_BASE_URL` | 없음 | 저장된 사진을 읽는 기준 URL. **DB 에 남는 값의 앞부분이라 한 번 정하면 바꾸지 않는다.** |
+| `CONSENT_RETENTION_DAYS` | `365` | 동의 기록 보관 기간. 제보보다 길게 두는 것이 의도다(적법성 증명 자료가 먼저 사라지면 안 된다). |
 | `REFRESH_TOKEN_EXPIRES_DAYS` | `14` (1~90) | 재로그인 없이 버티는 기간. `refresh_tokens` 테이블(`prisma/sql/002`)이 있어야 동작한다. |
 | `OCCURRENCE_RETENTION_YEARS` | `6` | `PAST_OCCURRENCE` 가 과거 5년을 세므로 그보다 짧으면 **그 룰이 조용히 죽는다**(5로 클램프). |
 | `DB_POOL_LIMIT` + `DATABASE_URL?connection_limit=` | `10` + Prisma 기본 | 커넥션 풀이 **두 개**다. DB 가 보는 접속 수는 합이며, 기동 로그에 둘 다 찍힌다. |

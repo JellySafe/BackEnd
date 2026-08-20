@@ -8,6 +8,12 @@ import { GlobalExceptionFilter } from '@shared/http/global-exception.filter';
 import { ResponseInterceptor } from '@shared/http/response.interceptor';
 import { PrismaService } from '@shared/persistence/prisma/prisma.service';
 
+/** 최소한의 JPEG(매직 바이트 + 패딩). 업로드가 내용으로 형식을 판별하므로 진짜 헤더가 필요하다. */
+const JPEG_BYTES = Buffer.concat([
+  Buffer.from([0xff, 0xd8, 0xff, 0xe0, 0x00, 0x10, 0x4a, 0x46, 0x49, 0x46, 0x00, 0x01]),
+  Buffer.alloc(256),
+]);
+
 /**
  * 실 DB 스모크 (#10) — **진짜 MySQL 위에서 주요 흐름이 끝까지 도는지**만 본다.
  *
@@ -243,34 +249,317 @@ describe('실 DB 스모크', () => {
     });
   });
 
+  // ------------------------------------------------------------------ 제휴 API (EX-001)
+
+  describe('제휴 API', () => {
+    /** 제휴사 + 키를 하나 만든다. 키 원문은 발급 응답에서만 나온다. */
+    async function issueKey(scopes: string[]): Promise<{ apiKey: string; partnerId: number }> {
+      const partnerCode = `smoke-${Date.now()}-${Math.round(Math.random() * 1e6)}`;
+      const registered = await request(http)
+        .post(`${prefix}/admin/partners`)
+        .set('Authorization', `Bearer ${adminToken}`)
+        .send({ partnerCode, name: '스모크 제휴사' })
+        .expect(201);
+      const partnerId = body<{ partner: { partnerId: number } }>(registered).partner.partnerId;
+
+      const issued = await request(http)
+        .post(`${prefix}/admin/partners/${partnerId}/api-keys`)
+        .set('Authorization', `Bearer ${adminToken}`)
+        .send({ scopes })
+        .expect(201);
+      return { apiKey: body<{ apiKey: string }>(issued).apiKey, partnerId };
+    }
+
+    it('발급한 키로 위험도 목록을 조회한다', async () => {
+      const { apiKey } = await issueKey(['risk:read']);
+
+      const res = await request(http)
+        .get(`${prefix}/partner/v1/beaches`)
+        .set('x-api-key', apiKey)
+        .expect(200);
+
+      const rows = body<{ beachId: number; riskLevel: string; dataConfidence: string }[]>(res);
+      expect(rows.length).toBeGreaterThan(0);
+      // 외부 스펙은 신뢰도·기준시각을 반드시 함께 준다(숫자만 주면 받는 쪽이 과신한다).
+      expect(rows[0].dataConfidence).toEqual(expect.any(String));
+    });
+
+    it('키 없이 호출하면 401', async () => {
+      await request(http).get(`${prefix}/partner/v1/beaches`).expect(401);
+    });
+
+    it('위조된 키는 401', async () => {
+      await request(http)
+        .get(`${prefix}/partner/v1/beaches`)
+        .set('x-api-key', 'jsp_000000000000_aaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaa')
+        .expect(401);
+    });
+
+    it('범위가 없는 키는 403 — 키는 유효하지만 권한이 없다', async () => {
+      const { apiKey } = await issueKey(['beach:read']);
+
+      await request(http)
+        .get(`${prefix}/partner/v1/beaches`)
+        .set('x-api-key', apiKey)
+        .expect(403);
+    });
+
+    it('호출이 과금 로그에 남는다 (제휴사·키·상태코드까지)', async () => {
+      const { apiKey, partnerId } = await issueKey(['risk:read']);
+      await request(http).get(`${prefix}/partner/v1/beaches`).set('x-api-key', apiKey).expect(200);
+
+      // 로그 기록은 응답을 막지 않으려고 응답 뒤에 돈다 — 잠깐 기다렸다 확인한다.
+      await waitFor(
+        async () =>
+          (await prisma.partnerApiCallLog.count({ where: { partnerId: BigInt(partnerId) } })) > 0,
+        '제휴 호출 로그 기록',
+      );
+
+      const log = await prisma.partnerApiCallLog.findFirst({
+        where: { partnerId: BigInt(partnerId) },
+        orderBy: { id: 'desc' },
+      });
+      expect(log?.statusCode).toBe(200);
+      expect(log?.isBillable).toBe(true);
+      expect(log?.endpoint).toContain('/partner/v1/beaches');
+    });
+
+    it('폐기된 키는 즉시 막힌다', async () => {
+      const { apiKey, partnerId } = await issueKey(['risk:read']);
+      const keys = await request(http)
+        .get(`${prefix}/admin/partners/${partnerId}/api-keys`)
+        .set('Authorization', `Bearer ${adminToken}`)
+        .expect(200);
+      const apiKeyId = body<{ apiKeyId: number }[]>(keys)[0].apiKeyId;
+
+      await request(http)
+        .delete(`${prefix}/admin/partners/${partnerId}/api-keys/${apiKeyId}`)
+        .set('Authorization', `Bearer ${adminToken}`)
+        .expect(200);
+
+      await request(http)
+        .get(`${prefix}/partner/v1/beaches`)
+        .set('x-api-key', apiKey)
+        .expect(401);
+    });
+  });
+
+  // ------------------------------------------------------------------ 구독 (EX-004)
+
+  describe('어민·양식장 구독', () => {
+    /** 구독 하나를 만든다(구독자는 관리자 계정을 빌려 쓴다 — 여기서는 생애주기만 본다). */
+    async function createSubscription(): Promise<number> {
+      const admin = await prisma.user.findUnique({ where: { email: ADMIN.email } });
+      const res = await request(http)
+        .post(`${prefix}/admin/subscriptions`)
+        .set('Authorization', `Bearer ${adminToken}`)
+        .send({ userId: Number(admin!.id), subscriberType: 'aquafarm', planCode: 'basic' })
+        .expect(201);
+      return body<{ subscription: { subscriptionId: number } }>(res).subscription.subscriptionId;
+    }
+
+    it('결제 전에는 활성화되지 않는다 — 활성은 곧 유료 서비스 제공이다', async () => {
+      const subscriptionId = await createSubscription();
+
+      await request(http)
+        .patch(`${prefix}/admin/subscriptions/${subscriptionId}/status`)
+        .set('Authorization', `Bearer ${adminToken}`)
+        .send({ status: 'active' })
+        .expect(422);
+    });
+
+    it('결제 기록 후 활성화되고, 환불하면 해지된다', async () => {
+      const subscriptionId = await createSubscription();
+
+      await request(http)
+        .post(`${prefix}/admin/subscriptions/${subscriptionId}/payments`)
+        .set('Authorization', `Bearer ${adminToken}`)
+        .send({ paymentStatus: 'paid', amount: 30000 })
+        .expect(201);
+
+      const activated = await request(http)
+        .patch(`${prefix}/admin/subscriptions/${subscriptionId}/status`)
+        .set('Authorization', `Bearer ${adminToken}`)
+        .send({ status: 'active' })
+        .expect(200);
+      expect(body<{ subscriptionStatus: string }>(activated).subscriptionStatus).toBe('active');
+
+      const refunded = await request(http)
+        .post(`${prefix}/admin/subscriptions/${subscriptionId}/payments`)
+        .set('Authorization', `Bearer ${adminToken}`)
+        .send({ paymentStatus: 'refunded' })
+        .expect(201);
+      // 돈을 돌려주고도 알림이 계속 가면 안 된다.
+      expect(body<{ subscriptionStatus: string }>(refunded).subscriptionStatus).toBe('canceled');
+    });
+
+    it('해지된 구독은 다시 활성화되지 않는다 (종착 상태)', async () => {
+      const subscriptionId = await createSubscription();
+      await request(http)
+        .patch(`${prefix}/admin/subscriptions/${subscriptionId}/status`)
+        .set('Authorization', `Bearer ${adminToken}`)
+        .send({ status: 'canceled' })
+        .expect(200);
+
+      await request(http)
+        .patch(`${prefix}/admin/subscriptions/${subscriptionId}/status`)
+        .set('Authorization', `Bearer ${adminToken}`)
+        .send({ status: 'active' })
+        .expect(422);
+    });
+
+    it('감시 구역을 해변·좌표 두 형태로 등록하고 지운다', async () => {
+      const subscriptionId = await createSubscription();
+      const beach = await prisma.beach.findFirst({ where: { isActive: true } });
+
+      const byBeach = await request(http)
+        .post(`${prefix}/admin/subscriptions/${subscriptionId}/areas`)
+        .set('Authorization', `Bearer ${adminToken}`)
+        .send({ beachId: Number(beach!.id), label: '앞바다' })
+        .expect(201);
+
+      await request(http)
+        .post(`${prefix}/admin/subscriptions/${subscriptionId}/areas`)
+        .set('Authorization', `Bearer ${adminToken}`)
+        .send({ centerLat: 33.39, centerLng: 126.24, radiusKm: 999, label: '양식장' })
+        .expect(201);
+
+      const areas = await request(http)
+        .get(`${prefix}/admin/subscriptions/${subscriptionId}/areas`)
+        .set('Authorization', `Bearer ${adminToken}`)
+        .expect(200);
+      const list = body<{ areaId: number; radiusKm: number | null }[]>(areas);
+      expect(list).toHaveLength(2);
+      // 반경은 거부하지 않고 허용 범위(30km)로 접는다.
+      expect(list.find((a) => a.radiusKm !== null)?.radiusKm).toBe(30);
+
+      const areaId = body<{ areaId: number }>(byBeach).areaId;
+      const removed = await request(http)
+        .delete(`${prefix}/admin/subscriptions/${subscriptionId}/areas/${areaId}`)
+        .set('Authorization', `Bearer ${adminToken}`)
+        .expect(200);
+      expect(body<{ removed: boolean }>(removed).removed).toBe(true);
+    });
+
+    it('감시할 대상이 없는 구역은 거부한다', async () => {
+      const subscriptionId = await createSubscription();
+
+      await request(http)
+        .post(`${prefix}/admin/subscriptions/${subscriptionId}/areas`)
+        .set('Authorization', `Bearer ${adminToken}`)
+        .send({ label: '이름만 있는 구역' })
+        .expect(400);
+    });
+  });
+
+  // ------------------------------------------------------------------ 모델 레지스트리 (EX-003)
+
+  describe('ML 모델 레지스트리', () => {
+    async function registerModel(version: string): Promise<number> {
+      const res = await request(http)
+        .post(`${prefix}/admin/ml-models`)
+        .set('Authorization', `Bearer ${adminToken}`)
+        .send({ modelName: 'jelly-vit', version, algorithm: 'ViT-B/16', modelPurpose: 'vision' })
+        .expect(201);
+      return body<{ model: { modelId: number } }>(res).model.modelId;
+    }
+
+    function changeStatus(modelId: number, status: string) {
+      return request(http)
+        .patch(`${prefix}/admin/ml-models/${modelId}/status`)
+        .set('Authorization', `Bearer ${adminToken}`)
+        .send({ status });
+    }
+
+    it('학습 중인 모델을 곧바로 운영에 올릴 수 없다', async () => {
+      const modelId = await registerModel(`t-${Date.now()}`);
+
+      await changeStatus(modelId, 'active').expect(422);
+    });
+
+    it('검증을 거쳐 활성화하면 같은 용도의 기존 활성 모델이 내려간다', async () => {
+      const first = await registerModel(`a-${Date.now()}`);
+      await changeStatus(first, 'staging').expect(200);
+      await changeStatus(first, 'active').expect(200);
+
+      const second = await registerModel(`b-${Date.now()}`);
+      await changeStatus(second, 'staging').expect(200);
+      await changeStatus(second, 'active').expect(200);
+
+      // 한 용도에 활성 모델은 하나여야 한다("그 판단은 어느 모델이 했나"에 답할 수 있어야 한다).
+      const active = await request(http)
+        .get(`${prefix}/admin/ml-models/active?purpose=vision`)
+        .set('Authorization', `Bearer ${adminToken}`)
+        .expect(200);
+      expect(body<{ modelId: number }>(active).modelId).toBe(second);
+
+      const previous = await prisma.mlModel.findUnique({ where: { id: BigInt(first) } });
+      expect(previous?.modelStatus).toBe('archived');
+      expect(await prisma.mlModel.count({ where: { modelPurpose: 'vision', modelStatus: 'active' } })).toBe(1);
+    });
+
+    it('성능 지표는 숫자만 받는다', async () => {
+      const modelId = await registerModel(`m-${Date.now()}`);
+
+      await request(http)
+        .patch(`${prefix}/admin/ml-models/${modelId}/metrics`)
+        .set('Authorization', `Bearer ${adminToken}`)
+        .send({ metrics: { auc: 0.886, recall: 0.731 } })
+        .expect(200);
+
+      await request(http)
+        .patch(`${prefix}/admin/ml-models/${modelId}/metrics`)
+        .set('Authorization', `Bearer ${adminToken}`)
+        .send({ metrics: { note: '좋음' } })
+        .expect(400);
+
+      const saved = await prisma.mlModel.findUnique({ where: { id: BigInt(modelId) } });
+      expect(saved?.metricsJson).toEqual({ auc: 0.886, recall: 0.731 });
+    });
+  });
+
   // ------------------------------------------------------------------ 제보 → 검수
 
   describe('제보 등록 → 검수', () => {
     it('제보가 저장되고 관리자 검수까지 이어진다', async () => {
-      // 제보자는 비로그인 사용자다. 신원은 서버가 발급한 게스트 토큰으로 잡는다.
+      // 앱이 실제로 밟는 순서 그대로 간다: 게스트 토큰 → 동의 기록 → 제보 접수 → 검수.
       const issued = await request(http).post(`${prefix}/public/guest-tokens`).expect(201);
       const guestToken = body<{ userToken: string }>(issued).userToken;
 
-      // 동의 로그는 제보의 선행 조건이다(FK). 제보 화면이 만드는 값이라 여기서는 준비물로 넣는다.
-      const consent = await prisma.consentLog.create({
-        data: {
-          userToken: guestToken,
-          consentType: 'privacy',
-          agreed: true,
+      const consented = await request(http)
+        .post(`${prefix}/public/consents`)
+        .send({
+          consents: [
+            { type: 'privacy', agreed: true },
+            { type: 'location', agreed: true },
+            { type: 'image', agreed: true },
+          ],
           policyVersion: 'v1',
-          agreedAt: new Date(),
-        },
-      });
+          userToken: guestToken,
+        })
+        .expect(201);
+      const consentLogIds = body<{ consentLogIds: number[] }>(consented).consentLogIds;
+      expect(consentLogIds).toHaveLength(3);
+
+      // 사진도 실제로 올린다. 제보 접수가 "그 사진이 저장소에 있는 이미지인지" 를 되짚어 보므로
+      // 지어낸 URL 로는 접수되지 않는다(#7).
+      const uploaded = await request(http)
+        .post(`${prefix}/public/reports/image`)
+        .attach('image', JPEG_BYTES, { filename: 'jelly.jpg', contentType: 'image/jpeg' })
+        .expect(201);
+      const imageUrl = body<{ imageUrl: string }>(uploaded).imageUrl;
+      expect(imageUrl).toMatch(/^\/uploads\//);
+
       const beach = await prisma.beach.findFirst({ where: { isActive: true } });
 
       const submitted = await request(http)
         .post(`${prefix}/public/reports`)
         .send({
           beachId: Number(beach!.id),
-          imageUrl: '/uploads/1752460800000-3f9a2c1b7d4e5a6f.jpg',
+          imageUrl,
           reportType: 'general',
           occurredAt: new Date().toISOString(),
-          consentLogIds: [Number(consent.id)],
+          consentLogIds,
           reporterToken: guestToken,
         })
         .expect(201);
