@@ -247,20 +247,25 @@ describe('실 DB 스모크', () => {
 
   describe('제보 등록 → 검수', () => {
     it('제보가 저장되고 관리자 검수까지 이어진다', async () => {
-      // 제보자는 비로그인 사용자다. 신원은 서버가 발급한 게스트 토큰으로 잡는다.
+      // 앱이 실제로 밟는 순서 그대로 간다: 게스트 토큰 → 동의 기록 → 제보 접수 → 검수.
       const issued = await request(http).post(`${prefix}/public/guest-tokens`).expect(201);
       const guestToken = body<{ userToken: string }>(issued).userToken;
 
-      // 동의 로그는 제보의 선행 조건이다(FK). 제보 화면이 만드는 값이라 여기서는 준비물로 넣는다.
-      const consent = await prisma.consentLog.create({
-        data: {
-          userToken: guestToken,
-          consentType: 'privacy',
-          agreed: true,
+      const consented = await request(http)
+        .post(`${prefix}/public/consents`)
+        .send({
+          consents: [
+            { type: 'privacy', agreed: true },
+            { type: 'location', agreed: true },
+            { type: 'image', agreed: true },
+          ],
           policyVersion: 'v1',
-          agreedAt: new Date(),
-        },
-      });
+          userToken: guestToken,
+        })
+        .expect(201);
+      const consentLogIds = body<{ consentLogIds: number[] }>(consented).consentLogIds;
+      expect(consentLogIds).toHaveLength(3);
+
       const beach = await prisma.beach.findFirst({ where: { isActive: true } });
 
       const submitted = await request(http)
@@ -270,7 +275,7 @@ describe('실 DB 스모크', () => {
           imageUrl: '/uploads/1752460800000-3f9a2c1b7d4e5a6f.jpg',
           reportType: 'general',
           occurredAt: new Date().toISOString(),
-          consentLogIds: [Number(consent.id)],
+          consentLogIds,
           reporterToken: guestToken,
         })
         .expect(201);

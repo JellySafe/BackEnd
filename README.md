@@ -120,6 +120,7 @@ CHECK 제약·콜레이션까지 운영과 같고, **CI** 는 그 파일이 저�
 | 메서드 | 경로 | 기능 |
 |---|---|---|
 | POST | `/api/public/guest-tokens` | 비로그인 사용자 식별 토큰 발급 (앱 최초 1회) |
+| POST | `/api/public/consents` | 개인정보 동의 기록 (PRIV-001) — 제보 전에 먼저 호출 |
 | POST | `/api/public/reports` | 해파리 제보 (USR-004) |
 | GET | `/api/public/reports/:id` | 제보 결과/AI 안내 (USR-005) |
 | GET | `/api/public/beaches` | 해변 목록/검색 + 현재 위험단계 (USR-001) |
@@ -198,6 +199,8 @@ CHECK 제약·콜레이션까지 운영과 같고, **CI** 는 그 파일이 저�
 | `SYSTEM_API_KEY` | 없음 | 미설정 시 `/system/*` 전면 차단(fail-closed). |
 | `RISK_CALCULATION_STALE_MINUTES` | `30` | 부팅 시 이보다 오래 `running` 인 산출 배치를 실패로 확정한다(비정상 종료 잔재). |
 | `JWT_EXPIRES` | `12h` | 서버가 취소할 수 없는 토큰의 수명 = 유출 시 최대 노출 시간. 재발급 흐름을 붙였으면 줄일 수 있다. |
+| `REPORT_RETENTION_DAYS` | `90` | 제보 사진·위치 보관 기간(PRIV-003). 접수 시점에 행에 박히므로 **기존 제보에는 소급되지 않는다.** |
+| `CONSENT_RETENTION_DAYS` | `365` | 동의 기록 보관 기간. 제보보다 길게 두는 것이 의도다(적법성 증명 자료가 먼저 사라지면 안 된다). |
 | `REFRESH_TOKEN_EXPIRES_DAYS` | `14` (1~90) | 재로그인 없이 버티는 기간. `refresh_tokens` 테이블(`prisma/sql/002`)이 있어야 동작한다. |
 | `OCCURRENCE_RETENTION_YEARS` | `6` | `PAST_OCCURRENCE` 가 과거 5년을 세므로 그보다 짧으면 **그 룰이 조용히 죽는다**(5로 클램프). |
 | `DB_POOL_LIMIT` + `DATABASE_URL?connection_limit=` | `10` + Prisma 기본 | 커넥션 풀이 **두 개**다. DB 가 보는 접속 수는 합이며, 기동 로그에 둘 다 찍힌다. |

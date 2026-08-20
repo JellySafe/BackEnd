@@ -1,7 +1,30 @@
 import { Id } from '@shared/kernel/id';
 import { Page, PageRequest } from '@shared/kernel/pagination';
 import { AiResult, RejectReason, ReportStatus, ReportType, ReviewStatus } from '../../../domain/report-enums';
+import { PublicOwner } from '@shared/kernel/public-owner';
 import { ReportDetail, ReportListFilter, ReportListItem } from '../out/report-query.port';
+import { ConsentDecision } from '../../../domain/consent';
+
+// ----- PRIV-001 동의 기록 (제보의 선행 단계) -----
+export interface RecordConsentCommand {
+  owner: PublicOwner;
+  decisions: ConsentDecision[];
+  /** 사용자가 본 고지 문구의 버전. 나중에 "무엇에 동의했는지"를 되짚는 유일한 단서다. */
+  policyVersion: string;
+  ipAddress: string | null;
+}
+
+export interface RecordConsentResult {
+  /** 제보 접수(`consentLogIds`)에 그대로 넣는 값. */
+  consentLogIds: Id[];
+  /** 이 동의 기록이 보관되는 시각. */
+  expiresAt: Date;
+}
+
+export interface RecordConsentUseCase {
+  record(command: RecordConsentCommand): Promise<RecordConsentResult>;
+}
+export const RECORD_CONSENT_USE_CASE = Symbol('RECORD_CONSENT_USE_CASE');
 
 // ----- USR-004 제보 작성 -----
 export interface SubmitReportCommand {

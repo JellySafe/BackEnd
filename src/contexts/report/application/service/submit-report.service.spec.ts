@@ -1,3 +1,4 @@
+import { ConfigService } from '@nestjs/config';
 import { JellyfishReport } from '../../domain/jellyfish-report';
 import { BeachCandidate } from '../../domain/nearest-beach';
 import { SubmitReportCommand } from '../port/in/report-use-cases';
@@ -50,7 +51,12 @@ describe('SubmitReportService (REPORT-005 최근접 해변 자동 배정)', () =
 
     const processVision = { process: jest.fn().mockResolvedValue(undefined), processPending: jest.fn() };
 
-    const service = new SubmitReportService(repository, processVision, beachLocations);
+    const service = new SubmitReportService(
+      repository,
+      processVision,
+      beachLocations,
+      new ConfigService({}),
+    );
     jest.spyOn(service['logger'], 'log').mockImplementation(() => undefined);
     jest.spyOn(service['logger'], 'warn').mockImplementation(() => undefined);
     return { service, save, listBeachLocations };

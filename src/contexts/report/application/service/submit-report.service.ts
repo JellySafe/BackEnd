@@ -1,4 +1,6 @@
 import { Inject, Injectable, Logger } from '@nestjs/common';
+import { ConfigService } from '@nestjs/config';
+import { AppConfig } from '@shared/config/app.config';
 import { Id } from '@shared/kernel/id';
 import { JellyfishReport } from '../../domain/jellyfish-report';
 import {
@@ -46,14 +48,16 @@ const UNASSIGNED: ResolvedBeach = {
 export class SubmitReportService implements SubmitReportUseCase {
   private readonly logger = new Logger(SubmitReportService.name);
 
+  private readonly config: AppConfig;
+
   constructor(
     @Inject(REPORT_REPOSITORY) private readonly repository: ReportRepositoryPort,
     @Inject(PROCESS_VISION_USE_CASE) private readonly processVision: ProcessVisionUseCase,
     @Inject(BEACH_LOCATION) private readonly beachLocations: BeachLocationPort,
-  ) {}
-
-  /** PRIV-003 보관 기간(일). 제보 시점 + 기간 후 이미지/위치를 파기한다. */
-  private static readonly RETENTION_DAYS = 90;
+    configService: ConfigService,
+  ) {
+    this.config = new AppConfig(configService);
+  }
 
   async submit(command: SubmitReportCommand): Promise<SubmitReportResult> {
     const now = new Date();
@@ -76,7 +80,7 @@ export class SubmitReportService implements SubmitReportUseCase {
 
     // PRIV-003: 저장 전에 파기 예정 시각을 지정해 최초 insert 에 함께 반영한다.
     const purgeAt = new Date(
-      now.getTime() + SubmitReportService.RETENTION_DAYS * 24 * 60 * 60 * 1000,
+      now.getTime() + this.config.reportRetentionDays * 24 * 60 * 60 * 1000,
     );
     report.schedulePurge(purgeAt);
 

@@ -116,6 +116,24 @@ class EnvSchema {
   @Min(1)
   @Max(90)
   REFRESH_TOKEN_EXPIRES_DAYS?: number;
+
+  /**
+   * 제보 사진·위치 보관 일수(PRIV-003, 기본 90).
+   * 하한 1: 0 을 넣으면 접수 즉시 파기 대상이 되어 검수 전에 사진이 사라진다.
+   */
+  @IsOptional()
+  @IsInt()
+  @Min(1)
+  REPORT_RETENTION_DAYS?: number;
+
+  /**
+   * 동의 기록 보관 일수(PRIV-001, 기본 365).
+   * 제보 데이터보다 길게 두는 것이 의도다 — 수집이 적법했음을 증명할 자료가 먼저 사라지면 안 된다.
+   */
+  @IsOptional()
+  @IsInt()
+  @Min(1)
+  CONSENT_RETENTION_DAYS?: number;
 }
 
 export function validateEnv(config: Record<string, unknown>): Record<string, unknown> {

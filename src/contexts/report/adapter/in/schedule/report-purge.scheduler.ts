@@ -8,8 +8,15 @@ import {
   ReportImageStoragePort,
   REPORT_IMAGE_STORAGE,
 } from '../../../application/port/out/report-image-storage.port';
+import {
+  ConsentRepositoryPort,
+  CONSENT_REPOSITORY,
+} from '../../../application/port/out/consent-repository.port';
 
 const JOB_NAME = 'report-purge';
+
+/** 한 주기에 정리할 만료 동의 기록 수. 제보 파기와 같은 트랜잭션이 아니므로 넉넉히 잡아도 된다. */
+const CONSENT_BATCH_SIZE = 1000;
 const DEFAULT_PURGE_CRON = '0 30 3 * * *'; // 매일 03:30
 
 /**
@@ -41,6 +48,7 @@ export class ReportPurgeScheduler implements OnModuleInit {
     private readonly registry: SchedulerRegistry,
     @Inject(REPORT_PURGE) private readonly purge: ReportPurgePort,
     @Inject(REPORT_IMAGE_STORAGE) private readonly images: ReportImageStoragePort,
+    @Inject(CONSENT_REPOSITORY) private readonly consents: ConsentRepositoryPort,
   ) {
     this.config = new AppConfig(configService);
     this.configService = configService;
@@ -78,9 +86,10 @@ export class ReportPurgeScheduler implements OnModuleInit {
     }
     this.running = true;
     try {
+      const now = new Date();
+
       // 1) DB 마스킹 — 마스킹 직전의 image_url 을 함께 돌려받는다(지운 뒤에는 알 수 없다).
-      const targets = await this.purge.purgeExpired(new Date());
-      if (targets.length === 0) return;
+      const targets = await this.purge.purgeExpired(now);
 
       // 2) 파일 삭제 — 개별 실패가 다른 제보의 파기를 막지 않도록 건별로 격리한다.
       //    이미 없는 파일은 실패가 아니다(어댑터가 false 를 준다).
@@ -90,8 +99,15 @@ export class ReportPurgeScheduler implements OnModuleInit {
         if (await this.images.deleteByUrl(target.imageUrl)) filesDeleted += 1;
       }
 
+      // 3) 만료된 동의 기록 파기 (PRIV-001).
+      //    **제보 파기 뒤에 돈다.** 동의는 그 제보를 갖고 있는 근거라, 근거를 먼저 지우면
+      //    남은 제보를 무슨 자격으로 보관 중인지 설명할 수 없게 된다. 같은 주기 안에서
+      //    방금 파기된 제보의 동의까지 정리되도록 순서를 이렇게 뒀다.
+      const consentsPurged = await this.consents.purgeExpired(now, CONSENT_BATCH_SIZE);
+
+      if (targets.length === 0 && consentsPurged === 0) return;
       this.logger.log(
-        `보관정책 파기 완료: ${targets.length}건 마스킹, 이미지 파일 ${filesDeleted}개 삭제`,
+        `보관정책 파기 완료: ${targets.length}건 마스킹, 이미지 파일 ${filesDeleted}개 삭제, 동의 기록 ${consentsPurged}건 파기`,
       );
     } catch (err) {
       this.logger.error(
