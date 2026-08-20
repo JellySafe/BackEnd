@@ -1,5 +1,6 @@
 import { Module } from '@nestjs/common';
 import { RiskModule } from '@contexts/risk/risk.module';
+import { SecondaryEnabledGuard } from './secondary-enabled.guard';
 // partner (EX-001)
 import { AdminPartnerController } from './partner/adapter/in/web/admin-partner.controller';
 import { PartnerRiskController } from './partner/adapter/in/web/partner-risk.controller';
@@ -57,7 +58,12 @@ import { NOTIFICATION_CONSENT_REPOSITORY } from './dispatch/application/port/out
  *  - subscription  : EX-002 어업/양식 구독 (GET/POST /admin/subscriptions)
  *  - mlmodel       : EX-003 모델 관리/MLOps (GET/POST /admin/ml-models)
  *  - dispatch      : EX-004 다채널 발송/수신동의 (repository 스텁, 컨트롤러 없음)
- * app.module 등록은 별도(범위 밖). 이 모듈 하나로 2차 provider 를 모두 묶는다.
+ * app.module 이 이 모듈 하나를 등록해 2차 provider 를 전부 묶는다.
+ *
+ * ⚠️ 이 기능들은 **쓰지 않아도 열려 있다.** 특히 `/partner/v1/*` 은 로그인도 관리자 토큰도
+ * 아닌 별도 자격증명(x-api-key)으로 들어오는 문이라, 제휴사가 없는 환경에서는 지키기만 하고
+ * 얻는 것이 없다. `SECONDARY_ENABLED=false` 로 네 경로를 한꺼번에 닫을 수 있다
+ * (secondary-enabled.guard.ts — 왜 모듈 제거가 아니라 가드인지도 거기 적혀 있다).
  */
 @Module({
   imports: [RiskModule],
@@ -69,6 +75,8 @@ import { NOTIFICATION_CONSENT_REPOSITORY } from './dispatch/application/port/out
     AdminMlModelController,
   ],
   providers: [
+    // 전체 스위치. 네 컨트롤러가 모두 @UseGuards 로 이 가드를 건다(SECONDARY_ENABLED=false → 404).
+    SecondaryEnabledGuard,
     // partner
     { provide: REGISTER_PARTNER_USE_CASE, useClass: RegisterPartnerService },
     // API 키 발급·검증·호출 기록은 한 서비스가 맡는다(같은 키 규칙을 공유한다).

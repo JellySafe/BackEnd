@@ -221,6 +221,16 @@ class EnvSchema {
   SMS_MIN_RISK_LEVEL?: string;
 
   /**
+   * 2차 기능(EX-001~004) 활성 여부. 기본 true.
+   *
+   * 오타를 조용히 한쪽으로 떨어뜨리지 않는다 — `SECONDARY_ENABLED=fasle` 로 적고 껐다고
+   * 믿는 상태가 가장 나쁘다(제휴 API 가 계속 열려 있는데 아무도 보지 않는다).
+   */
+  @IsOptional()
+  @IsIn(['true', 'false'], { message: 'SECONDARY_ENABLED 는 true | false 중 하나여야 합니다.' })
+  SECONDARY_ENABLED?: string;
+
+  /**
    * 배치 락 구현. mysql(기본) | memory.
    *
    * ⚠️ 오타를 조용히 어느 한쪽으로 떨어뜨리지 않는다. `memroy` 같은 오타가 mysql 로 읽히면

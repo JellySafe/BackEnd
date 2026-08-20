@@ -133,6 +133,17 @@ export class AppConfig {
     return this.config.get<string>('JOB_LOCK_DRIVER') === 'memory' ? 'memory' : 'mysql';
   }
 
+  /**
+   * 2차 기능(EX-001~004: 제휴 API·구독·모델 관리) 활성 여부. 기본 true(현재 동작 유지).
+   *
+   * false 로 두면 해당 경로가 전부 404 가 된다. 제휴사가 한 곳도 없는 환경에서
+   * `/partner/v1/*`(별도 자격증명으로 들어오는 문)을 열어 둘 이유가 없기 때문이다.
+   * 판정은 SecondaryEnabledGuard 가 한다.
+   */
+  get secondaryEnabled(): boolean {
+    return (this.config.get<string>('SECONDARY_ENABLED') ?? 'true') !== 'false';
+  }
+
   get dailyReportCron(): string {
     return this.config.get<string>('DAILY_REPORT_CRON') ?? '0 10 0 * * *';
   }

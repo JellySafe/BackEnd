@@ -23,6 +23,7 @@ import {
   PartnerBeachRiskDetailResponse,
   PartnerBeachRiskResponse,
 } from './dto/partner-risk.response';
+import { SecondaryEnabledGuard } from '../../../../secondary-enabled.guard';
 
 /**
  * 제휴사용 위험도 API (EX-001).
@@ -44,7 +45,10 @@ import {
   description: '제휴사 API 키. 발급 시 한 번만 보여주는 값이다.',
 })
 @Controller('partner/v1')
-@UseGuards(PartnerAuthGuard)
+// 가드는 **적힌 순서대로** 돈다. 2차 기능이 꺼져 있으면 키를 보기도 전에 404 여야 한다 —
+// 꺼진 기능이 자격증명 검사 결과(401 과 404 의 차이)만으로 존재를 드러내면 안 되기 때문이다.
+// (@UseGuards 를 두 번 쓰면 배열이 합쳐지되 아래쪽이 먼저 도므로, 한 줄에 순서대로 적는다)
+@UseGuards(SecondaryEnabledGuard, PartnerAuthGuard)
 @UseInterceptors(PartnerCallLogInterceptor)
 export class PartnerRiskController {
   constructor(

@@ -1,4 +1,4 @@
-import { Body, Controller, Delete, Get, Inject, Param, ParseIntPipe, Post, Query } from '@nestjs/common';
+import { Body, Controller, Delete, Get, Inject, Param, ParseIntPipe, Post, Query, UseGuards } from '@nestjs/common';
 import { ApiBearerAuth, ApiOperation, ApiParam, ApiQuery, ApiTags } from '@nestjs/swagger';
 import { Roles } from '@shared/auth/auth.decorators';
 import { ApiOkData, ApiOkDataArray } from '@shared/http/api-response.decorator';
@@ -21,6 +21,7 @@ import {
   IssueApiKeyResponse,
   RevokeApiKeyResponse,
 } from './dto/api-key.dto';
+import { SecondaryEnabledGuard } from '../../../../secondary-enabled.guard';
 
 /**
  * [2차] 파트너 관리 API (EX-001 외부 연동). 골격 — 실제 인증/과금은 2차 범위.
@@ -28,6 +29,9 @@ import {
 @ApiTags('secondary-partner')
 @ApiBearerAuth('bearer')
 @Roles('admin')
+// 2차 기능이 꺼져 있으면 여기서 404 다. 인증보다 **먼저** 걸러야
+// 꺼진 기능이 자격증명 검사만으로도 존재를 드러내지 않는다.
+@UseGuards(SecondaryEnabledGuard)
 @Controller('admin/partners')
 export class AdminPartnerController {
   constructor(

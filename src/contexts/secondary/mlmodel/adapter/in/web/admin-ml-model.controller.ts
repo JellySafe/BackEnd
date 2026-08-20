@@ -1,4 +1,4 @@
-import { Body, Controller, Get, Inject, Param, ParseIntPipe, Patch, Post, Query } from '@nestjs/common';
+import { Body, Controller, Get, Inject, Param, ParseIntPipe, Patch, Post, Query, UseGuards } from '@nestjs/common';
 import { ApiBearerAuth, ApiOperation, ApiParam, ApiQuery, ApiTags } from '@nestjs/swagger';
 import { Roles } from '@shared/auth/auth.decorators';
 import { ApiOkData } from '@shared/http/api-response.decorator';
@@ -19,6 +19,7 @@ import {
   RecordModelMetricsRequest,
 } from './dto/model-lifecycle.dto';
 import { ModelPurpose, ModelStatus, MODEL_PURPOSES } from '../../../domain/ml-model';
+import { SecondaryEnabledGuard } from '../../../../secondary-enabled.guard';
 
 /**
  * [2차] ML 모델 관리 API (EX-003 MLOps). 골격 — 학습/배포 파이프라인은 2차 범위.
@@ -26,6 +27,9 @@ import { ModelPurpose, ModelStatus, MODEL_PURPOSES } from '../../../domain/ml-mo
 @ApiTags('secondary-mlmodel')
 @ApiBearerAuth('bearer')
 @Roles('admin')
+// 2차 기능이 꺼져 있으면 여기서 404 다. 인증보다 **먼저** 걸러야
+// 꺼진 기능이 자격증명 검사만으로도 존재를 드러내지 않는다.
+@UseGuards(SecondaryEnabledGuard)
 @Controller('admin/ml-models')
 export class AdminMlModelController {
   constructor(

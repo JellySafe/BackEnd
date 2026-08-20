@@ -1,15 +1,4 @@
-import {
-  Body,
-  Controller,
-  Delete,
-  Get,
-  Inject,
-  Param,
-  ParseIntPipe,
-  Patch,
-  Post,
-  Query,
-} from '@nestjs/common';
+import { Body, Controller, Delete, Get, Inject, Param, ParseIntPipe, Patch, Post, Query, UseGuards } from '@nestjs/common';
 import { ApiBearerAuth, ApiOperation, ApiParam, ApiQuery, ApiTags } from '@nestjs/swagger';
 import { Roles } from '@shared/auth/auth.decorators';
 import { ApiOkData, ApiOkDataArray } from '@shared/http/api-response.decorator';
@@ -33,6 +22,7 @@ import {
   SubscriptionStateResponse,
 } from './dto/subscription-manage.dto';
 import { SubscriptionStatus } from '../../../domain/subscription';
+import { SecondaryEnabledGuard } from '../../../../secondary-enabled.guard';
 
 /**
  * [2차] 구독 관리 API (EX-002 어업/양식 구독). 골격 — 결제/과금 흐름은 2차 범위.
@@ -40,6 +30,9 @@ import { SubscriptionStatus } from '../../../domain/subscription';
 @ApiTags('secondary-subscription')
 @ApiBearerAuth('bearer')
 @Roles('admin')
+// 2차 기능이 꺼져 있으면 여기서 404 다. 인증보다 **먼저** 걸러야
+// 꺼진 기능이 자격증명 검사만으로도 존재를 드러내지 않는다.
+@UseGuards(SecondaryEnabledGuard)
 @Controller('admin/subscriptions')
 export class AdminSubscriptionController {
   constructor(
