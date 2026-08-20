@@ -249,6 +249,101 @@ describe('실 DB 스모크', () => {
     });
   });
 
+  // ------------------------------------------------------------------ 제휴 API (EX-001)
+
+  describe('제휴 API', () => {
+    /** 제휴사 + 키를 하나 만든다. 키 원문은 발급 응답에서만 나온다. */
+    async function issueKey(scopes: string[]): Promise<{ apiKey: string; partnerId: number }> {
+      const partnerCode = `smoke-${Date.now()}-${Math.round(Math.random() * 1e6)}`;
+      const registered = await request(http)
+        .post(`${prefix}/admin/partners`)
+        .set('Authorization', `Bearer ${adminToken}`)
+        .send({ partnerCode, name: '스모크 제휴사' })
+        .expect(201);
+      const partnerId = body<{ partner: { partnerId: number } }>(registered).partner.partnerId;
+
+      const issued = await request(http)
+        .post(`${prefix}/admin/partners/${partnerId}/api-keys`)
+        .set('Authorization', `Bearer ${adminToken}`)
+        .send({ scopes })
+        .expect(201);
+      return { apiKey: body<{ apiKey: string }>(issued).apiKey, partnerId };
+    }
+
+    it('발급한 키로 위험도 목록을 조회한다', async () => {
+      const { apiKey } = await issueKey(['risk:read']);
+
+      const res = await request(http)
+        .get(`${prefix}/partner/v1/beaches`)
+        .set('x-api-key', apiKey)
+        .expect(200);
+
+      const rows = body<{ beachId: number; riskLevel: string; dataConfidence: string }[]>(res);
+      expect(rows.length).toBeGreaterThan(0);
+      // 외부 스펙은 신뢰도·기준시각을 반드시 함께 준다(숫자만 주면 받는 쪽이 과신한다).
+      expect(rows[0].dataConfidence).toEqual(expect.any(String));
+    });
+
+    it('키 없이 호출하면 401', async () => {
+      await request(http).get(`${prefix}/partner/v1/beaches`).expect(401);
+    });
+
+    it('위조된 키는 401', async () => {
+      await request(http)
+        .get(`${prefix}/partner/v1/beaches`)
+        .set('x-api-key', 'jsp_000000000000_aaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaa')
+        .expect(401);
+    });
+
+    it('범위가 없는 키는 403 — 키는 유효하지만 권한이 없다', async () => {
+      const { apiKey } = await issueKey(['beach:read']);
+
+      await request(http)
+        .get(`${prefix}/partner/v1/beaches`)
+        .set('x-api-key', apiKey)
+        .expect(403);
+    });
+
+    it('호출이 과금 로그에 남는다 (제휴사·키·상태코드까지)', async () => {
+      const { apiKey, partnerId } = await issueKey(['risk:read']);
+      await request(http).get(`${prefix}/partner/v1/beaches`).set('x-api-key', apiKey).expect(200);
+
+      // 로그 기록은 응답을 막지 않으려고 응답 뒤에 돈다 — 잠깐 기다렸다 확인한다.
+      await waitFor(
+        async () =>
+          (await prisma.partnerApiCallLog.count({ where: { partnerId: BigInt(partnerId) } })) > 0,
+        '제휴 호출 로그 기록',
+      );
+
+      const log = await prisma.partnerApiCallLog.findFirst({
+        where: { partnerId: BigInt(partnerId) },
+        orderBy: { id: 'desc' },
+      });
+      expect(log?.statusCode).toBe(200);
+      expect(log?.isBillable).toBe(true);
+      expect(log?.endpoint).toContain('/partner/v1/beaches');
+    });
+
+    it('폐기된 키는 즉시 막힌다', async () => {
+      const { apiKey, partnerId } = await issueKey(['risk:read']);
+      const keys = await request(http)
+        .get(`${prefix}/admin/partners/${partnerId}/api-keys`)
+        .set('Authorization', `Bearer ${adminToken}`)
+        .expect(200);
+      const apiKeyId = body<{ apiKeyId: number }[]>(keys)[0].apiKeyId;
+
+      await request(http)
+        .delete(`${prefix}/admin/partners/${partnerId}/api-keys/${apiKeyId}`)
+        .set('Authorization', `Bearer ${adminToken}`)
+        .expect(200);
+
+      await request(http)
+        .get(`${prefix}/partner/v1/beaches`)
+        .set('x-api-key', apiKey)
+        .expect(401);
+    });
+  });
+
   // ------------------------------------------------------------------ 제보 → 검수
 
   describe('제보 등록 → 검수', () => {

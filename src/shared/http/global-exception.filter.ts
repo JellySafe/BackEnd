@@ -11,7 +11,8 @@ import { Request, Response } from 'express';
 import { apiError } from './api-response';
 import { DomainError, DomainErrorKind } from '../kernel/domain-error';
 
-const KIND_TO_STATUS: Record<DomainErrorKind, number> = {
+/** 도메인 예외 종류 → HTTP 상태. 필터 밖에서도 같은 매핑이 필요할 때 쓴다(제휴 호출 로그 등). */
+export const KIND_TO_STATUS: Record<DomainErrorKind, number> = {
   VALIDATION: HttpStatus.BAD_REQUEST,
   NOT_FOUND: HttpStatus.NOT_FOUND,
   CONFLICT: HttpStatus.CONFLICT,

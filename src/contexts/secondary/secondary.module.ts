@@ -1,12 +1,24 @@
 import { Module } from '@nestjs/common';
+import { RiskModule } from '@contexts/risk/risk.module';
 // partner (EX-001)
 import { AdminPartnerController } from './partner/adapter/in/web/admin-partner.controller';
+import { PartnerRiskController } from './partner/adapter/in/web/partner-risk.controller';
+import { PartnerAuthGuard } from './partner/adapter/in/web/partner-auth.guard';
+import { PartnerCallLogInterceptor } from './partner/adapter/in/web/partner-call-log.interceptor';
+import { PartnerRateLimiter } from './partner/adapter/in/web/partner-rate-limiter';
 import { PartnerPrismaRepository } from './partner/adapter/out/persistence/partner.prisma-repository';
+import { PartnerApiKeyPrismaRepository } from './partner/adapter/out/persistence/partner-api-key.prisma-repository';
+import { PartnerApiKeyService } from './partner/application/service/partner-api-key.service';
+import { PARTNER_API_KEY_REPOSITORY } from './partner/application/port/out/partner-api-key-repository.port';
 import { RegisterPartnerService } from './partner/application/service/register-partner.service';
 import { ListPartnersService } from './partner/application/service/list-partners.service';
 import { PARTNER_REPOSITORY } from './partner/application/port/out/partner-repository.port';
 import {
+  AUTHENTICATE_PARTNER_USE_CASE,
+  ISSUE_API_KEY_USE_CASE,
   LIST_PARTNERS_USE_CASE,
+  MANAGE_API_KEY_USE_CASE,
+  RECORD_PARTNER_CALL_USE_CASE,
   REGISTER_PARTNER_USE_CASE,
 } from './partner/application/port/in/partner-use-cases';
 // subscription (EX-002)
@@ -44,10 +56,27 @@ import { NOTIFICATION_CONSENT_REPOSITORY } from './dispatch/application/port/out
  * app.module 등록은 별도(범위 밖). 이 모듈 하나로 2차 provider 를 모두 묶는다.
  */
 @Module({
-  controllers: [AdminPartnerController, AdminSubscriptionController, AdminMlModelController],
+  imports: [RiskModule],
+  controllers: [
+    AdminPartnerController,
+    // 제휴사가 실제로 호출하는 API (키 인증 + 범위 + 호출 제한 + 과금 로그)
+    PartnerRiskController,
+    AdminSubscriptionController,
+    AdminMlModelController,
+  ],
   providers: [
     // partner
     { provide: REGISTER_PARTNER_USE_CASE, useClass: RegisterPartnerService },
+    // API 키 발급·검증·호출 기록은 한 서비스가 맡는다(같은 키 규칙을 공유한다).
+    PartnerApiKeyService,
+    { provide: ISSUE_API_KEY_USE_CASE, useExisting: PartnerApiKeyService },
+    { provide: MANAGE_API_KEY_USE_CASE, useExisting: PartnerApiKeyService },
+    { provide: AUTHENTICATE_PARTNER_USE_CASE, useExisting: PartnerApiKeyService },
+    { provide: RECORD_PARTNER_CALL_USE_CASE, useExisting: PartnerApiKeyService },
+    { provide: PARTNER_API_KEY_REPOSITORY, useClass: PartnerApiKeyPrismaRepository },
+    PartnerAuthGuard,
+    PartnerCallLogInterceptor,
+    PartnerRateLimiter,
     { provide: LIST_PARTNERS_USE_CASE, useClass: ListPartnersService },
     { provide: PARTNER_REPOSITORY, useClass: PartnerPrismaRepository },
     // subscription

@@ -73,6 +73,13 @@ import {
     // 부팅 시 종료 기록 없이 남은 running 산출을 실패로 확정한다(비정상 종료 잔재 정리).
     StaleCalculationRecovery,
   ],
-  exports: [RISK_RECALC, RISK_RECALC_TRIGGER, CALCULATE_RISK_USE_CASE],
+  // 제휴 API(EX-001)가 위험도 조회를 재사용한다. 같은 산출 결과를 두 벌로 만들지 않기 위해서다.
+  exports: [
+    RISK_RECALC,
+    RISK_RECALC_TRIGGER,
+    CALCULATE_RISK_USE_CASE,
+    LIST_LATEST_RISKS_USE_CASE,
+    GET_BEACH_RISK_DETAIL_USE_CASE,
+  ],
 })
 export class RiskModule {}

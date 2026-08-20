@@ -140,6 +140,9 @@ CHECK 제약·콜레이션까지 운영과 같고, **CI** 는 그 파일이 저�
 | POST | `/api/admin/notifications/preview` | 알림 문구 생성 (ADM-010) |
 | GET/POST | `/api/admin/daily-reports` | 일간 리포트 (ADM-011) |
 | POST | `/api/system/risk/calculate` | 위험도 산출 (SYS-003, 내부/배치) |
+| POST | `/api/admin/partners/:id/api-keys` | 제휴사 API 키 발급 (EX-001) |
+| GET | `/api/partner/v1/beaches` | **제휴사용** 해변별 현재 위험도 (x-api-key) |
+| GET | `/api/partner/v1/beaches/:id/risk` | **제휴사용** 해변 위험도 상세 (x-api-key) |
 
 ## 인증 · 인가
 
@@ -150,6 +153,7 @@ CHECK 제약·콜레이션까지 운영과 같고, **CI** 는 그 파일이 저�
 | `/public/*` | 없음(공개 조회) 또는 아래 "사용자 식별" | `JwtAuthGuard`(Bearer 가 있으면 검증) |
 | `/admin/*` | `Authorization: Bearer <accessToken>` | `JwtAuthGuard`(필수) + `@Roles` |
 | `/system/*` | `x-system-key: <SYSTEM_API_KEY>` | `SystemAuthGuard`(미설정 시 fail-closed) |
+| `/partner/*` | `x-api-key: <제휴사 키>` | `PartnerAuthGuard`(키·범위·키별 호출 제한) |
 
 ### 사용자 식별 (`/public/*` 중 개인 자료)
 
@@ -176,6 +180,20 @@ CHECK 제약·콜레이션까지 운영과 같고, **CI** 는 그 파일이 저�
 | 제보·알림·해변·관측·위험도·일간리포트·운영 | `operator`, `admin` (기본값) |
 | 계정 등록, 사용자 목록, 감사 로그 | `admin` |
 | 2차 기능 골격(ML 모델·제휴사·구독) | `admin` |
+
+### 제휴 API (`/partner/v1/*`, EX-001)
+
+숙박·레저 플랫폼에 위험도를 제공하는 경로. `/public/*` 을 그대로 열지 않은 이유는 두 가지다 —
+우리 화면 사정으로 응답을 바꿀 때마다 **남의 서비스가 깨지고**, 누가 얼마나 쓰는지 몰라 계약·
+과금·차단의 단위가 없기 때문이다. 그래서 응답 스펙을 따로 고정하고 경로에 버전을 둔다.
+
+- **키**: 관리자가 발급(`POST /admin/partners/:id/api-keys`). 원문은 **발급 응답에서만** 볼 수
+  있고 서버는 해시만 저장한다. 잃어버리면 폐기 후 재발급이 유일한 방법이다.
+- **범위(scope)**: 키에 담긴 범위만 호출된다. 엔드포인트에 범위 표시가 없으면 **가드가 거부**한다
+  (표시를 잊은 경로가 열려 있는 것보다 닫혀 있는 편이 안전하다).
+- **호출 제한**: 키 단위 분당 한도(기본 60). 전역 리밋은 IP 기준이라 제휴사를 구분하지 못한다.
+- **호출 로그**: 모든 호출을 `partner_api_call_logs` 에 남긴다. 인증 실패(401/403)와 서버
+  오류(5xx)는 **과금하지 않는다** — 앞은 서비스를 쓴 것이 아니고, 뒤는 우리 잘못이다.
 
 ### 세션 (액세스 토큰 · 리프레시 토큰)
 
