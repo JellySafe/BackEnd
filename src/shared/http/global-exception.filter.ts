@@ -9,6 +9,7 @@ import {
 import { Prisma } from '@prisma/client';
 import { Request, Response } from 'express';
 import { apiError } from './api-response';
+import { currentRequestId } from './request-context';
 import { DomainError, DomainErrorKind } from '../kernel/domain-error';
 
 /** 도메인 예외 종류 → HTTP 상태. 필터 밖에서도 같은 매핑이 필요할 때 쓴다(제휴 호출 로그 등). */
@@ -37,13 +38,25 @@ export class GlobalExceptionFilter implements ExceptionFilter {
 
     const { status, code, message, details } = this.resolve(exception);
 
+    // 이 요청의 상관관계 ID. 로그와 응답에 같은 값이 들어가야 둘을 이어 붙일 수 있다.
+    const requestId = currentRequestId();
+    const prefix = requestId === null ? '' : `[${requestId}] `;
+
     if (status >= 500) {
-      this.logger.error(`${req.method} ${req.url} -> ${status} ${code}: ${message}`, this.stackOf(exception));
+      this.logger.error(
+        `${prefix}${req.method} ${req.url} -> ${status} ${code}: ${message}`,
+        this.stackOf(exception),
+      );
     } else {
-      this.logger.warn(`${req.method} ${req.url} -> ${status} ${code}: ${message}`);
+      this.logger.warn(`${prefix}${req.method} ${req.url} -> ${status} ${code}: ${message}`);
     }
 
-    res.status(status).json(apiError(code, message, details));
+    // 실패 응답에 ID 를 함께 준다. 사용자가 화면에 뜬 값 하나만 알려줘도 운영자가 그 요청의
+    // 로그를 정확히 집어낼 수 있다("아까 오류 났어요" 를 추적 가능한 신고로 바꾼다).
+    res.status(status).json({
+      ...apiError(code, message, details),
+      ...(requestId === null ? {} : { requestId }),
+    });
   }
 
   private resolve(exception: unknown): {

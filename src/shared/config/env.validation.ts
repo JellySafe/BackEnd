@@ -1,5 +1,10 @@
 import { plainToInstance } from 'class-transformer';
 import {
+  DEFAULT_JWT_EXPIRES,
+  MAX_ACCESS_TOKEN_SECONDS,
+  parseDurationSeconds,
+} from './duration';
+import {
   IsIn,
   IsInt,
   IsNotEmpty,
@@ -55,6 +60,12 @@ class EnvSchema {
   })
   JWT_SECRET!: string;
 
+  /**
+   * 액세스 토큰 수명(`30m`, `2h` 같은 기간 문자열, 기본 30m).
+   *
+   * 형식과 운영 상한은 아래 `checkAccessTokenLifetime` 이 따로 본다 — class-validator 만으로는
+   * "운영일 때만 상한을 건다" 같은 **다른 변수에 기대는 규칙**을 표현할 수 없기 때문이다.
+   */
   @IsOptional()
   @IsString()
   JWT_EXPIRES?: string;
@@ -209,6 +220,27 @@ class EnvSchema {
   @IsIn(['caution', 'danger'])
   SMS_MIN_RISK_LEVEL?: string;
 
+  /**
+   * 2차 기능(EX-001~004) 활성 여부. 기본 true.
+   *
+   * 오타를 조용히 한쪽으로 떨어뜨리지 않는다 — `SECONDARY_ENABLED=fasle` 로 적고 껐다고
+   * 믿는 상태가 가장 나쁘다(제휴 API 가 계속 열려 있는데 아무도 보지 않는다).
+   */
+  @IsOptional()
+  @IsIn(['true', 'false'], { message: 'SECONDARY_ENABLED 는 true | false 중 하나여야 합니다.' })
+  SECONDARY_ENABLED?: string;
+
+  /**
+   * 배치 락 구현. mysql(기본) | memory.
+   *
+   * ⚠️ 오타를 조용히 어느 한쪽으로 떨어뜨리지 않는다. `memroy` 같은 오타가 mysql 로 읽히면
+   * 의도와 다르게 동작하고, 반대로 memory 로 읽히면 **머신이 여럿일 때 게이트가 사라진다.**
+   * 둘 다 조용한 오작동이라 기동 시점에 막는 편이 낫다.
+   */
+  @IsOptional()
+  @IsIn(['mysql', 'memory'], { message: 'JOB_LOCK_DRIVER 는 mysql | memory 중 하나여야 합니다.' })
+  JOB_LOCK_DRIVER?: string;
+
   /** 원격 Vision 모델 응답 대기 상한(ms, 기본 8000). 1000 미만이면 기본값으로 되돌린다. */
   @IsOptional()
   @IsInt()
@@ -216,14 +248,105 @@ class EnvSchema {
   VISION_AI_TIMEOUT_MS?: number;
 }
 
+/**
+ * 저장소에 공개돼 있는 예시/개발용 키 목록. **운영에서는 거부한다.**
+ *
+ * 길이 검사(32자)만으로는 이걸 막지 못한다 — 길기만 하면 통과하기 때문이다. 그런데 이 값들은
+ * `.env.example` 과 깃 이력에 그대로 있어 **누구나 읽을 수 있다.** JWT_SECRET 을 아는 사람은
+ * 관리자 토큰과 게스트 토큰을 둘 다 위조할 수 있으므로, 길이보다 이쪽이 실제 위험이다.
+ *
+ * 소문자로 비교한다(대소문자만 바꾼 값은 같은 값으로 취급).
+ */
+const PUBLICLY_KNOWN_SECRETS: readonly string[] = [
+  'jellysafe-dev-secret-change-me-please-32',
+  'jellysafe-dev-secret-change-me',
+  'change-me',
+  'changeme',
+  'secret',
+  'test-secret',
+];
+
+/**
+ * 환경 변수 하나를 문자열로 읽는다.
+ *
+ * `validateEnv` 가 받는 값은 `Record<string, unknown>` 이다. 실제로는 전부 문자열이지만
+ * 타입이 그것을 보장하지 않으므로, 문자열이 아닌 값은 **없는 것으로 취급한다**
+ * (숫자나 객체를 억지로 문자열로 바꾸면 `[object Object]` 같은 값이 검사에 들어간다).
+ */
+function readString(config: Record<string, unknown>, key: string): string {
+  const value = config[key];
+  return typeof value === 'string' ? value : '';
+}
+
+/**
+ * 운영에서 공개된 예시 키를 쓰고 있지 않은지. 개발/테스트는 통과시킨다
+ * (로컬에서까지 강제하면 `.env.example` 을 복사해 바로 띄우는 흐름이 막힌다).
+ */
+function checkSecretNotPublic(config: Record<string, unknown>): string | null {
+  if (config.NODE_ENV !== 'production') return null;
+  const secret = readString(config, 'JWT_SECRET').trim().toLowerCase();
+  if (!PUBLICLY_KNOWN_SECRETS.includes(secret)) return null;
+  return (
+    'JWT_SECRET 이 저장소에 공개된 예시 값입니다. 운영에서는 쓸 수 없습니다 ' +
+    '(`openssl rand -hex 32` 로 새로 만들어 배포 환경변수에 넣습니다).'
+  );
+}
+
+/**
+ * 액세스 토큰 수명 검사. 형식은 전 환경, 상한은 운영에서만 본다.
+ *
+ * 형식을 여기서 막는 이유: `JWT_EXPIRES=30`(단위 없음)은 ms 라이브러리가 **30밀리초**로 읽어
+ * 발급 즉시 만료되는 토큰을 만든다. 그 증상은 로그인 화면에서 "비밀번호가 틀렸나?" 로 오인된다.
+ *
+ * 상한을 운영에서만 막는 이유: 액세스 토큰은 서버가 취소할 수 없어 수명이 곧 유출 시 최대
+ * 노출 시간이다(duration.ts). 개발에서는 길게 두고 편하게 쓰더라도, 운영에 그 값이 따라
+ * 올라가는 것은 배포 전에 잡아야 한다.
+ */
+function checkAccessTokenLifetime(config: Record<string, unknown>): string | null {
+  const raw = readString(config, 'JWT_EXPIRES').trim();
+  const value = raw === '' ? DEFAULT_JWT_EXPIRES : raw;
+
+  const seconds = parseDurationSeconds(value);
+  if (seconds === null) {
+    return (
+      `JWT_EXPIRES('${value}') 형식이 올바르지 않습니다. ` +
+      '숫자 + 단위(s|m|h|d) 로 씁니다 — 예: 30m, 2h, 1d. ' +
+      '단위를 빼면 밀리초로 해석돼 발급 즉시 만료되는 토큰이 됩니다.'
+    );
+  }
+
+  if (config.NODE_ENV === 'production' && seconds > MAX_ACCESS_TOKEN_SECONDS) {
+    return (
+      `JWT_EXPIRES('${value}') 가 운영 상한(${MAX_ACCESS_TOKEN_SECONDS / 3600}시간)을 넘습니다. ` +
+      '액세스 토큰은 로그아웃으로도 취소할 수 없어 이 값이 곧 유출 시 최대 노출 시간입니다. ' +
+      '재발급 흐름(POST /admin/auth/refresh)이 있으므로 짧게 두어도 재로그인이 늘지 않습니다.'
+    );
+  }
+
+  return null;
+}
+
+/**
+ * 한 변수만 보고는 판정할 수 없는 규칙들(운영 여부에 따라 달라지는 것들).
+ * class-validator 데코레이터로는 표현이 어색해 함수로 분리했다.
+ */
+const CROSS_FIELD_CHECKS: ((config: Record<string, unknown>) => string | null)[] = [
+  checkSecretNotPublic,
+  checkAccessTokenLifetime,
+];
+
 export function validateEnv(config: Record<string, unknown>): Record<string, unknown> {
   const validated = plainToInstance(EnvSchema, config, { enableImplicitConversion: true });
   const errors = validateSync(validated, { skipMissingProperties: false });
-  if (errors.length > 0) {
-    const messages = errors
-      .map((e) => Object.values(e.constraints ?? {}).join(', '))
-      .join('\n  - ');
-    throw new Error(`환경 변수 검증 실패:\n  - ${messages}`);
+
+  const messages = errors.map((e) => Object.values(e.constraints ?? {}).join(', '));
+  for (const check of CROSS_FIELD_CHECKS) {
+    const failure = check(config);
+    if (failure !== null) messages.push(failure);
+  }
+
+  if (messages.length > 0) {
+    throw new Error(`환경 변수 검증 실패:\n  - ${messages.join('\n  - ')}`);
   }
   return config;
 }

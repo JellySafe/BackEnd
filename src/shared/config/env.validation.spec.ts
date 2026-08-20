@@ -84,6 +84,70 @@ describe('환경 변수 검증', () => {
     });
   });
 
+  describe('JWT_SECRET 이 공개된 예시 값일 때', () => {
+    const known = 'jellysafe-dev-secret-change-me-please-32';
+
+    it('운영에서는 기동을 막는다 — 이 값은 저장소와 깃 이력에 그대로 있다', () => {
+      expect(() =>
+        validateEnv({ ...valid, NODE_ENV: 'production', JWT_SECRET: known }),
+      ).toThrow(/공개된 예시 값/);
+    });
+
+    it('대소문자만 바꿔도 막는다', () => {
+      expect(() =>
+        validateEnv({ ...valid, NODE_ENV: 'production', JWT_SECRET: known.toUpperCase() }),
+      ).toThrow(/공개된 예시 값/);
+    });
+
+    it('개발에서는 통과시킨다 — .env.example 을 복사해 바로 띄우는 흐름을 막지 않는다', () => {
+      expect(() =>
+        validateEnv({ ...valid, NODE_ENV: 'development', JWT_SECRET: known }),
+      ).not.toThrow();
+    });
+
+    it('운영이라도 직접 만든 키면 통과한다', () => {
+      expect(() =>
+        validateEnv({ ...valid, NODE_ENV: 'production', JWT_SECRET: 'f3a9'.repeat(16) }),
+      ).not.toThrow();
+    });
+  });
+
+  describe('JWT_EXPIRES', () => {
+    it('미지정은 통과한다 (기본 30m 로 떨어진다)', () => {
+      expect(() => validateEnv({ ...valid })).not.toThrow();
+    });
+
+    it.each(['30s', '30m', '2h', '1d'])('%s 는 형식이 맞아 통과한다', (value) => {
+      expect(() => validateEnv({ ...valid, JWT_EXPIRES: value })).not.toThrow();
+    });
+
+    it('단위가 없으면 기동을 막는다 — 30 은 30밀리초로 읽혀 즉시 만료되는 토큰이 된다', () => {
+      expect(() => validateEnv({ ...valid, JWT_EXPIRES: '30' })).toThrow(/JWT_EXPIRES/);
+    });
+
+    it.each(['30min', '2 h', 'forever'])('오타 %p 는 기동을 막는다', (value) => {
+      expect(() => validateEnv({ ...valid, JWT_EXPIRES: value })).toThrow(/JWT_EXPIRES/);
+    });
+
+    it('운영에서 상한(2시간)을 넘으면 기동을 막는다 — 취소할 수 없는 토큰의 노출 시간이다', () => {
+      expect(() =>
+        validateEnv({ ...valid, NODE_ENV: 'production', JWT_EXPIRES: '12h' }),
+      ).toThrow(/운영 상한/);
+    });
+
+    it('운영에서 상한 이내면 통과한다', () => {
+      expect(() =>
+        validateEnv({ ...valid, NODE_ENV: 'production', JWT_EXPIRES: '2h' }),
+      ).not.toThrow();
+    });
+
+    it('개발에서는 긴 수명을 허용한다 — 로컬 편의를 막을 이유가 없다', () => {
+      expect(() =>
+        validateEnv({ ...valid, NODE_ENV: 'development', JWT_EXPIRES: '30d' }),
+      ).not.toThrow();
+    });
+  });
+
   it('검증에 통과하면 입력을 그대로 돌려준다(값을 변형하지 않는다)', () => {
     const input = { ...valid, API_PREFIX: 'api' };
     expect(validateEnv({ ...input })).toEqual(input);

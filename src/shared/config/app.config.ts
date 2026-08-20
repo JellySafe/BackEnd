@@ -1,5 +1,6 @@
 import { resolve } from 'node:path';
 import { ConfigService } from '@nestjs/config';
+import { DEFAULT_JWT_EXPIRES } from './duration';
 
 /**
  * 환경 변수 접근 헬퍼. 타입 안전하게 읽는다.
@@ -25,6 +26,24 @@ export class AppConfig {
 
   get riskRuleVersion(): string {
     return this.config.get<string>('RISK_RULE_VERSION') ?? 'v1';
+  }
+
+  /**
+   * 액세스 토큰 수명(기간 문자열). 기본 30분.
+   *
+   * ⚠️ **이 값이 곧 토큰 유출 시 최대 노출 시간이다.** 액세스 토큰은 서명만으로 검증되므로
+   * 로그아웃도, 계정 정지도, 유출 인지도 남은 수명을 앞당기지 못한다(logout.service.ts).
+   *
+   * 예전 기본값은 12시간이었다. 그 토큰 하나로 해변 마스터 수정·사용자 목록·감사 로그에
+   * 닿을 수 있는데, 반나절이면 유출을 알아차리고 대응하기에도 이미 늦은 시간이다.
+   * 재발급(리프레시) 흐름이 붙은 뒤로는 짧게 두는 데 드는 운영 비용이 없다 — 만료되면
+   * 클라이언트가 `POST /admin/auth/refresh` 로 조용히 갱신한다.
+   *
+   * 형식·상한(운영 2시간)은 env 검증이 기동 시점에 고정한다(duration.ts).
+   */
+  get jwtExpires(): string {
+    const raw = (this.config.get<string>('JWT_EXPIRES') ?? '').trim();
+    return raw === '' ? DEFAULT_JWT_EXPIRES : raw;
   }
 
   /**
@@ -101,6 +120,28 @@ export class AppConfig {
   get riskCalculationStaleMinutes(): number {
     const raw = Number(this.config.get<string>('RISK_CALCULATION_STALE_MINUTES') ?? '30');
     return Number.isFinite(raw) && raw >= 0 ? raw : 30;
+  }
+
+  /**
+   * 배치 중복 실행을 막는 락의 구현. `mysql`(기본) | `memory`.
+   *
+   * `memory` 는 프로세스 안에서만 유효해 **머신이 하나일 때만** 맞다. `mysql` 은 MySQL 의
+   * 사용자 락(GET_LOCK)을 써서 인스턴스가 여럿이어도 하나만 실행되게 한다 — 머신이
+   * 하나일 때도 동작이 같으므로 기본값으로 둔다(scheduling.module.ts 참고).
+   */
+  get jobLockDriver(): 'mysql' | 'memory' {
+    return this.config.get<string>('JOB_LOCK_DRIVER') === 'memory' ? 'memory' : 'mysql';
+  }
+
+  /**
+   * 2차 기능(EX-001~004: 제휴 API·구독·모델 관리) 활성 여부. 기본 true(현재 동작 유지).
+   *
+   * false 로 두면 해당 경로가 전부 404 가 된다. 제휴사가 한 곳도 없는 환경에서
+   * `/partner/v1/*`(별도 자격증명으로 들어오는 문)을 열어 둘 이유가 없기 때문이다.
+   * 판정은 SecondaryEnabledGuard 가 한다.
+   */
+  get secondaryEnabled(): boolean {
+    return (this.config.get<string>('SECONDARY_ENABLED') ?? 'true') !== 'false';
   }
 
   get dailyReportCron(): string {

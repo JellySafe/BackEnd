@@ -2,6 +2,8 @@ import { Global, Module } from '@nestjs/common';
 import { APP_GUARD } from '@nestjs/core';
 import { ConfigService } from '@nestjs/config';
 import { JwtModule, JwtModuleOptions } from '@nestjs/jwt';
+import type { StringValue } from 'ms';
+import { AppConfig } from '@shared/config/app.config';
 import { JwtAuthGuard } from './jwt-auth.guard';
 import { SystemAuthGuard } from './system-auth.guard';
 import { GuestTokenService } from './guest-token.service';
@@ -26,8 +28,10 @@ import { GuestTokenController } from './guest-token.controller';
         // 기본값을 두지 않는다. env 검증이 JWT_SECRET(32자 이상)을 이미 강제하므로,
         // 여기에 폴백을 남겨두면 "검증을 통과 못 했는데도 뜨는 경로"를 만드는 셈이다.
         secret: config.getOrThrow<string>('JWT_SECRET'),
-        // expiresIn 은 ms 라이브러리의 문자열 리터럴 타입이라 동적 string 을 캐스팅한다.
-        signOptions: { expiresIn: (config.get<string>('JWT_EXPIRES') ?? '12h') as `${number}h` },
+        // 수명은 AppConfig 를 통해 읽는다(기본값·근거가 한곳에 있다). 형식과 운영 상한은
+        // env 검증이 기동 시점에 이미 고정했으므로 여기서는 캐스팅만 한다
+        // (expiresIn 은 ms 라이브러리의 문자열 리터럴 타입이라 동적 string 을 받지 못한다).
+        signOptions: { expiresIn: new AppConfig(config).jwtExpires as StringValue },
       }),
     }),
   ],

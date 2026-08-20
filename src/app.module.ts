@@ -1,14 +1,16 @@
-import { Module } from '@nestjs/common';
+import { MiddlewareConsumer, Module, NestModule } from '@nestjs/common';
 import { APP_GUARD } from '@nestjs/core';
 import { ConfigModule } from '@nestjs/config';
 import { ScheduleModule } from '@nestjs/schedule';
 import { ThrottlerModule } from '@nestjs/throttler';
 import { ApiThrottlerGuard } from './shared/http/api-throttler.guard';
+import { RequestIdMiddleware } from './shared/http/request-id.middleware';
 import { THROTTLERS } from './shared/http/rate-limit.config';
 import { PrismaModule } from './shared/persistence/prisma/prisma.module';
 import { KyselyModule } from './shared/persistence/kysely/kysely.module';
 import { AuthModule } from './shared/auth/auth.module';
 import { HealthModule } from './shared/health/health.module';
+import { ObservabilityModule } from './shared/observability/observability.module';
 import { SchedulingModule } from './shared/scheduling/scheduling.module';
 import { validateEnv } from './shared/config/env.validation';
 import { BeachModule } from './contexts/beach/beach.module';
@@ -30,6 +32,10 @@ import { SecondaryModule } from './contexts/secondary/secondary.module';
  *  - ReportModule 은 RiskModule(RISK_RECALC)을 import 해 검수 확인완료 시 위험도 재산출을 트리거한다.
  *  - 그 외 컨텍스트는 서로 독립적이며 같은 DB 를 공유한다(경계는 논리적).
  *
+ * 전역 미들웨어:
+ *  - RequestIdMiddleware : 요청마다 상관관계 ID 를 붙인다. 가드보다 **먼저** 돌아야
+ *    인증 실패(401)·레이트 리밋(429)처럼 컨트롤러에 닿지 못한 요청에도 ID 가 남는다.
+ *
  * 전역 가드는 셋이다(등록 순서 무관 — 각자 자기 경로만 검사한다):
  *  - ApiThrottlerGuard(여기)   : IP 레이트 리밋. /system, /health, /docs 제외.
  *  - JwtAuthGuard(AuthModule)  : /admin/* JWT 필수, 그 외 경로는 Bearer 가 있으면 검증.
@@ -45,6 +51,8 @@ import { SecondaryModule } from './contexts/secondary/secondary.module';
     KyselyModule,
     AuthModule,
     HealthModule,
+    // 운영 지표(GET /system/metrics). 배치가 멎었는데 API 는 멀쩡한 상태를 밖에서 볼 수 있게 한다.
+    ObservabilityModule,
     // 배치 중복 실행 방지 게이트(크론과 /system 수동 트리거가 같은 인스턴스를 공유해야 한다).
     SchedulingModule,
     // 바운디드 컨텍스트
@@ -62,4 +70,10 @@ import { SecondaryModule } from './contexts/secondary/secondary.module';
   ],
   providers: [{ provide: APP_GUARD, useClass: ApiThrottlerGuard }],
 })
-export class AppModule {}
+export class AppModule implements NestModule {
+  configure(consumer: MiddlewareConsumer): void {
+    // 모든 경로. 헬스체크·Swagger 도 포함한다 — 배포 중 헬스체크가 왜 실패했는지 볼 때도
+    // 같은 방식으로 추적할 수 있어야 한다.
+    consumer.apply(RequestIdMiddleware).forRoutes('*');
+  }
+}

@@ -1,4 +1,6 @@
-import { Injectable, Logger } from '@nestjs/common';
+import { Inject, Injectable, Logger, Optional } from '@nestjs/common';
+import { InProcessJobLock } from './in-process-job-lock';
+import { JobLockPort, JOB_LOCK } from './job-lock.port';
 
 /**
  * 같은 이름의 배치가 **동시에 두 번 돌지 않게** 하는 게이트.
@@ -18,15 +20,33 @@ import { Injectable, Logger } from '@nestjs/common';
  * 플래그를 **호출자별로** 두는 한 이 문제는 계속 생긴다. 배치를 식별하는 이름 하나에
  * 게이트를 걸고, 그 배치로 들어오는 모든 입구가 같은 게이트를 지나게 하는 것이 맞다.
  *
- * ── 인프로세스인 이유 ────────────────────────────────────────────────────────────────
- * 지금은 단일 머신 운영이다(fly.toml: min_machines_running=1, auto_stop_machines=off).
- * 머신을 늘리면 이 게이트는 머신 안에서만 유효하므로 분산 락(Redis 등)으로 바꿔야 한다.
- * 그때 고쳐야 할 곳이 **여기 하나**가 되도록 한곳에 모아 둔다(README 후속 작업 참고).
+ * ── 판정 범위는 락 구현이 정한다 ─────────────────────────────────────────────────────
+ * 게이트는 "누가 들어왔는가" 만 다루고, **실제로 문을 잠그는 일은 JobLockPort 에 맡긴다.**
+ *   - InProcessJobLock : 프로세스 안에서만 유효. 머신이 하나일 때.
+ *   - MysqlJobLock     : MySQL GET_LOCK. 머신이 둘 이상일 때(JOB_LOCK_DRIVER=mysql).
+ * 어느 쪽을 쓸지는 SchedulingModule 이 설정을 보고 정한다. 배포 형태가 바뀌어도
+ * 스케줄러·컨트롤러 코드는 손대지 않는다.
  */
 @Injectable()
 export class JobGate {
   private readonly logger = new Logger(JobGate.name);
+
+  /**
+   * **이 머신에서** 도는 중인 배치 이름. 락 그 자체가 아니라 빠른 사전 차단용이다
+   * (같은 머신에서 겹친 요청은 DB 를 다녀오지 않고 여기서 돌려보낸다).
+   */
   private readonly running = new Set<string>();
+
+  private readonly lock: JobLockPort;
+
+  /**
+   * 락 구현을 주입받는다. 주입이 없으면 인프로세스 락으로 떨어진다 —
+   * 테스트에서 `new JobGate()` 로 바로 쓸 수 있게 하려는 것이고, 운영 경로에서는
+   * SchedulingModule 이 항상 명시적으로 넣어 준다.
+   */
+  constructor(@Optional() @Inject(JOB_LOCK) lock?: JobLockPort) {
+    this.lock = lock ?? new InProcessJobLock();
+  }
 
   /**
    * `name` 배치가 놀고 있으면 `fn` 을 실행하고, 이미 돌고 있으면 실행하지 않는다.
@@ -36,6 +56,7 @@ export class JobGate {
    * 상태를 사용자에게 알려야 한다(409). 게이트가 그 판단을 대신하지 않는다.
    */
   async run<T>(name: string, fn: () => Promise<T>): Promise<{ ran: true; result: T } | { ran: false }> {
+    // 같은 머신에서 겹친 경우. 락까지 갈 것 없이 여기서 돌려보낸다.
     if (this.running.has(name)) {
       this.logger.warn(`배치 '${name}' 가 이미 진행 중 → 이번 요청은 실행하지 않는다`);
       return { ran: false };
@@ -43,14 +64,26 @@ export class JobGate {
 
     this.running.add(name);
     try {
-      return { ran: true, result: await fn() };
+      const outcome = await this.lock.withLock(name, fn);
+      if (!outcome.ran) {
+        // 여기까지 왔는데 못 잡았다면 **다른 머신이 잡고 있다**(같은 머신은 위에서 걸러진다).
+        // 분산 락을 쓰고 있다는 사실이 로그에 드러나야 운영자가 상황을 읽을 수 있다.
+        this.logger.warn(
+          `배치 '${name}' 를 다른 인스턴스가 실행 중 → 이번 요청은 실행하지 않는다`,
+        );
+      }
+      return outcome;
     } finally {
       // 예외로 빠져나가도 반드시 푼다. 안 그러면 한 번 실패한 배치가 영영 잠긴다.
       this.running.delete(name);
     }
   }
 
-  /** 진행 중 여부(조회용). 판정과 실행 사이에 경합이 있으므로 분기 조건으로 쓰지 않는다. */
+  /**
+   * **이 머신에서** 진행 중인지(조회용). 판정과 실행 사이에 경합이 있으므로 분기 조건으로
+   * 쓰지 않는다. 분산 락을 쓰는 경우 다른 머신의 실행은 여기 잡히지 않는다 — 진짜 판정은
+   * `run()` 안에서만 이뤄진다.
+   */
   isRunning(name: string): boolean {
     return this.running.has(name);
   }
