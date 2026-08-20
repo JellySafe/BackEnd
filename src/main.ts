@@ -47,7 +47,23 @@ async function bootstrap(): Promise<void> {
   // 최종 URL 은 `/uploads/xxx.jpg`(=/api 없음)로 컨트롤러가 만드는 값과 정확히 일치한다.
   // 저장 위치는 UPLOAD_DIR(기본 ./uploads) — 운영은 영구 볼륨 경로를 넣는다.
   const uploadDir = config.uploadDir;
-  mkdirSync(uploadDir, { recursive: true }); // 볼륨 첫 마운트 시 비어 있다.
+  try {
+    mkdirSync(uploadDir, { recursive: true }); // 볼륨 첫 마운트 시 비어 있다.
+  } catch (error) {
+    // 컨테이너는 비 root(node, uid 1000)로 돈다. 영구 볼륨을 마운트하면 그 디렉터리는
+    // root 소유라 여기서 EACCES 가 난다. 원본 스택만 던지면 "왜 안 뜨지" 로 한참 헤매므로
+    // 무엇을 해야 하는지 적어서 다시 던진다(기동은 막는다 — 사진을 못 받는 채로 뜨면
+    // 제보가 조용히 실패한다).
+    const reason = error instanceof Error ? error.message : String(error);
+    throw new Error(
+      [
+        `업로드 디렉터리를 준비하지 못했습니다: ${uploadDir} (${reason})`,
+        '  · 영구 볼륨을 마운트했다면 소유권을 앱 사용자(uid 1000)에게 넘긴다:',
+        "      fly ssh console -C 'chown -R 1000:1000 <마운트경로>'",
+        '  · 또는 STORAGE_DRIVER=s3 로 전환한다(머신을 늘릴 계획이면 어차피 필요하다).',
+      ].join('\n'),
+    );
+  }
   app.useStaticAssets(uploadDir, { prefix: config.uploadUrlPrefix });
   logger.log(`정적 업로드 서빙: ${config.uploadUrlPrefix}* -> ${uploadDir}`);
 
