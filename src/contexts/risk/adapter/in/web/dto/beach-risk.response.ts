@@ -38,6 +38,21 @@ export class RiskCardResponse {
   })
   riskLevel!: string;
 
+  @ApiProperty({
+    example: '낮음',
+    description: [
+      '화면에 그대로 쓰는 한글 표기. 서버가 정하는 이유는 앱·문자·제휴사가',
+      '**같은 단계를 같은 말로** 불러야 하기 때문이다(각자 번역하면 조용히 달라진다).',
+      '',
+      '⚠️ `safe` 의 표기는 **안전이 아니라 낮음**이다. 안전이라는 말은 쏘이지 않는다는',
+      '보장으로 읽히는데, 해파리는 확률적으로 나타나므로 우리가 할 수 없는 약속이다.',
+      '',
+      '⚠️ 아직 산출한 적이 없는 해변은 `riskLevel` 이 `safe` 라도 이 값이 **정보 없음**이다.',
+      '낮다는 것과 모른다는 것은 다른 말인데, 값만 보면 구분되지 않는다.',
+    ].join('\n'),
+  })
+  riskLevelLabel!: string;
+
   @ApiProperty({ example: 68, description: '위험 점수(0~100)' })
   riskScore!: number;
 

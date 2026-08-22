@@ -1,11 +1,11 @@
 import { MiddlewareConsumer, Module, NestModule } from '@nestjs/common';
 import { APP_GUARD } from '@nestjs/core';
-import { ConfigModule } from '@nestjs/config';
+import { ConfigModule, ConfigService } from '@nestjs/config';
 import { ScheduleModule } from '@nestjs/schedule';
 import { ThrottlerModule } from '@nestjs/throttler';
 import { ApiThrottlerGuard } from './shared/http/api-throttler.guard';
 import { RequestIdMiddleware } from './shared/http/request-id.middleware';
-import { THROTTLERS } from './shared/http/rate-limit.config';
+import { buildThrottlers } from './shared/http/rate-limit.config';
 import { PrismaModule } from './shared/persistence/prisma/prisma.module';
 import { KyselyModule } from './shared/persistence/kysely/kysely.module';
 import { AuthModule } from './shared/auth/auth.module';
@@ -22,6 +22,7 @@ import { NotificationModule } from './contexts/notification/notification.module'
 import { ObservationModule } from './contexts/observation/observation.module';
 import { DailyReportModule } from './contexts/dailyreport/dailyreport.module';
 import { FavoriteModule } from './contexts/favorite/favorite.module';
+import { GroundtruthModule } from './contexts/groundtruth/groundtruth.module';
 import { UserModule } from './contexts/user/user.module';
 import { SecondaryModule } from './contexts/secondary/secondary.module';
 
@@ -46,7 +47,19 @@ import { SecondaryModule } from './contexts/secondary/secondary.module';
     ConfigModule.forRoot({ isGlobal: true, validate: validateEnv }),
     ScheduleModule.forRoot(),
     // 레이트 리밋. 단일 머신 운영이므로 기본 인메모리 스토리지를 쓴다(수치는 rate-limit.config.ts).
-    ThrottlerModule.forRoot({ throttlers: THROTTLERS }),
+    //
+    // 한도를 설정에서 읽는다. 급증 때 재배포 없이 조정할 수 있어야 하고, 부하 테스트도
+    // 리밋이 아니라 앱을 재려면 한도를 올릴 수 있어야 하기 때문이다. 미설정이면 기본값 그대로다.
+    ThrottlerModule.forRootAsync({
+      inject: [ConfigService],
+      useFactory: (config: ConfigService) => ({
+        throttlers: buildThrottlers({
+          defaultPerMin: config.get<string>('RATE_LIMIT_DEFAULT_PER_MIN'),
+          reportPerMin: config.get<string>('RATE_LIMIT_REPORT_PER_MIN'),
+          reportPerHour: config.get<string>('RATE_LIMIT_REPORT_PER_HOUR'),
+        }),
+      }),
+    }),
     PrismaModule,
     KyselyModule,
     AuthModule,
@@ -65,6 +78,8 @@ import { SecondaryModule } from './contexts/secondary/secondary.module';
     ObservationModule,
     DailyReportModule,
     FavoriteModule,
+    // 정답 데이터(현장 관측·쏘임 사고)와 예측 대조. 이 서비스가 맞고 있는지 재는 유일한 경로다.
+    GroundtruthModule,
     UserModule,
     SecondaryModule,
   ],

@@ -144,6 +144,17 @@ export class AppConfig {
     return (this.config.get<string>('SECONDARY_ENABLED') ?? 'true') !== 'false';
   }
 
+  /**
+   * 예측 대조 배치 크론. 기본 새벽 4시(KST 가 아니라 서버 시각 기준이며 컨테이너는 UTC 다 —
+   * fly.toml 의 TZ 설정을 따른다).
+   *
+   * 자정 직후가 아닌 이유: 대상이 **어제 하루**인데, 늦게 입력되는 현장 기록(퇴근 후 정리,
+   * 119 연계)이 아직 안 들어와 오경보로 잘못 세어진다.
+   */
+  get predictionEvaluationCron(): string {
+    return this.config.get<string>('PREDICTION_EVALUATION_CRON') ?? '0 0 4 * * *';
+  }
+
   get dailyReportCron(): string {
     return this.config.get<string>('DAILY_REPORT_CRON') ?? '0 10 0 * * *';
   }

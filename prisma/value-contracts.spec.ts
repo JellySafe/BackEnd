@@ -11,7 +11,7 @@ import { CONTRACTS, buildCheckConstraintSql, constraintName } from './value-cont
  * 커밋된 파일과 같은지 여기서 확인한다.
  */
 describe('값 계약 ↔ CHECK 제약', () => {
-  const SQL_PATH = resolve(__dirname, 'sql/003-check-constraints.sql');
+  const SQL_PATH = resolve(__dirname, 'sql/999-check-constraints.sql');
 
   describe('표 자체의 무결성', () => {
     it('제약 이름이 서로 겹치지 않는다 — MySQL 은 스키마 안에서 이름이 유일해야 한다', () => {
@@ -53,7 +53,7 @@ describe('값 계약 ↔ CHECK 제약', () => {
   });
 
   describe('커밋된 DDL 과의 일치', () => {
-    it('생성 결과가 prisma/sql/003-check-constraints.sql 과 같다', () => {
+    it('생성 결과가 prisma/sql/999-check-constraints.sql 과 같다', () => {
       const committed = readFileSync(SQL_PATH, 'utf8').replace(/\r\n/g, '\n');
       const generated = buildCheckConstraintSql();
 

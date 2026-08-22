@@ -5,6 +5,36 @@
 export const RISK_LEVELS = ['safe', 'caution', 'danger', 'severe'] as const;
 export type RiskLevel = (typeof RISK_LEVELS)[number];
 
+/**
+ * 위험 단계 **표시 라벨** (한글). 시민·운영자·제휴사에게 나가는 모든 표면이 이 하나를 쓴다.
+ *
+ * ── `safe` 를 '안전' 이라고 쓰지 않는 이유 ──────────────────────────────────────────
+ * "협재해수욕장 위험도가 **안전** 단계입니다" 는 문자·푸시로 시민에게 그대로 나간다.
+ * 그런데 '안전' 은 **쏘이지 않는다는 보장**으로 읽힌다. 우리가 아는 것은 그게 아니다 —
+ * 관측·예보상 위험 신호가 낮다는 것뿐이고, 해파리는 확률적으로 나타난다.
+ *
+ * 실제로 이 서비스는 "낮다고 했는데 사고가 난" 경우를 센다(groundtruth 의 `miss`).
+ * 그 값이 0 이 아닌 이상 '안전' 은 우리가 할 수 없는 약속이다.
+ *
+ * 그래서 **위험도가 낮다는 사실 진술**로 바꾼다. 단계가 하는 일(어느 칸인지 알려주는 것)은
+ * 그대로이고, 하지 않는 말(보장)만 뺀다.
+ *
+ * ⚠️ 국가 위기경보 4단계(관심-주의-경계-심각)에 맞추는 선택지도 있다. 시민이 이미 아는
+ *    척도라는 장점이 크지만 `danger`→'경계' 로 운영자 용어까지 바뀌므로, 그건 코드가 아니라
+ *    운영 주체가 정할 문제다. 여기서는 최소 변경만 한다.
+ */
+export const RISK_LEVEL_LABELS: Record<RiskLevel, string> = {
+  safe: '낮음',
+  caution: '주의',
+  danger: '위험',
+  severe: '매우 위험',
+};
+
+/** 표시 라벨. null(미산출)이면 빈 문자열 — 부르는 쪽이 문맥에 맞게 처리한다. */
+export function riskLevelLabelOf(level: RiskLevel | null): string {
+  return level === null ? '' : RISK_LEVEL_LABELS[level];
+}
+
 /** 단계 서열 (낮음 → 높음). 최소 단계 보장 비교에 사용. */
 const RISK_LEVEL_ORDER: Record<RiskLevel, number> = {
   safe: 0,

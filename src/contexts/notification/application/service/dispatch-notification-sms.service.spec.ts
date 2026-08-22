@@ -5,6 +5,11 @@ import { PushConsentRepositoryPort } from '../port/out/push-consent-repository.p
 import { SmsConsentRepositoryPort } from '../port/out/sms-consent-repository.port';
 import { SmsSenderPort, SmsSendOutcome } from '../port/out/sms-sender.port';
 import {
+  KakaoMessage,
+  KakaoSenderPort,
+  KakaoSendOutcome,
+} from '../port/out/kakao-sender.port';
+import {
   FinishDispatchInput,
   NotificationDispatchRepositoryPort,
   StartDispatchInput,
@@ -54,6 +59,35 @@ function consentStub(phoneNumber: string | null = PHONE): SmsConsentRepositoryPo
   };
 }
 
+/**
+ * 알림톡 스텁. 기본은 **꺼짐** — 기존 테스트가 보는 것은 문자 경로이고,
+ * 알림톡이 기본으로 켜지면 그 테스트들이 전부 알림톡 경로를 타게 된다.
+ */
+function kakaoStub(
+  options: { enabled?: boolean; templateCode?: string | null; outcome?: KakaoSendOutcome } = {},
+): { port: KakaoSenderPort; sent: KakaoMessage[] } {
+  const sent: KakaoMessage[] = [];
+  return {
+    sent,
+    port: {
+      isEnabled: () => options.enabled ?? false,
+      providerName: () => 'kakao-stub',
+      templateCodeFor: () => options.templateCode ?? null,
+      send: (message: KakaoMessage) => {
+        sent.push(message);
+        return Promise.resolve(
+          options.outcome ?? {
+            status: 'sent' as const,
+            statusCode: 202,
+            failedReason: null,
+            shouldFallbackToSms: false,
+          },
+        );
+      },
+    },
+  };
+}
+
 describe('DispatchNotificationSmsService', () => {
   const SENT: SmsSendOutcome = { status: 'sent', statusCode: 202, failedReason: null };
 
@@ -62,20 +96,23 @@ describe('DispatchNotificationSmsService', () => {
     enabled?: boolean;
     phoneNumber?: string | null;
     minRiskLevel?: string;
+    kakao?: { enabled?: boolean; templateCode?: string | null; outcome?: KakaoSendOutcome };
   } = {}) {
     const sender = senderStub(options.outcome ?? SENT, options.enabled ?? true);
     const consents = consentStub(options.phoneNumber === undefined ? PHONE : options.phoneNumber);
     const dispatches = dispatchStub();
+    const kakao = kakaoStub(options.kakao);
     const service = new DispatchNotificationSmsService(
       new ConfigService({ SMS_MIN_RISK_LEVEL: options.minRiskLevel ?? 'danger' }),
       sender,
+      kakao.port,
       consents,
       dispatches.port,
     );
     jest.spyOn(service['logger'], 'log').mockImplementation(() => undefined);
     jest.spyOn(service['logger'], 'warn').mockImplementation(() => undefined);
     jest.spyOn(service['logger'], 'error').mockImplementation(() => undefined);
-    return { service, sender, consents, dispatches };
+    return { service, sender, consents, dispatches, kakao };
   }
 
   const command = (riskLevel: 'safe' | 'caution' | 'danger' | null = 'danger') => ({
@@ -183,6 +220,146 @@ describe('DispatchNotificationSmsService', () => {
       reason: 'internal_error',
     });
   });
+
+  describe('알림톡 우선 발송', () => {
+    const KAKAO_ON = { enabled: true, templateCode: 'JELLY_LV_01' };
+
+    it('알림톡이 접수되면 문자는 보내지 않는다 — 같은 사람에게 두 번 가면 안 된다', async () => {
+      const { service, sender, kakao, dispatches } = build({ kakao: KAKAO_ON });
+
+      const result = await service.dispatch({
+        notificationId: 1,
+        owner: OWNER,
+        message: '협재해수욕장 위험도가 위험 단계입니다.',
+        riskLevel: 'danger',
+        eventType: 'level_up',
+      });
+
+      expect(result).toEqual({ skipped: false, sent: true, reason: null });
+      expect(kakao.sent).toHaveLength(1);
+      expect(kakao.sent[0].templateCode).toBe('JELLY_LV_01');
+      expect(sender.send).toHaveBeenCalledTimes(0);
+      // 발송 이력은 kakao 채널로 남아야 비용·도달을 채널별로 셀 수 있다.
+      expect(dispatches.started[0].channel).toBe('kakao');
+    });
+
+    it('사건 종류가 없으면 알림톡을 건너뛴다 — 템플릿을 고를 수 없다', async () => {
+      const { service, sender, kakao } = build({ kakao: KAKAO_ON });
+
+      await service.dispatch({
+        notificationId: 1,
+        owner: OWNER,
+        message: '수동 발송',
+        riskLevel: 'danger',
+      });
+
+      expect(kakao.sent).toHaveLength(0);
+      expect(sender.send).toHaveBeenCalledTimes(1);
+    });
+
+    it('승인된 템플릿이 없는 사건은 문자로 간다', async () => {
+      const { service, sender, kakao } = build({
+        kakao: { enabled: true, templateCode: null },
+      });
+
+      await service.dispatch({
+        notificationId: 1,
+        owner: OWNER,
+        message: '쏘임 사고 발생',
+        riskLevel: 'danger',
+        eventType: 'sting_report',
+      });
+
+      expect(kakao.sent).toHaveLength(0);
+      expect(sender.send).toHaveBeenCalledTimes(1);
+    });
+
+    it('도달 불가(미가입·차단)면 문자로 넘긴다 — 경보는 그래도 가야 한다', async () => {
+      const { service, sender, kakao, dispatches } = build({
+        kakao: {
+          ...KAKAO_ON,
+          outcome: {
+            status: 'rejected',
+            statusCode: 400,
+            failedReason: '카카오톡 미가입',
+            shouldFallbackToSms: true,
+          },
+        },
+      });
+
+      const result = await service.dispatch({
+        notificationId: 1,
+        owner: OWNER,
+        message: '위험 상승',
+        riskLevel: 'danger',
+        eventType: 'level_up',
+      });
+
+      expect(result.sent).toBe(true);
+      expect(kakao.sent).toHaveLength(1);
+      expect(sender.send).toHaveBeenCalledTimes(1); // 문자로 실제로 나갔다
+      // 두 채널의 시도가 모두 이력에 남는다(무엇이 나갔는지 셀 수 있어야 한다).
+      expect(dispatches.started.map((d) => d.channel)).toEqual(['kakao', 'sms']);
+    });
+
+    it('템플릿 문제면 문자로 넘기지 않는다 — 문구가 어긋난 사실이 가려진다', async () => {
+      const { service, sender, kakao } = build({
+        kakao: {
+          ...KAKAO_ON,
+          outcome: {
+            status: 'rejected',
+            statusCode: 400,
+            failedReason: 'template not found',
+            shouldFallbackToSms: false,
+          },
+        },
+      });
+
+      const result = await service.dispatch({
+        notificationId: 1,
+        owner: OWNER,
+        message: '위험 상승',
+        riskLevel: 'danger',
+        eventType: 'level_up',
+      });
+
+      expect(result).toEqual({ skipped: false, sent: false, reason: 'rejected' });
+      expect(kakao.sent).toHaveLength(1);
+      expect(sender.send).toHaveBeenCalledTimes(0);
+    });
+
+    it('알림톡이 꺼져 있으면 기존 문자 경로 그대로다', async () => {
+      const { service, sender, kakao } = build({ kakao: { enabled: false } });
+
+      await service.dispatch({
+        notificationId: 1,
+        owner: OWNER,
+        message: '위험 상승',
+        riskLevel: 'danger',
+        eventType: 'level_up',
+      });
+
+      expect(kakao.sent).toHaveLength(0);
+      expect(sender.send).toHaveBeenCalledTimes(1);
+    });
+
+    it('위험 단계 문턱은 알림톡에도 그대로 걸린다 — 주의 단계는 두 채널 다 안 보낸다', async () => {
+      const { service, sender, kakao } = build({ kakao: KAKAO_ON });
+
+      const result = await service.dispatch({
+        notificationId: 1,
+        owner: OWNER,
+        message: '주의',
+        riskLevel: 'caution',
+        eventType: 'level_up',
+      });
+
+      expect(result.reason).toBe('below_threshold');
+      expect(kakao.sent).toHaveLength(0);
+      expect(sender.send).toHaveBeenCalledTimes(0);
+    });
+  });
+
 });
 
 describe('ManageNotificationConsentService', () => {

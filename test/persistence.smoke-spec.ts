@@ -21,6 +21,21 @@ import {
   CalculateRiskUseCase,
 } from '@contexts/risk/application/port/in/risk-use-cases';
 import { CONTRACTS } from '../prisma/value-contracts';
+import {
+  GROUNDTRUTH_QUERY,
+  GroundtruthQueryPort,
+  RISK_PREDICTION,
+  RiskPredictionPort,
+} from '@contexts/groundtruth/application/port/out/groundtruth-ports';
+import {
+  EVALUATE_PREDICTIONS_USE_CASE,
+  EvaluatePredictionsUseCase,
+  RECORD_FIELD_OBSERVATION_USE_CASE,
+  RECORD_STING_INCIDENT_USE_CASE,
+  RecordFieldObservationUseCase,
+  RecordStingIncidentUseCase,
+} from '@contexts/groundtruth/application/port/in/groundtruth-use-cases';
+import { parseKstDateKey, toKstDateString } from '@shared/kernel/kst-date';
 
 /**
  * 영속성 계층 스모크 — **SQL 이 실제로 맞는지**를 진짜 MySQL 위에서 본다.
@@ -310,6 +325,199 @@ describe('영속성 스모크', () => {
 
     it('시스템 키가 없으면 401 이다 — 운영 정보가 담긴 경로다', async () => {
       await request(http).get('/api/system/metrics').expect(401);
+    });
+  });
+
+  describe('정답 데이터 (groundtruth)', () => {
+    /**
+     * 이 층에서 가장 깨지기 쉬운 것은 **날짜를 KST 로 접는 부분**이다. UTC 로 저장된
+     * DATETIME 을 그냥 DATE() 로 자르면 오전 9시 이전 관측이 전날로 밀린다 — 성수기 이른
+     * 아침 관측이 통째로 어긋나는데, 단위 테스트로는 절대 드러나지 않는다.
+     */
+    it('KST 경계: 23:30 UTC 관측은 다음 날로 접힌다', async () => {
+      const beach = await prisma.beach.findFirstOrThrow({ where: { isActive: true } });
+      const record = app.get<RecordFieldObservationUseCase>(RECORD_FIELD_OBSERVATION_USE_CASE);
+
+      // 2026-08-19 23:30 UTC = 2026-08-20 08:30 KST → 8/20 로 세어져야 한다.
+      await record.recordObservation({
+        beachId: Number(beach.id),
+        observedAt: new Date('2026-08-19T23:30:00Z'),
+        source: 'lifeguard',
+        jellyfishPresent: false,
+        observerId: null,
+      });
+
+      const query = app.get<GroundtruthQueryPort>(GROUNDTRUTH_QUERY);
+      const day = parseKstDateKey('2026-08-20');
+      const actuals = await query.collectDailyActuals(day, day);
+
+      const found = actuals.find((a) => Number(a.beachId) === Number(beach.id));
+      expect(found).toBeDefined();
+      expect(toKstDateString(found!.targetDate)).toBe('2026-08-20');
+      expect(found!.observed).toBe(true);
+    });
+
+    it('부재 관측이 저장되고 집계된다 — 이게 없으면 오경보를 셀 수 없다', async () => {
+      const beach = await prisma.beach.findFirstOrThrow({ where: { isActive: true } });
+      const record = app.get<RecordFieldObservationUseCase>(RECORD_FIELD_OBSERVATION_USE_CASE);
+
+      await record.recordObservation({
+        beachId: Number(beach.id),
+        observedAt: new Date('2026-08-15T03:00:00Z'),
+        source: 'lifeguard',
+        jellyfishPresent: false,
+        observerId: null,
+      });
+
+      const query = app.get<GroundtruthQueryPort>(GROUNDTRUTH_QUERY);
+      const day = parseKstDateKey('2026-08-15');
+      const [actual] = await query.collectDailyActuals(day, day);
+
+      expect(actual.observed).toBe(true);
+      expect(actual.maxDensity).toBeNull();
+      expect(actual.incidentCount).toBe(0);
+    });
+
+    it('밀도 서열을 문자열이 아니라 순서로 집계한다 (low < medium < high)', async () => {
+      const beach = await prisma.beach.findFirstOrThrow({ where: { isActive: true } });
+      const record = app.get<RecordFieldObservationUseCase>(RECORD_FIELD_OBSERVATION_USE_CASE);
+
+      // 같은 날 low → high → medium 순으로 넣는다. 문자열 MAX 라면 'medium' 이 답이 된다.
+      for (const density of ['low', 'high', 'medium'] as const) {
+        await record.recordObservation({
+          beachId: Number(beach.id),
+          observedAt: new Date('2026-08-16T04:00:00Z'),
+          source: 'lifeguard',
+          jellyfishPresent: true,
+          densityLevel: density,
+          observerId: null,
+        });
+      }
+
+      const query = app.get<GroundtruthQueryPort>(GROUNDTRUTH_QUERY);
+      const day = parseKstDateKey('2026-08-16');
+      const [actual] = await query.collectDailyActuals(day, day);
+
+      expect(actual.maxDensity).toBe('high');
+    });
+
+    it('사고만 있고 관측이 없는 날도 집계에 나온다 — 조인이면 빠진다(119 연계는 늦게 온다)', async () => {
+      const beach = await prisma.beach.findFirstOrThrow({ where: { isActive: true } });
+      const record = app.get<RecordStingIncidentUseCase>(RECORD_STING_INCIDENT_USE_CASE);
+
+      await record.recordIncident({
+        beachId: Number(beach.id),
+        occurredAt: new Date('2026-08-17T05:00:00Z'),
+        source: 'emergency_call',
+        severity: 'moderate',
+        patientCount: 2,
+        reportedBy: null,
+      });
+
+      const query = app.get<GroundtruthQueryPort>(GROUNDTRUTH_QUERY);
+      const day = parseKstDateKey('2026-08-17');
+      const [actual] = await query.collectDailyActuals(day, day);
+
+      expect(actual.observed).toBe(false); // 관측은 없었다
+      // 피해자 수(2명)가 아니라 **사고 건수**다. 판정에는 0 인지 아닌지만 쓰이고,
+      // 피해 규모는 sting_incidents.patient_count 가 따로 갖는다.
+      expect(actual.incidentCount).toBe(1);
+    });
+
+    it('중복 가능성만 알리고 저장은 한다 — 기계가 병합하면 사고 건수가 조용히 줄어든다', async () => {
+      const beach = await prisma.beach.findFirstOrThrow({ where: { isActive: true } });
+      const record = app.get<RecordStingIncidentUseCase>(RECORD_STING_INCIDENT_USE_CASE);
+      const command = {
+        beachId: Number(beach.id),
+        occurredAt: new Date('2026-08-18T05:00:00Z'),
+        source: 'lifeguard' as const,
+        severity: 'mild' as const,
+        patientCount: 1,
+        externalRef: 'SMOKE-DUP-001',
+        reportedBy: null,
+      };
+
+      const first = await record.recordIncident(command);
+      const second = await record.recordIncident({ ...command, source: 'emergency_call' });
+
+      expect(first.possibleDuplicate).toBe(false);
+      expect(second.possibleDuplicate).toBe(true);
+      expect(second.incidentId).not.toBe(first.incidentId); // 저장은 됐다
+    });
+
+    it('계약 밖 값은 DB 가 거부한다', async () => {
+      const beach = await prisma.beach.findFirstOrThrow({ where: { isActive: true } });
+      await expect(
+        prisma.fieldObservation.create({
+          data: {
+            beachId: beach.id,
+            observedAt: new Date(),
+            source: 'citizen', // OBSERVATION_SOURCES 에 없다
+            jellyfishPresent: false,
+          },
+        }),
+      ).rejects.toThrow();
+    });
+
+    describe('예측 대조', () => {
+      it('과거 예측을 (해변 × 날짜) 최고 단계로 읽는다', async () => {
+        // beforeAll 에서 산출을 돌렸으므로 오늘 예측이 있다.
+        const predictions = app.get<RiskPredictionPort>(RISK_PREDICTION);
+        const today = parseKstDateKey(toKstDateString(new Date()));
+        const rows = await predictions.collectDailyPredictions(today, today);
+
+        expect(rows.length).toBeGreaterThan(0);
+        for (const row of rows) {
+          expect(['safe', 'caution', 'danger', 'severe']).toContain(row.maxLevel);
+          expect(row.ruleVersion).toBeTruthy();
+        }
+        // 해변마다 하루 한 행이어야 한다(집계가 풀리면 여러 행이 나온다).
+        const keys = rows.map((r) => `${r.beachId}:${r.targetDate.getTime()}`);
+        expect(new Set(keys).size).toBe(keys.length);
+      });
+
+      it('오늘 관측을 넣고 대조하면 판정이 저장된다', async () => {
+        const beach = await prisma.beach.findFirstOrThrow({ where: { isActive: true } });
+        const todayKey = toKstDateString(new Date());
+
+        await app
+          .get<RecordFieldObservationUseCase>(RECORD_FIELD_OBSERVATION_USE_CASE)
+          .recordObservation({
+            beachId: Number(beach.id),
+            observedAt: new Date(),
+            source: 'lifeguard',
+            jellyfishPresent: false,
+            observerId: null,
+          });
+
+        const day = parseKstDateKey(todayKey);
+        const result = await app
+          .get<EvaluatePredictionsUseCase>(EVALUATE_PREDICTIONS_USE_CASE)
+          .evaluate({ from: day, to: day });
+
+        expect(result.evaluated).toBeGreaterThan(0);
+
+        const saved = await prisma.predictionEvaluation.findFirst({
+          where: { beachId: beach.id, targetDate: day },
+        });
+        expect(saved).not.toBeNull();
+        expect(['hit', 'miss', 'false_alarm', 'correct_negative']).toContain(saved!.outcome);
+        expect(saved!.alertThreshold).toBe('danger');
+      });
+
+      it('같은 날을 다시 평가하면 덮어쓴다 — 늦게 들어온 기록을 재평가가 흡수한다', async () => {
+        const beach = await prisma.beach.findFirstOrThrow({ where: { isActive: true } });
+        const day = parseKstDateKey(toKstDateString(new Date()));
+        const evaluate = app.get<EvaluatePredictionsUseCase>(EVALUATE_PREDICTIONS_USE_CASE);
+
+        await evaluate.evaluate({ from: day, to: day });
+        await evaluate.evaluate({ from: day, to: day });
+
+        const rows = await prisma.predictionEvaluation.count({
+          where: { beachId: beach.id, targetDate: day },
+        });
+        expect(rows).toBe(1);
+      });
     });
   });
 

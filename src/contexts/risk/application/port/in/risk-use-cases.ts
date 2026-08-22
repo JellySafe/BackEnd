@@ -89,6 +89,14 @@ export interface PublicBeachRiskView {
   beachName: string;
   horizon: RiskHorizon;
   riskLevel: RiskLevel;
+  /**
+   * 화면에 그대로 쓰는 한글 표기. 서버가 정하는 이유는 앱·문자·제휴사가 **같은 단계를 같은
+   * 말로** 불러야 하기 때문이다(각자 번역하면 조용히 달라진다).
+   *
+   * ⚠️ 산출 이력이 없는 해변은 `riskLevel: 'safe'` 지만 라벨은 **'정보 없음'** 이다.
+   * "낮다" 와 "모른다" 는 다른 말인데, 값만 보면 구분되지 않는다.
+   */
+  riskLevelLabel: string;
   riskScore: number;
   factors: PublicRiskFactorView[]; // 요약 원인 3~5개
   guideText: string;

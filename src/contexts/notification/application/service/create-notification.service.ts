@@ -189,6 +189,8 @@ export class CreateNotificationService implements CreateNotificationUseCase {
         owner: { userId: value.targetUserId, userToken: value.targetUserToken },
         message: value.message,
         riskLevel: value.riskLevel,
+        // 알림톡 템플릿을 고르는 데 쓴다. 없으면 알림톡을 건너뛰고 문자로 간다.
+        eventType: value.eventType,
         now,
       });
     } catch (err) {

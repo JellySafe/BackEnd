@@ -95,4 +95,7 @@ export const JOB = {
   OBSERVATION_SYNC: 'observation-sync',
   /** 전 해변 위험도 재산출. 단건(해변 1곳) 산출은 여기 걸지 않는다 — 아래 주석 참고. */
   RISK_RECALC_ALL: 'risk-recalc-all',
+  /** 예측 대조(정답 데이터와 과거 예측 맞추기). 같은 날을 두 번 평가해도 덮어쓰지만,
+   *  겹쳐 돌면 같은 행에 두 트랜잭션이 upsert 를 시도해 서로를 기다린다. */
+  PREDICTION_EVALUATION: 'prediction-evaluation',
 } as const;
