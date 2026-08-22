@@ -1,7 +1,7 @@
 import { Inject, Injectable } from '@nestjs/common';
 import { Id } from '@shared/kernel/id';
 import { NotFoundError } from '@shared/kernel/domain-error';
-import { RiskHorizon } from '@shared/kernel/risk-level';
+import { RiskHorizon, riskLevelLabelOf } from '@shared/kernel/risk-level';
 import {
   AdminBeachRiskView,
   GetBeachRiskDetailUseCase,
@@ -11,6 +11,14 @@ import {
 } from '../port/in/risk-use-cases';
 import { RiskCardRow, RiskQueryPort, RISK_QUERY } from '../port/out/risk-query.port';
 import { buildSafetyGuide } from '../../domain/risk-guide';
+
+/**
+ * 산출 이력이 없는 해변의 표시 라벨.
+ *
+ * '낮음' 이라고 쓰지 않는다 — 우리가 아는 것은 "위험이 낮다" 가 아니라 **"아직 산출한 적이
+ * 없다"** 이고, 그 둘을 같은 말로 보여주면 사용자는 확인된 정보로 받아들인다.
+ */
+const NO_PREDICTION_LABEL = '정보 없음';
 
 /** 일반 사용자 시간별 예측 표시 순서(= 대표 카드 우선순위, now 우선). */
 const PUBLIC_HORIZON_ORDER: RiskHorizon[] = ['now', '24h', '72h'];
@@ -75,12 +83,18 @@ export class GetBeachRiskDetailService implements GetBeachRiskDetailUseCase {
     const primary = this.pickPrimary(timeline);
 
     if (!primary) {
-      // 아직 산출 이력이 없는 해변: 안전 기본값으로 안내.
+      // 아직 산출 이력이 없는 해변.
+      //
+      // riskLevel 은 하위호환 때문에 'safe' 를 유지하지만, **라벨은 '정보 없음' 이다.**
+      // 산출한 적이 없다는 것은 "위험이 낮다" 가 아니라 "모른다" 인데, 값만 보면 둘이
+      // 구분되지 않는다. 아무것도 모르는 상태를 안전하다고 답하는 것이 이 서비스에서
+      // 가장 피해야 할 응답이다(dataConfidence: 'low' 만으로는 화면에 잘 드러나지 않는다).
       return {
         beachId: beach.beachId,
         beachName: beach.name,
         horizon: 'now',
         riskLevel: 'safe',
+        riskLevelLabel: NO_PREDICTION_LABEL,
         riskScore: 0,
         factors: [],
         guideText: buildSafetyGuide('safe'),
@@ -95,6 +109,7 @@ export class GetBeachRiskDetailService implements GetBeachRiskDetailUseCase {
       beachName: beach.name,
       horizon: primary.horizon,
       riskLevel: primary.riskLevel,
+      riskLevelLabel: riskLevelLabelOf(primary.riskLevel),
       riskScore: primary.riskScore,
       factors: primary.factors,
       guideText: buildSafetyGuide(primary.riskLevel),

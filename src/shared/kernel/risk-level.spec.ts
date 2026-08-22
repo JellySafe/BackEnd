@@ -1,9 +1,11 @@
 import {
+  RISK_LEVELS,
   RiskLevel,
   compareRiskLevel,
   isRiskLevel,
   maxRiskLevel,
   riskLevelFromScore,
+  riskLevelLabelOf,
 } from './risk-level';
 
 describe('risk-level (RISK-001/002)', () => {
@@ -86,5 +88,34 @@ describe('risk-level (RISK-001/002)', () => {
     it.each(['SAFE', 'unknown', '', null, undefined, 3, {}])('무효 값 → false', (v) => {
       expect(isRiskLevel(v)).toBe(false);
     });
+  });
+});
+
+describe('표시 라벨', () => {
+  it('모든 단계에 라벨이 있다', () => {
+    for (const level of RISK_LEVELS) {
+      expect(riskLevelLabelOf(level)).not.toBe('');
+    }
+  });
+
+  it("safe 를 '안전' 이라고 쓰지 않는다 — 쏘이지 않는다는 보장으로 읽힌다", () => {
+    // 이 문구는 문자·푸시로 시민에게 그대로 나간다. 우리가 아는 것은 "위험 신호가 낮다" 이지
+    // "안전하다" 가 아니다 — 실제로 낮다고 했는데 사고가 난 경우를 groundtruth 가 센다(miss).
+    expect(riskLevelLabelOf('safe')).not.toContain('안전');
+    expect(riskLevelLabelOf('safe')).toBe('낮음');
+  });
+
+  it('높은 단계는 위험을 분명히 말한다', () => {
+    expect(riskLevelLabelOf('danger')).toContain('위험');
+    expect(riskLevelLabelOf('severe')).toContain('위험');
+  });
+
+  it('라벨이 서로 겹치지 않는다 — 두 단계가 같은 말로 보이면 안 된다', () => {
+    const labels = RISK_LEVELS.map(riskLevelLabelOf);
+    expect(new Set(labels).size).toBe(labels.length);
+  });
+
+  it('미산출(null)은 빈 문자열이다 — 부르는 쪽이 문맥에 맞게 처리한다', () => {
+    expect(riskLevelLabelOf(null)).toBe('');
   });
 });

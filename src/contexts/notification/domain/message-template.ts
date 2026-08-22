@@ -1,16 +1,14 @@
-import { RiskLevel } from '@shared/kernel/risk-level';
+import { RiskLevel, riskLevelLabelOf } from '@shared/kernel/risk-level';
 import { NotificationEvent, NotificationTarget } from './notification-enums';
 
-/** 위험 단계 한글 라벨 (문구 노출용, RISK-001). */
-const RISK_LEVEL_LABEL: Record<RiskLevel, string> = {
-  safe: '안전',
-  caution: '주의',
-  danger: '위험',
-  severe: '심각',
-};
-
+/**
+ * 위험 단계 한글 라벨 (문구 노출용, RISK-001).
+ *
+ * 목록은 커널이 갖는다(`RISK_LEVEL_LABELS`). 여기 따로 두면 문자 문구와 화면 표기가
+ * 조용히 달라진다 — 같은 단계를 두 표면이 다르게 부르는 것이 사용자에게는 가장 혼란스럽다.
+ */
 export function riskLevelLabel(level: RiskLevel | null): string {
-  return level ? RISK_LEVEL_LABEL[level] : '';
+  return riskLevelLabelOf(level);
 }
 
 /**
@@ -21,7 +19,7 @@ export const UNKNOWN_RISK_LEVEL_LABEL = '확인 필요';
 
 /** 토큰 치환 전용 라벨. null 이면 빈칸 대신 안전한 문구를 쓴다. */
 function riskLevelToken(level: RiskLevel | null): string {
-  return level ? RISK_LEVEL_LABEL[level] : UNKNOWN_RISK_LEVEL_LABEL;
+  return level === null ? UNKNOWN_RISK_LEVEL_LABEL : riskLevelLabelOf(level);
 }
 
 /** 이벤트 한글 라벨 (fallback 문구용). */
