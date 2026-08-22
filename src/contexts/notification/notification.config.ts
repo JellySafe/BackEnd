@@ -102,6 +102,39 @@ export class NotificationConfig {
   }
 
   /**
+   * 알림톡 설정. 하나라도 비면 null(비활성 → 문자로만 나간다).
+   *
+   * 문자와 따로 켜는 이유는 준비물이 다르기 때문이다 — 알림톡은 카카오 채널과 **템플릿 심사
+   * 승인**이 더 필요하다. 문자를 켰다고 자동으로 켜지면 승인 안 된 템플릿으로 보내다 전부 거부된다.
+   */
+  get alimtalk(): AlimtalkConfig | null {
+    const serviceId = (this.config.get<string>('KAKAO_SERVICE_ID') ?? '').trim();
+    const channelId = (this.config.get<string>('KAKAO_CHANNEL_ID') ?? '').trim();
+    if (serviceId === '' || channelId === '') return null;
+    return { serviceId, channelId, templateCodes: this.kakaoTemplateCodes() };
+  }
+
+  /**
+   * `KAKAO_TEMPLATE_CODES` 를 `사건:코드` 목록으로 읽는다.
+   * 예: `level_up:JELLY_LV_01,toxic_report:JELLY_TOXIC_01`
+   *
+   * 형식이 어긋난 항목은 **조용히 버리지 않고 건너뛴 사실이 드러나야** 하지만, 설정 하나 때문에
+   * 기동을 막지는 않는다(알림톡은 부가 채널이다). 그래서 파싱은 관대하게 하고, 결과로 나온
+   * 템플릿 목록을 기동 로그에 찍어 운영자가 눈으로 확인하게 한다(kakao-sender.provider.ts).
+   */
+  private kakaoTemplateCodes(): Record<string, string> {
+    const raw = (this.config.get<string>('KAKAO_TEMPLATE_CODES') ?? '').trim();
+    if (raw === '') return {};
+
+    const codes: Record<string, string> = {};
+    for (const pair of raw.split(',')) {
+      const [event, code] = pair.split(':').map((part) => part.trim());
+      if (event && code) codes[event] = code;
+    }
+    return codes;
+  }
+
+  /**
    * SMS 를 보낼 최소 위험 단계. 기본 danger.
    *
    * SMS 는 **건당 과금**이고 사용자에게도 방해가 크다. 주의 단계까지 문자로 보내면 비용과
@@ -115,6 +148,26 @@ export class NotificationConfig {
 }
 
 /** 네이버 클라우드 SENS 설정. 네 값이 한 세트다(하나라도 비면 발송을 켤 수 없다). */
+/**
+ * 알림톡 설정. SENS 자격증명과 별개로 **발신 프로필(카카오 채널)** 이 더 필요하다.
+ *
+ * `serviceId` 를 따로 두는 이유: SENS 는 SMS 와 알림톡의 서비스 ID 가 다르다.
+ * 하나로 뭉뚱그리면 한쪽이 404 로 실패하는데, 응답만 봐서는 원인을 알기 어렵다.
+ */
+export interface AlimtalkConfig {
+  /** 알림톡 서비스 ID(SMS 와 다르다). */
+  serviceId: string;
+  /** 발신 프로필 = 카카오 비즈니스 채널 검색용 아이디(@채널명). */
+  channelId: string;
+  /**
+   * 사건 종류 → **승인된** 템플릿 코드.
+   *
+   * 하드코딩할 수 없다. 코드는 카카오 심사를 통과해야 발급되고, 문구를 고치면 다시 받아야 한다.
+   * 비어 있으면 그 사건은 알림톡으로 보내지 않고 문자로 간다.
+   */
+  templateCodes: Record<string, string>;
+}
+
 export interface SensConfig {
   serviceId: string;
   accessKey: string;

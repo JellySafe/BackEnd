@@ -259,6 +259,12 @@ export interface DispatchNotificationSmsCommand {
   owner: PushConsentOwner;
   message: string;
   riskLevel?: RiskLevel | null;
+  /**
+   * 사건 종류. **알림톡 템플릿을 고르는 데 쓴다** — 알림톡은 자유 문구를 보낼 수 없고
+   * 사전 승인된 템플릿 코드로만 나가는데, 그 코드가 사건마다 다르다.
+   * 없으면 알림톡을 건너뛰고 문자로 간다.
+   */
+  eventType?: NotificationEvent | null;
   now?: Date;
 }
 

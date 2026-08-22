@@ -215,6 +215,27 @@ class EnvSchema {
   @IsString()
   SENS_FROM?: string;
 
+  /** 알림톡 서비스 ID(SMS 와 다르다). 비면 알림톡 비활성. */
+  @IsOptional()
+  @IsString()
+  KAKAO_SERVICE_ID?: string;
+
+  /** 발신 프로필(카카오 채널 검색용 아이디). 비면 알림톡 비활성. */
+  @IsOptional()
+  @IsString()
+  KAKAO_CHANNEL_ID?: string;
+
+  /**
+   * 사건:승인템플릿코드 목록. 예: `level_up:JELLY_LV_01,toxic_report:JELLY_TOXIC_01`
+   *
+   * 형식 검증을 여기서 하지 않는 이유: 코드는 카카오 심사로 발급되는 외부 값이라 우리가
+   * 모양을 단정할 수 없다. 대신 파싱 결과(실제로 인식된 템플릿 목록)를 기동 로그에 찍어
+   * 운영자가 눈으로 확인하게 한다 — 오타 하나로 기동이 막히는 것보다 낫다(부가 채널이다).
+   */
+  @IsOptional()
+  @IsString()
+  KAKAO_TEMPLATE_CODES?: string;
+
   /** 문자를 보내는 최소 위험 단계. 기본 danger. */
   @IsOptional()
   @IsIn(['caution', 'danger'])

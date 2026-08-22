@@ -19,6 +19,7 @@ import { SmsConsentPrismaRepository } from './adapter/out/persistence/sms-consen
 import { NotificationDispatchPrismaRepository } from './adapter/out/persistence/notification-dispatch.prisma-repository';
 import { WebPushSender } from './adapter/out/push/web-push.sender';
 import { smsSenderProvider } from './adapter/out/sms/sms-sender.provider';
+import { kakaoSenderProvider } from './adapter/out/kakao/kakao-sender.provider';
 import { CreateNotificationService } from './application/service/create-notification.service';
 import { PreviewNotificationService } from './application/service/preview-notification.service';
 import { ListAlertsService } from './application/service/list-alerts.service';
@@ -115,6 +116,9 @@ import {
     { provide: PUSH_SENDER, useClass: WebPushSender },
     // 문자 발송 사업자(SMS_PROVIDER). 기본은 비활성 — 과금 채널이라 켤 때만 켠다.
     smsSenderProvider,
+    // 알림톡(EX-002 도달 확장). 문자와 같은 수신 동의를 쓰지만 별도로 켠다 — 카카오 채널과
+    // 템플릿 심사 승인이 더 필요하기 때문이다.
+    kakaoSenderProvider,
     // 알림 파기 (발송 이력이 계속 쌓이므로 보관 기간 지나면 정리)
     { provide: NOTIFICATION_PURGE, useClass: NotificationPurgePrismaRepository },
     // 스케줄러 (adapter/in/schedule)
