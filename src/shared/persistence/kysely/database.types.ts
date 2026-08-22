@@ -81,6 +81,20 @@ export type FavoriteBeach = {
     beach_id: number;
     created_at: Generated<Timestamp>;
 };
+export type FieldObservation = {
+    id: Generated<number>;
+    beach_id: number;
+    observed_at: Timestamp;
+    source: string;
+    observer_id: number | null;
+    observer_name: string | null;
+    jellyfish_present: number;
+    density_level: string | null;
+    species_id: number | null;
+    estimated_count: number | null;
+    note: string | null;
+    created_at: Generated<Timestamp>;
+};
 export type JellyfishOccurrence = {
     id: Generated<number>;
     source_id: number;
@@ -300,6 +314,26 @@ export type PartnerApiKey = {
     revoked_at: Timestamp | null;
     created_at: Generated<Timestamp>;
 };
+export type PredictionEvaluation = {
+    id: Generated<number>;
+    beach_id: number;
+    /**
+     * KST 기준 날짜.
+     */
+    target_date: Timestamp;
+    predicted_level: string;
+    predicted_score: number;
+    observed: number;
+    actual_density: string | null;
+    incident_count: Generated<number>;
+    outcome: string;
+    /**
+     * 판정에 쓴 경보 임계선. 정책이 바뀌면 과거 지표와 비교할 수 없으므로 행에 박아 둔다.
+     */
+    alert_threshold: string;
+    rule_version: string;
+    evaluated_at: Generated<Timestamp>;
+};
 export type RefreshToken = {
     id: Generated<number>;
     user_id: number;
@@ -403,6 +437,22 @@ export type StaticGuide = {
     created_at: Generated<Timestamp>;
     updated_at: Timestamp;
 };
+export type StingIncident = {
+    id: Generated<number>;
+    beach_id: number;
+    occurred_at: Timestamp;
+    source: string;
+    severity: string;
+    patient_count: number;
+    species_id: number | null;
+    /**
+     * 외부 기관 사건 식별자. 같은 사고가 두 경로로 들어올 때 묶는 열쇠(자동 병합은 하지 않는다).
+     */
+    external_ref: string | null;
+    note: string | null;
+    reported_by: number | null;
+    created_at: Generated<Timestamp>;
+};
 export type Subscription = {
     id: Generated<number>;
     user_id: number;
@@ -473,6 +523,7 @@ export type DB = {
     daily_reports: DailyReport;
     data_sources: DataSource;
     favorite_beaches: FavoriteBeach;
+    field_observations: FieldObservation;
     jellyfish_occurrences: JellyfishOccurrence;
     jellyfish_reports: JellyfishReport;
     jellyfish_species: JellyfishSpecies;
@@ -489,6 +540,7 @@ export type DB = {
     partner_api_call_logs: PartnerApiCallLog;
     partner_api_keys: PartnerApiKey;
     partners: Partner;
+    prediction_evaluations: PredictionEvaluation;
     refresh_tokens: RefreshToken;
     report_consents: ReportConsent;
     report_reviews: ReportReview;
@@ -498,6 +550,7 @@ export type DB = {
     risk_rule_configs: RiskRuleConfig;
     risk_scores: RiskScore;
     static_guides: StaticGuide;
+    sting_incidents: StingIncident;
     subscription_areas: SubscriptionArea;
     subscriptions: Subscription;
     users: User;

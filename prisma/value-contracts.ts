@@ -14,7 +14,7 @@
  * 목록을 손으로 두 번 적지 않는다. 도메인 enum 배열을 그대로 가져와 여기서 한 번 엮고,
  * DDL 은 **거기서 생성한다**(`buildCheckConstraintSql`).
  *
- *   도메인 enum (원본)  →  CONTRACTS  →  prisma/sql/003-check-constraints.sql
+ *   도메인 enum (원본)  →  CONTRACTS  →  prisma/sql/999-check-constraints.sql
  *
  * 커밋된 SQL 파일이 이 표에서 생성한 것과 다르면 테스트가 잡는다(value-contracts.spec.ts).
  * 그래서 "enum 은 고쳤는데 DDL 을 안 고친" 상태로는 CI 를 통과할 수 없다.
@@ -59,6 +59,12 @@ import {
   SUBSCRIBER_TYPES,
   SUBSCRIPTION_STATUSES,
 } from '@contexts/secondary/subscription/domain/subscription';
+import {
+  EVALUATION_OUTCOMES,
+  INCIDENT_SOURCES,
+  OBSERVATION_SOURCES,
+  STING_SEVERITIES,
+} from '@contexts/groundtruth/domain/groundtruth-enums';
 import { TOXICITY_LEVELS } from '@contexts/species/domain/species-enums';
 import { USER_ROLES } from '@contexts/user/domain/user-enums';
 import { DATA_CONFIDENCES, RISK_HORIZONS, RISK_LEVELS } from '@shared/kernel/risk-level';
@@ -303,6 +309,56 @@ export const CONTRACTS: readonly ValueContract[] = [
     note: '그날의 최고 위험 단계.',
   },
 
+  // ── groundtruth (정답 데이터) ─────────────────────────────────────────────────────
+  {
+    table: 'field_observations',
+    column: 'source',
+    values: OBSERVATION_SOURCES,
+    note: '누가 봤는가. 시민 제보와 달리 부재까지 기록하는 입력원이다.',
+  },
+  {
+    table: 'field_observations',
+    column: 'density_level',
+    values: DENSITY_LEVELS,
+    note: '관측 밀도. 출현했으면 필수, 아니면 NULL(애플리케이션 불변식).',
+  },
+  {
+    table: 'sting_incidents',
+    column: 'source',
+    values: INCIDENT_SOURCES,
+    note: '사고를 알려온 경로. 중복 유입을 가려내는 데 쓴다.',
+  },
+  {
+    table: 'sting_incidents',
+    column: 'severity',
+    values: STING_SEVERITIES,
+    note: '피해 정도. 의학적 중증도가 아니라 운영 판단에 필요한 최소 구분이다.',
+  },
+  {
+    table: 'prediction_evaluations',
+    column: 'predicted_level',
+    values: RISK_LEVELS,
+    note: '그날 그 해변 예측 중 최고 단계.',
+  },
+  {
+    table: 'prediction_evaluations',
+    column: 'actual_density',
+    values: DENSITY_LEVELS,
+    note: '실제 관측된 최고 밀도.',
+  },
+  {
+    table: 'prediction_evaluations',
+    column: 'outcome',
+    values: EVALUATION_OUTCOMES,
+    note: '혼동 행렬의 네 칸. 이 값이 어긋나면 정확도 지표가 통째로 거짓말을 한다.',
+  },
+  {
+    table: 'prediction_evaluations',
+    column: 'alert_threshold',
+    values: RISK_LEVELS,
+    note: '판정에 쓴 경보 임계선. 정책이 바뀌어도 과거 판정을 해석할 수 있어야 한다.',
+  },
+
   // ── secondary (EX-001~004) ────────────────────────────────────────────────────────
   {
     table: 'partners',
@@ -372,7 +428,11 @@ export function buildCheckConstraintSql(): string {
     '--    종류의 결함(#22)이 CI 에서 잡히지 않는다. 이 파일이 그 구멍을 메운다.',
     '--',
     '--  적용:',
-    '--    mysql -h <host> -u <user> -p <db> < prisma/sql/003-check-constraints.sql',
+    '--    mysql -h <host> -u <user> -p <db> < prisma/sql/999-check-constraints.sql',
+    '--',
+    '--  파일 이름이 999 인 이유: 제약은 **테이블이 다 만들어진 뒤** 걸려야 한다. 준비 스크립트가',
+    '--  prisma/sql/*.sql 을 이름 순으로 적용하므로, 새 테이블 DDL(004 등)보다 뒤에 오도록 번호를',
+    '--  크게 잡아 둔다. 앞 번호를 쓰면 나중에 테이블이 추가될 때 조용히 순서가 어긋난다.',
     '--',
     '--  이미 제약이 있는 DB(스키마 원본으로 만든 로컬/운영)에서는 "Duplicate check constraint"',
     '--  로 실패한다. 그건 이미 그 상태라는 뜻이므로 무시해도 된다.',

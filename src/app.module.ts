@@ -22,6 +22,7 @@ import { NotificationModule } from './contexts/notification/notification.module'
 import { ObservationModule } from './contexts/observation/observation.module';
 import { DailyReportModule } from './contexts/dailyreport/dailyreport.module';
 import { FavoriteModule } from './contexts/favorite/favorite.module';
+import { GroundtruthModule } from './contexts/groundtruth/groundtruth.module';
 import { UserModule } from './contexts/user/user.module';
 import { SecondaryModule } from './contexts/secondary/secondary.module';
 
@@ -65,6 +66,8 @@ import { SecondaryModule } from './contexts/secondary/secondary.module';
     ObservationModule,
     DailyReportModule,
     FavoriteModule,
+    // 정답 데이터(현장 관측·쏘임 사고)와 예측 대조. 이 서비스가 맞고 있는지 재는 유일한 경로다.
+    GroundtruthModule,
     UserModule,
     SecondaryModule,
   ],

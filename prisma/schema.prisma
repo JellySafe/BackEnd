@@ -62,6 +62,8 @@ model User {
   subscriptions       Subscription[]
   refreshTokens       RefreshToken[]
 
+  fieldObservations FieldObservation[]
+  stingIncidents    StingIncident[]
   @@map("users")
 }
 
@@ -112,6 +114,9 @@ model Beach {
   favoriteBeaches     FavoriteBeach[]
   subscriptionAreas   SubscriptionArea[]
 
+  fieldObservations FieldObservation[]
+  stingIncidents    StingIncident[]
+  predictionEvaluations PredictionEvaluation[]
   @@map("beaches")
 }
 
@@ -174,6 +179,8 @@ model JellyfishSpecies {
   updatedAt        DateTime @updatedAt @map("updated_at") @db.DateTime(0)
 
   @@index([active, displayOrder], name: "ix_jellyfish_species_active")
+  fieldObservations FieldObservation[]
+  stingIncidents    StingIncident[]
   @@map("jellyfish_species")
 }
 
@@ -820,4 +827,80 @@ model SubscriptionArea {
   beach        Beach?       @relation(fields: [beachId], references: [id], onDelete: Cascade)
 
   @@map("subscription_areas")
+}
+
+// =====================================================================================
+//  정답 데이터 (groundtruth) — 예측이 맞았는지 재는 데 쓴다.
+//  DDL 은 prisma/sql/004-groundtruth.sql (DB-first 라 migrate 를 쓰지 않는다).
+// =====================================================================================
+
+/// 현장 관측 기록. **부재(jellyfishPresent=false)도 기록한다** — 그게 없으면 오경보를 셀 수 없다.
+model FieldObservation {
+  id               BigInt   @id @default(autoincrement())
+  beachId          BigInt   @map("beach_id")
+  observedAt       DateTime @map("observed_at") @db.DateTime(0)
+  source           String   @db.VarChar(20) // lifeguard/official/partner
+  observerId       BigInt?  @map("observer_id")
+  observerName     String?  @map("observer_name") @db.VarChar(50)
+  jellyfishPresent Boolean  @map("jellyfish_present")
+  densityLevel     String?  @map("density_level") @db.VarChar(20) // low/medium/high
+  speciesId        BigInt?  @map("species_id")
+  estimatedCount   Int?     @map("estimated_count")
+  note             String?  @db.VarChar(500)
+  createdAt        DateTime @default(now()) @map("created_at") @db.DateTime(0)
+
+  beach    Beach             @relation(fields: [beachId], references: [id], onDelete: Cascade)
+  observer User?             @relation(fields: [observerId], references: [id], onDelete: SetNull)
+  species  JellyfishSpecies? @relation(fields: [speciesId], references: [id], onDelete: SetNull)
+
+  @@index([beachId, observedAt], name: "ix_field_observations_beach_time")
+  @@map("field_observations")
+}
+
+/// 쏘임 사고 기록. 가장 강한 정답이다. 환자 신원은 **컬럼 자체가 없다**.
+model StingIncident {
+  id           BigInt   @id @default(autoincrement())
+  beachId      BigInt   @map("beach_id")
+  occurredAt   DateTime @map("occurred_at") @db.DateTime(0)
+  source       String   @db.VarChar(20) // emergency_call/coast_guard/lifeguard/hospital/self_report
+  severity     String   @db.VarChar(20) // mild/moderate/severe/fatal
+  patientCount Int      @map("patient_count")
+  speciesId    BigInt?  @map("species_id")
+  /// 외부 기관 사건 식별자. 같은 사고가 두 경로로 들어올 때 묶는 열쇠(자동 병합은 하지 않는다).
+  externalRef  String?  @map("external_ref") @db.VarChar(100)
+  note         String?  @db.VarChar(500)
+  reportedBy   BigInt?  @map("reported_by")
+  createdAt    DateTime @default(now()) @map("created_at") @db.DateTime(0)
+
+  beach    Beach             @relation(fields: [beachId], references: [id], onDelete: Cascade)
+  species  JellyfishSpecies? @relation(fields: [speciesId], references: [id], onDelete: SetNull)
+  reporter User?             @relation(fields: [reportedBy], references: [id], onDelete: SetNull)
+
+  @@index([beachId, occurredAt], name: "ix_sting_incidents_beach_time")
+  @@index([externalRef], name: "ix_sting_incidents_external_ref")
+  @@map("sting_incidents")
+}
+
+/// 예측 대조 결과(해변 × 하루). 같은 날을 다시 평가하면 덮어쓴다(UNIQUE).
+model PredictionEvaluation {
+  id             BigInt   @id @default(autoincrement())
+  beachId        BigInt   @map("beach_id")
+  /// KST 기준 날짜.
+  targetDate     DateTime @map("target_date") @db.Date
+  predictedLevel String   @map("predicted_level") @db.VarChar(20)
+  predictedScore Int      @map("predicted_score") @db.SmallInt
+  observed       Boolean
+  actualDensity  String?  @map("actual_density") @db.VarChar(20)
+  incidentCount  Int      @default(0) @map("incident_count")
+  outcome        String   @db.VarChar(20) // hit/miss/false_alarm/correct_negative
+  /// 판정에 쓴 경보 임계선. 정책이 바뀌면 과거 지표와 비교할 수 없으므로 행에 박아 둔다.
+  alertThreshold String   @map("alert_threshold") @db.VarChar(20)
+  ruleVersion    String   @map("rule_version") @db.VarChar(20)
+  evaluatedAt    DateTime @default(now()) @map("evaluated_at") @db.DateTime(0)
+
+  beach Beach @relation(fields: [beachId], references: [id], onDelete: Cascade)
+
+  @@unique([beachId, targetDate], name: "uk_prediction_evaluations_beach_date")
+  @@index([targetDate, outcome], name: "ix_prediction_evaluations_date_outcome")
+  @@map("prediction_evaluations")
 }

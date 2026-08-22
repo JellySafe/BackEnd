@@ -12,7 +12,11 @@
 --    종류의 결함(#22)이 CI 에서 잡히지 않는다. 이 파일이 그 구멍을 메운다.
 --
 --  적용:
---    mysql -h <host> -u <user> -p <db> < prisma/sql/003-check-constraints.sql
+--    mysql -h <host> -u <user> -p <db> < prisma/sql/999-check-constraints.sql
+--
+--  파일 이름이 999 인 이유: 제약은 **테이블이 다 만들어진 뒤** 걸려야 한다. 준비 스크립트가
+--  prisma/sql/*.sql 을 이름 순으로 적용하므로, 새 테이블 DDL(004 등)보다 뒤에 오도록 번호를
+--  크게 잡아 둔다. 앞 번호를 쓰면 나중에 테이블이 추가될 때 조용히 순서가 어긋난다.
 --
 --  이미 제약이 있는 DB(스키마 원본으로 만든 로컬/운영)에서는 "Duplicate check constraint"
 --  로 실패한다. 그건 이미 그 상태라는 뜻이므로 무시해도 된다.
@@ -167,11 +171,11 @@ ALTER TABLE notifications
 
 -- notification_consents.channel — 수신 동의 채널.
 ALTER TABLE notification_consents
-  ADD CONSTRAINT ck_notification_consents_channel CHECK (channel IN ('push', 'sms', 'email'));
+  ADD CONSTRAINT ck_notification_consents_channel CHECK (channel IN ('push', 'sms', 'kakao', 'email'));
 
 -- notification_dispatches.channel — 실제 발송 채널.
 ALTER TABLE notification_dispatches
-  ADD CONSTRAINT ck_notification_dispatches_channel CHECK (channel IN ('push', 'sms', 'email'));
+  ADD CONSTRAINT ck_notification_dispatches_channel CHECK (channel IN ('push', 'sms', 'kakao', 'email'));
 
 -- notification_dispatches.dispatch_status — 발송 결과. 문자 과금 집계가 이 값을 센다.
 ALTER TABLE notification_dispatches
@@ -180,6 +184,38 @@ ALTER TABLE notification_dispatches
 -- daily_reports.max_risk_level — 그날의 최고 위험 단계.
 ALTER TABLE daily_reports
   ADD CONSTRAINT ck_daily_reports_max_risk_level CHECK (max_risk_level IN ('safe', 'caution', 'danger', 'severe'));
+
+-- field_observations.source — 누가 봤는가. 시민 제보와 달리 부재까지 기록하는 입력원이다.
+ALTER TABLE field_observations
+  ADD CONSTRAINT ck_field_observations_source CHECK (source IN ('lifeguard', 'official', 'partner'));
+
+-- field_observations.density_level — 관측 밀도. 출현했으면 필수, 아니면 NULL(애플리케이션 불변식).
+ALTER TABLE field_observations
+  ADD CONSTRAINT ck_field_observations_density_level CHECK (density_level IN ('low', 'medium', 'high'));
+
+-- sting_incidents.source — 사고를 알려온 경로. 중복 유입을 가려내는 데 쓴다.
+ALTER TABLE sting_incidents
+  ADD CONSTRAINT ck_sting_incidents_source CHECK (source IN ('emergency_call', 'coast_guard', 'lifeguard', 'hospital', 'self_report'));
+
+-- sting_incidents.severity — 피해 정도. 의학적 중증도가 아니라 운영 판단에 필요한 최소 구분이다.
+ALTER TABLE sting_incidents
+  ADD CONSTRAINT ck_sting_incidents_severity CHECK (severity IN ('mild', 'moderate', 'severe', 'fatal'));
+
+-- prediction_evaluations.predicted_level — 그날 그 해변 예측 중 최고 단계.
+ALTER TABLE prediction_evaluations
+  ADD CONSTRAINT ck_prediction_evaluations_predicted_level CHECK (predicted_level IN ('safe', 'caution', 'danger', 'severe'));
+
+-- prediction_evaluations.actual_density — 실제 관측된 최고 밀도.
+ALTER TABLE prediction_evaluations
+  ADD CONSTRAINT ck_prediction_evaluations_actual_density CHECK (actual_density IN ('low', 'medium', 'high'));
+
+-- prediction_evaluations.outcome — 혼동 행렬의 네 칸. 이 값이 어긋나면 정확도 지표가 통째로 거짓말을 한다.
+ALTER TABLE prediction_evaluations
+  ADD CONSTRAINT ck_prediction_evaluations_outcome CHECK (outcome IN ('hit', 'miss', 'false_alarm', 'correct_negative'));
+
+-- prediction_evaluations.alert_threshold — 판정에 쓴 경보 임계선. 정책이 바뀌어도 과거 판정을 해석할 수 있어야 한다.
+ALTER TABLE prediction_evaluations
+  ADD CONSTRAINT ck_prediction_evaluations_alert_threshold CHECK (alert_threshold IN ('safe', 'caution', 'danger', 'severe'));
 
 -- partners.partner_status — 제휴사 상태. 정지된 제휴사의 키는 통하지 않아야 한다.
 ALTER TABLE partners

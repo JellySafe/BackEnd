@@ -33,3 +33,14 @@ export function isSourceType(v: unknown): v is SourceType {
 export function isStationType(v: unknown): v is StationType {
   return typeof v === 'string' && (STATION_TYPES as readonly string[]).includes(v);
 }
+
+/**
+ * 밀도 값 계약 검사.
+ *
+ * 이 컨텍스트 밖(groundtruth 의 현장 관측)에서도 같은 값 집합을 쓴다. 목록을 따로 적으면
+ * 어긋나므로 판별도 여기 하나만 둔다 — 밀도는 v3 위험도의 축이라 어긋나면 점수가 통째로
+ * 빗나간다(risk-factors.ts).
+ */
+export function isDensityLevel(v: unknown): v is DensityLevel {
+  return typeof v === 'string' && (DENSITY_LEVELS as readonly string[]).includes(v);
+}
