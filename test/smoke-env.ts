@@ -15,7 +15,34 @@ function fallback(key: string, value: string): void {
 }
 
 fallback('NODE_ENV', 'test');
-fallback('DATABASE_URL', process.env.TEST_DATABASE_URL ?? 'mysql://jellysafe:jellysafe@127.0.0.1:3399/jellysafe_test');
+
+/**
+ * 스모크가 붙을 DB.
+ *
+ * ── 왜 fallback 이 아니라 덮어쓰는가 ────────────────────────────────────────────────
+ * 준비 스크립트(prepare-test-db)는 `TEST_DATABASE_URL` 을 보고, 테스트는 `DATABASE_URL` 을
+ * 본다. 그래서 셸에 `DATABASE_URL` 이 이미 있으면 **준비한 DB 와 테스트가 보는 DB 가 갈라진다.**
+ * 스키마를 A 에 만들고 테스트는 B 에 붙는 상태인데, 증상은 "테이블이 없다"나 드라이버 오류처럼
+ * 원인과 멀어 보이는 형태로 나온다(실제로 겪었다 — 다른 MySQL 에 붙어 인증 플러그인 오류가 났다).
+ *
+ * 스모크는 **항상 테스트 DB 를 봐야 한다.** 그래서 `TEST_DATABASE_URL` 이 있으면 그것으로
+ * 덮어쓴다. CI 는 둘을 같은 값으로 주므로 영향이 없다(.github/workflows/smoke.yml).
+ */
+const TEST_DB =
+  process.env.TEST_DATABASE_URL ?? 'mysql://jellysafe:jellysafe@127.0.0.1:3399/jellysafe_test';
+process.env.DATABASE_URL = TEST_DB;
+
+/**
+ * 안전장치. 준비 스크립트와 같은 규칙이다 — 스모크는 테이블을 지우고 시드를 다시 넣는 DB 를
+ * 전제로 돌기 때문에, 이름에 `test` 가 없으면 개발/운영 DB 를 가리켰을 가능성을 먼저 의심한다.
+ */
+const dbName = new URL(TEST_DB).pathname.replace(/^\//, '');
+if (!/test/i.test(dbName) && process.env.ALLOW_NON_TEST_DB !== 'true') {
+  throw new Error(
+    `안전장치: 스모크가 붙을 DB 이름에 'test' 가 없다(${dbName}). ` +
+      'TEST_DATABASE_URL 을 확인한다. 의도한 것이라면 ALLOW_NON_TEST_DB=true 로 실행한다.',
+  );
+}
 fallback('JWT_SECRET', 'smoke-test-secret-0123456789abcdef0123456789');
 fallback('JWT_EXPIRES', '1h');
 fallback('SYSTEM_API_KEY', 'smoke-test-system-key');
