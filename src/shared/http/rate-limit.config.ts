@@ -32,11 +32,50 @@ export const RATE_LIMIT = {
   REPORT_HOURLY: { name: 'report-hourly', ttl: 3_600_000, limit: 60 },
 } as const satisfies Record<string, ThrottlerOptions & { name: string }>;
 
-export const THROTTLERS: ThrottlerOptions[] = [
-  RATE_LIMIT.DEFAULT,
-  RATE_LIMIT.REPORT_BURST,
-  RATE_LIMIT.REPORT_HOURLY,
-];
+/**
+ * 한도를 설정으로 조정할 수 있게 한다.
+ *
+ * ── 왜 상수로 두지 않는가 ───────────────────────────────────────────────────────────
+ * 두 가지가 걸렸다.
+ *
+ * 1. **급증 때 손댈 수 없다.** 성수기 주말이나 사고 직후처럼 정상 트래픽이 몰리는 순간에
+ *    정상 사용자가 429 를 받기 시작하면, 지금은 코드를 고쳐 배포해야 푼다. 안전 정보를
+ *    막고 있는 상태에서 배포를 기다리는 것은 받아들이기 어렵다.
+ * 2. **부하를 잴 수 없다.** 부하 테스트는 한 IP 에서 쏘므로 기본값(300/분)에 즉시 걸린다.
+ *    실제로 재보니 요청의 89% 가 429 였고, 그러면 재는 것은 앱이 아니라 리밋이다.
+ *
+ * 기본값은 그대로다 — 아무것도 설정하지 않으면 지금과 똑같이 동작한다.
+ * 0 이하나 숫자가 아닌 값은 기본값으로 되돌린다(오타로 리밋이 사라지면 안 된다).
+ */
+function limitFrom(envValue: string | undefined, fallback: number): number {
+  const parsed = Number(envValue);
+  return Number.isInteger(parsed) && parsed > 0 ? parsed : fallback;
+}
+
+/**
+ * 환경에 맞춘 한도 목록. `ThrottlerModule.forRootAsync` 가 부른다.
+ * env 를 직접 읽지 않고 값을 받는 순수 함수라 테스트로 고정할 수 있다.
+ */
+export function buildThrottlers(env: {
+  defaultPerMin?: string;
+  reportPerMin?: string;
+  reportPerHour?: string;
+}): ThrottlerOptions[] {
+  return [
+    { ...RATE_LIMIT.DEFAULT, limit: limitFrom(env.defaultPerMin, RATE_LIMIT.DEFAULT.limit) },
+    {
+      ...RATE_LIMIT.REPORT_BURST,
+      limit: limitFrom(env.reportPerMin, RATE_LIMIT.REPORT_BURST.limit),
+    },
+    {
+      ...RATE_LIMIT.REPORT_HOURLY,
+      limit: limitFrom(env.reportPerHour, RATE_LIMIT.REPORT_HOURLY.limit),
+    },
+  ];
+}
+
+/** 기본 한도(설정 없음). 하위호환용으로 남긴다. */
+export const THROTTLERS: ThrottlerOptions[] = buildThrottlers({});
 
 /** 이름 있는(엄격) 리밋 목록. 아래 COSTLY 경로에만 적용된다. */
 export const STRICT_THROTTLER_NAMES: string[] = [
