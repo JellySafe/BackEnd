@@ -45,10 +45,38 @@ describe('API 키 발급', () => {
 
   it('저장값은 해시뿐이다 — 원문이 들어 있지 않다', () => {
     const issued = issueApiKey();
-    const secret = issued.apiKey.split('_')[2];
+    // 접두사 뒤 전부가 비밀이다. `split('_')[2]` 로 자르면 안 된다 — 아래 테스트 참고.
+    const secret = issued.apiKey.slice(`${issued.keyPrefix}_`.length);
 
+    expect(secret).toHaveLength(43);
     expect(issued.apiKeyHash).toMatch(/^[0-9a-f]{64}$/);
     expect(issued.apiKeyHash).not.toContain(secret);
+  });
+
+  it('비밀에 밑줄이 들어갈 수 있다 — 구분자로 쪼개면 안 되는 이유', () => {
+    // 비밀은 base64url 이고 그 알파벳에는 `_` 가 있다(A-Z a-z 0-9 - _).
+    // 그래서 `apiKey.split('_')` 는 항상 3조각이 아니다. 이 테스트는 그 사실을 못 박는다 —
+    // 실제로 이 가정 때문에 테스트가 간헐적으로 깨졌다. 43자 비밀에 밑줄이 하나라도 들어가면
+    // `[2]` 는 비밀의 **앞 조각**일 뿐이고, 짧으면 한 글자까지 나온다.
+    //
+    // 형식 검사(KEY_PATTERN)와 접두사 추출(apiKeyPrefixOf)은 이 경우에도 옳게 동작해야 한다.
+    // 접두사는 `jsp` + hex 12자라 밑줄이 없으므로, 앞 두 조각만 쓰는 방식은 안전하다.
+    const withUnderscore = `jsp_0123456789ab_${'a'.repeat(20)}_${'b'.repeat(22)}`;
+
+    expect(withUnderscore.split('_')).toHaveLength(4); // 3조각이 아니다
+    expect(isApiKeyFormat(withUnderscore)).toBe(true);
+    expect(apiKeyPrefixOf(withUnderscore)).toBe('jsp_0123456789ab');
+  });
+
+  it('발급을 여러 번 해도 비밀 추출이 흔들리지 않는다', () => {
+    // 밑줄이 든 비밀은 확률적으로 나온다. 한 번만 돌리면 통과하고 CI 에서 깨진다.
+    for (let i = 0; i < 200; i += 1) {
+      const issued = issueApiKey();
+      const secret = issued.apiKey.slice(`${issued.keyPrefix}_`.length);
+      expect(secret).toHaveLength(43);
+      expect(isApiKeyFormat(issued.apiKey)).toBe(true);
+      expect(apiKeyPrefixOf(issued.apiKey)).toBe(issued.keyPrefix);
+    }
   });
 
   it('우리가 만들지 않은 값은 형식에서 걸린다', () => {

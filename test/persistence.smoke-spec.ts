@@ -22,6 +22,7 @@ import {
 } from '@contexts/risk/application/port/in/risk-use-cases';
 import { CONTRACTS } from '../prisma/value-contracts';
 import {
+  DailyPredictionRow,
   GROUNDTRUTH_QUERY,
   GroundtruthQueryPort,
   RISK_PREDICTION,
@@ -35,7 +36,12 @@ import {
   RecordFieldObservationUseCase,
   RecordStingIncidentUseCase,
 } from '@contexts/groundtruth/application/port/in/groundtruth-use-cases';
-import { parseKstDateKey, toKstDateString } from '@shared/kernel/kst-date';
+import {
+  addKstDays,
+  kstDayStart,
+  parseKstDateKey,
+  toKstDateString,
+} from '@shared/kernel/kst-date';
 
 /**
  * 영속성 계층 스모크 — **SQL 이 실제로 맞는지**를 진짜 MySQL 위에서 본다.
@@ -476,45 +482,89 @@ describe('영속성 스모크', () => {
         expect(new Set(keys).size).toBe(keys.length);
       });
 
-      it('오늘 관측을 넣고 대조하면 판정이 저장된다', async () => {
-        const beach = await prisma.beach.findFirstOrThrow({ where: { isActive: true } });
-        const todayKey = toKstDateString(new Date());
+      /**
+       * "오늘" 에 기대지 않는다.
+       *
+       * 처음에는 `toKstDateString(new Date())` 로 오늘을 잡았는데 CI 에서 `evaluated: 0` 이
+       * 나왔다. 대조는 **예측과 실제가 같은 (해변, 날짜)** 에 있어야 성립하는데, 그 전제를
+       * 시계에 맡기면 실행 시각·시간대·산출 성공 여부에 따라 흔들린다.
+       *
+       * 그래서 **실제로 예측이 있는 날**을 조회해서 거기에 관측을 넣는다. 검증하려는 것은
+       * "예측과 실제가 만나면 판정이 저장되는가" 이지 "오늘 예측이 있는가" 가 아니다.
+       */
+      async function pickDayWithPrediction(): Promise<DailyPredictionRow> {
+        const predictions = app.get<RiskPredictionPort>(RISK_PREDICTION);
+        // 넉넉한 창으로 훑는다(산출이 어제·오늘 어디에 찍혔든 잡힌다).
+        const today = parseKstDateKey(toKstDateString(new Date()));
+        const from = addKstDays(today, -3);
+        const to = addKstDays(today, 1);
+
+        const rows = await predictions.collectDailyPredictions(from, to);
+        expect(rows.length).toBeGreaterThan(0); // beforeAll 이 산출을 돌렸다
+        return rows[0];
+      }
+
+      /**
+       * 그 KST 날짜 안에 들어가는 **과거** 시각.
+       *
+       * 정오 무렵을 쓰되 **현재 시각으로 자른다.** 대상이 오늘인데 지금이 새벽이면 정오는
+       * 아직 미래이고, 도메인이 미래 관측을 거부하기 때문이다(그게 옳은 동작이다 —
+       * 미래 날짜 관측은 그날의 대조에서 조용히 빠진다).
+       */
+      function withinKstDay(dateKey: Date): Date {
+        const noonish = new Date(kstDayStart(dateKey).getTime() + 3 * 60 * 60 * 1000);
+        const now = new Date();
+        return noonish.getTime() > now.getTime() ? now : noonish;
+      }
+
+      it('예측이 있는 날에 관측을 넣고 대조하면 판정이 저장된다', async () => {
+        const target = await pickDayWithPrediction();
 
         await app
           .get<RecordFieldObservationUseCase>(RECORD_FIELD_OBSERVATION_USE_CASE)
           .recordObservation({
-            beachId: Number(beach.id),
-            observedAt: new Date(),
+            beachId: target.beachId,
+            observedAt: withinKstDay(target.targetDate),
             source: 'lifeguard',
             jellyfishPresent: false,
             observerId: null,
           });
 
-        const day = parseKstDateKey(todayKey);
         const result = await app
           .get<EvaluatePredictionsUseCase>(EVALUATE_PREDICTIONS_USE_CASE)
-          .evaluate({ from: day, to: day });
+          .evaluate({ from: target.targetDate, to: target.targetDate });
 
         expect(result.evaluated).toBeGreaterThan(0);
 
         const saved = await prisma.predictionEvaluation.findFirst({
-          where: { beachId: beach.id, targetDate: day },
+          where: { beachId: BigInt(target.beachId), targetDate: target.targetDate },
         });
         expect(saved).not.toBeNull();
         expect(['hit', 'miss', 'false_alarm', 'correct_negative']).toContain(saved!.outcome);
+        // 판정 정책을 행에 박아 둔다 — 임계선이 바뀌어도 과거를 해석할 수 있어야 한다.
         expect(saved!.alertThreshold).toBe('danger');
+        expect(saved!.predictedLevel).toBe(target.maxLevel);
       });
 
       it('같은 날을 다시 평가하면 덮어쓴다 — 늦게 들어온 기록을 재평가가 흡수한다', async () => {
-        const beach = await prisma.beach.findFirstOrThrow({ where: { isActive: true } });
-        const day = parseKstDateKey(toKstDateString(new Date()));
-        const evaluate = app.get<EvaluatePredictionsUseCase>(EVALUATE_PREDICTIONS_USE_CASE);
+        const target = await pickDayWithPrediction();
 
-        await evaluate.evaluate({ from: day, to: day });
-        await evaluate.evaluate({ from: day, to: day });
+        await app
+          .get<RecordFieldObservationUseCase>(RECORD_FIELD_OBSERVATION_USE_CASE)
+          .recordObservation({
+            beachId: target.beachId,
+            observedAt: withinKstDay(target.targetDate),
+            source: 'lifeguard',
+            jellyfishPresent: false,
+            observerId: null,
+          });
+
+        const evaluate = app.get<EvaluatePredictionsUseCase>(EVALUATE_PREDICTIONS_USE_CASE);
+        await evaluate.evaluate({ from: target.targetDate, to: target.targetDate });
+        await evaluate.evaluate({ from: target.targetDate, to: target.targetDate });
 
         const rows = await prisma.predictionEvaluation.count({
-          where: { beachId: beach.id, targetDate: day },
+          where: { beachId: BigInt(target.beachId), targetDate: target.targetDate },
         });
         expect(rows).toBe(1);
       });
