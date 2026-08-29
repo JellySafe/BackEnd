@@ -33,12 +33,35 @@ const CONCURRENCY = Number(process.env.LOAD_CONCURRENCY ?? '20');
 /**
  * 실제 앱이 화면 하나를 그릴 때 부르는 조합에 가깝게 섞는다.
  * 목록이 가장 많이 불리고, 상세는 그중 일부만 눌린다.
+ *
+ * `LOAD_PATHS` 로 바꿀 수 있다(`경로:가중치` 목록). **병목을 가를 때 필요하다** —
+ * 섞어서 재면 "느리다" 까지만 알 수 있고, 어디가 느린지는 한 경로씩 따로 재야 나온다.
+ *   LOAD_PATHS=/api/health:1                       ← DB 를 타지 않는 경로(프레임워크 상한)
+ *   LOAD_PATHS=/api/public/beaches:1               ← 목록(집계 질의)
  */
-const SCENARIO: { path: string; weight: number }[] = [
+const DEFAULT_SCENARIO: { path: string; weight: number }[] = [
   { path: '/api/public/beaches', weight: 6 },
   { path: '/api/public/beaches/1/risk', weight: 3 },
   { path: '/api/health', weight: 1 },
 ];
+
+function parseScenario(raw: string | undefined): { path: string; weight: number }[] {
+  if (raw === undefined || raw.trim() === '') return DEFAULT_SCENARIO;
+
+  const parsed = raw
+    .split(',')
+    .map((entry) => {
+      const [path, weight] = entry.split(':').map((part) => part.trim());
+      const parsedWeight = Number(weight ?? '1');
+      return { path, weight: Number.isFinite(parsedWeight) && parsedWeight > 0 ? parsedWeight : 1 };
+    })
+    .filter((entry) => entry.path.startsWith('/'));
+
+  // 형식이 어긋나 전부 걸러졌으면 기본값으로 돌아간다 — 빈 시나리오로 도는 것보다 낫다.
+  return parsed.length > 0 ? parsed : DEFAULT_SCENARIO;
+}
+
+const SCENARIO = parseScenario(process.env.LOAD_PATHS);
 
 interface Sample {
   ms: number;
@@ -83,6 +106,7 @@ async function worker(deadline: number, samples: Sample[]): Promise<void> {
 async function main(): Promise<void> {
   console.log(`[load-test] 대상: ${TARGET}`);
   console.log(`[load-test] 동시 ${CONCURRENCY} / ${DURATION_S}초`);
+  console.log(`[load-test] 경로: ${SCENARIO.map((e) => `${e.path}(${e.weight})`).join(' ')}`);
 
   // 대상이 살아 있는지 먼저 본다. 죽은 서버에 30초를 쏘고 나서 알면 시간만 버린다.
   try {
