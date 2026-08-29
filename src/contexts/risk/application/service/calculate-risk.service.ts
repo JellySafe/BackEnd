@@ -2,6 +2,7 @@ import { Inject, Injectable, Logger } from '@nestjs/common';
 import { ConfigService } from '@nestjs/config';
 import { nanoid } from 'nanoid';
 import { AppConfig } from '@shared/config/app.config';
+import { ResponseCache } from '@shared/cache/response-cache';
 import { Id } from '@shared/kernel/id';
 import { RiskHorizon, compareRiskLevel } from '@shared/kernel/risk-level';
 import { DomainError, NotFoundError } from '@shared/kernel/domain-error';
@@ -74,6 +75,7 @@ export class CalculateRiskService implements CalculateRiskUseCase {
     @Inject(RISK_INPUT) private readonly riskInput: RiskInputPort,
     @Inject(RISK_PERSISTENCE) private readonly persistence: RiskPersistencePort,
     @Inject(RISK_ALERT) private readonly riskAlert: RiskAlertPort,
+    private readonly cache: ResponseCache,
   ) {
     this.config = new AppConfig(configService);
   }
@@ -157,6 +159,15 @@ export class CalculateRiskService implements CalculateRiskUseCase {
     const status: CalcStatus = failed === 0 ? 'success' : affected > 0 ? 'partial' : 'failed';
     const errorMessage = failed > 0 ? `${failed}개 해변 산출 실패` : null;
     await this.persistence.finishCalculation(calculationId, status, affected, errorMessage);
+
+    // 공개 조회 캐시를 비운다. **캐시의 신선도는 TTL 이 아니라 여기가 지킨다.**
+    // 제보 검수(ADM-009)가 부르는 단건 재산출도 이 경로를 지나므로, 시민은 검수 직후
+    // 바뀐 위험도를 바로 본다. 한 해변만 바뀌어도 전부 비우는 이유는 목록 응답이 모든
+    // 해변을 담고 있어서다(response-cache.ts).
+    //
+    // 한 건도 갱신되지 않았으면(affected === 0) 비울 이유가 없다 — 멀쩡한 캐시를 버리면
+    // 산출이 계속 실패하는 동안 DB 부하만 늘어난다.
+    if (affected > 0) this.cache.invalidateAll();
 
     return { calculationId: calculationUid, affectedBeachCount: affected, generatedAt: calculatedAt };
   }

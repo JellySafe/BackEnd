@@ -129,6 +129,23 @@ export class AppConfig {
    * 사용자 락(GET_LOCK)을 써서 인스턴스가 여럿이어도 하나만 실행되게 한다 — 머신이
    * 하나일 때도 동작이 같으므로 기본값으로 둔다(scheduling.module.ts 참고).
    */
+  /**
+   * 공개 조회 응답 캐시 TTL(초). 기본 30초. **0 이면 끈다.**
+   *
+   * 부하 측정에서 병목이 DB 왕복으로 확인돼 넣었다(docs/load-test.md) — 프레임워크는
+   * 2,453 req/s 를 내는데 집계 질의가 붙으면 804 로 떨어진다.
+   *
+   * 30초를 고른 이유: 위험도는 30분마다 재산출되므로 이 정도 지연은 원래 지연에 비해
+   * 의미가 없다. 그리고 **사건 직후는 TTL 이 아니라 무효화가 지킨다** — 제보 검수로 위험도가
+   * 즉시 재산출되면 캐시를 비우므로 시민은 바로 새 값을 본다(response-cache.ts).
+   * TTL 은 무효화를 놓친 경로의 안전망이다.
+   */
+  get publicCacheTtlSeconds(): number {
+    const raw = Number(this.config.get<string>('PUBLIC_CACHE_TTL_SECONDS') ?? '30');
+    if (!Number.isFinite(raw) || raw < 0) return 30;
+    return Math.floor(raw);
+  }
+
   get jobLockDriver(): 'mysql' | 'memory' {
     return this.config.get<string>('JOB_LOCK_DRIVER') === 'memory' ? 'memory' : 'mysql';
   }
