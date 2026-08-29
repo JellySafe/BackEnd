@@ -385,8 +385,26 @@ export class RiskInputKyselyQuery implements RiskInputPort {
   }
 
   /**
-   * 해변에 매핑된 특정 유형(marine/weather) 관측소의 최신 관측 1건.
-   * observed_at 동률(해양·기상이 같은 시각에 관측)일 때 임의 행이 뽑히지 않도록 id 로 결정적 정렬을 건다.
+   * 해변에 매핑된 특정 유형(marine/weather) 관측소의 관측 1건.
+   *
+   * ── 왜 "가장 최신" 이 아니라 "신선하면 최근접" 인가 ────────────────────────────────
+   * 예전에는 매핑된 관측소 전부에서 `ORDER BY observed_at DESC` 로 하나를 뽑았다.
+   * 그러면 **50km 떨어진 부이가 5분 더 최근에 보고했다는 이유로 가까운 관측소를 제친다.**
+   * 결과가 관측소들의 보고 타이밍에 따라 바뀌므로, 같은 해변의 관측 출처가 실행마다 달라진다.
+   *
+   * 실제로 이게 눈에 띄는 형태가 있다. 해류(유향·유속)를 주는 소스는 국립해양조사원뿐이고
+   * 기상청은 관측하지 않는다. 두 관측소가 함께 매핑된 해변은 어느 쪽이 최근에 보고했느냐에
+   * 따라 **해류가 있었다 없었다 한다** — 위험 요인 하나가 깜빡이는 셈이다.
+   *
+   * 그래서 정렬을 바꾼다.
+   *   1) 신선한 관측(하루 이내)을 먼저 본다. 그 안에서는 **대표(최근접) 관측소**가 이긴다.
+   *   2) 신선한 것이 하나도 없으면 그때만 가장 최신으로 간다(아무것도 없는 것보다 낫다).
+   *
+   * 하루를 기준으로 삼은 이유: 그보다 오래된 관측은 어차피 신뢰도가 medium 이하로 떨어진다
+   * (risk-assessment 의 staleObservationMinutes). 거기서는 거리보다 존재 여부가 중요하다.
+   *
+   * `observed_at` 동률(해양·기상이 같은 시각에 관측)일 때 임의 행이 뽑히지 않도록
+   * 마지막에 id 로 결정적 정렬을 건다.
    */
   private async findLatestObservation(
     beachId: Id,
@@ -406,6 +424,13 @@ export class RiskInputKyselyQuery implements RiskInputPort {
         'o.current_direction as currentDirection',
         'o.current_speed as currentSpeed',
       ])
+      // 1) 신선한 것(하루 이내) 먼저.
+      .orderBy(
+        sql`CASE WHEN o.observed_at >= NOW() - INTERVAL ${sql.lit(STALE_OBSERVATION_HOURS)} HOUR THEN 0 ELSE 1 END`,
+        'asc',
+      )
+      // 2) 그 안에서는 대표(최근접) 관측소가 이긴다. is_primary 는 1 또는 NULL 이다.
+      .orderBy(sql`CASE WHEN m.is_primary IS NULL THEN 1 ELSE 0 END`, 'asc')
       .orderBy('o.observed_at', 'desc')
       .orderBy('o.id', 'desc')
       .limit(1)
@@ -424,6 +449,16 @@ export class RiskInputKyselyQuery implements RiskInputPort {
       : null;
   }
 }
+
+/**
+ * 관측을 "신선하다" 고 보는 기준(시간).
+ *
+ * 이 값 이내면 **거리**로, 넘어가면 **최신성**으로 관측소를 고른다. 24시간을 쓰는 이유는
+ * 그보다 오래된 관측은 어차피 신뢰도가 medium 이하로 떨어지기 때문이다
+ * (risk-assessment.ts 의 staleObservationMinutes = 24 * 60). 두 값은 같은 뜻이므로
+ * 한쪽을 바꾸면 다른 쪽도 함께 본다.
+ */
+const STALE_OBSERVATION_HOURS = 24;
 
 /** 관측소 유형 (observation_mappings.station_type). */
 type StationType = 'marine' | 'weather';
