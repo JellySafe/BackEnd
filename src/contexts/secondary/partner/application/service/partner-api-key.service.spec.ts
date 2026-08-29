@@ -80,7 +80,12 @@ describe('PartnerApiKeyService', () => {
 
       expect(result.apiKey.startsWith(result.keyPrefix)).toBe(true);
       expect(saved[0].apiKeyHash).toBe(hashApiKey(result.apiKey));
-      expect(JSON.stringify(saved[0])).not.toContain(result.apiKey.split('_')[2]);
+      // 접두사 뒤 전부가 비밀이다. `split('_')[2]` 로 자르면 안 된다 —
+      // 비밀은 base64url 이라 `_` 를 포함할 수 있고, 그러면 조각이 셋이 아니다.
+      // 잘린 앞 조각이 짧으면 해시에 우연히 포함돼 이 단언이 간헐적으로 깨진다(#13).
+      const secret = result.apiKey.slice(`${result.keyPrefix}_`.length);
+      expect(secret).toHaveLength(43);
+      expect(JSON.stringify(saved[0])).not.toContain(secret);
     });
 
     it('분당 한도 기본값을 적용한다 (위험도는 30분마다 갱신된다)', async () => {

@@ -287,6 +287,112 @@ describe('영속성 스모크', () => {
     });
   });
 
+  describe('관측소 선택 규칙 (신선하면 최근접)', () => {
+    /**
+     * 예전에는 매핑된 관측소 전부에서 가장 **최신** 관측을 뽑았다. 그러면 멀리 있는 부이가
+     * 조금 더 최근에 보고했다는 이유로 가까운 관측소를 제친다 — 해변의 관측 출처가 실행마다
+     * 달라지고, 해류처럼 **한쪽만 주는 값**은 있었다 없었다 한다.
+     *
+     * 이건 SQL 정렬 규칙이라 단위 테스트로는 확인할 수 없다.
+     */
+    let beachId: number;
+    let beachIdBig: bigint;
+    let nearStationId: bigint;
+    let farStationId: bigint;
+
+    beforeAll(async () => {
+      const beach = await prisma.beach.findFirstOrThrow({ where: { isActive: true } });
+      beachId = Number(beach.id);
+      beachIdBig = beach.id;
+
+      // 매핑은 수집 배치(MapStationsService)가 만든다. 스모크에서는 그 배치가 돌지 않으므로
+      // **여기서 직접 만든다** — 검증 대상은 매핑을 만드는 규칙이 아니라 관측치를 고르는 규칙이다.
+      const stations = await prisma.observationStation.findMany({
+        where: { stationType: 'marine', isActive: true },
+        take: 2,
+      });
+      expect(stations.length).toBeGreaterThanOrEqual(2);
+      nearStationId = stations[0].id;
+      farStationId = stations[1].id;
+
+      await prisma.observationMapping.deleteMany({
+        where: { beachId: beachIdBig, stationType: 'marine' },
+      });
+      await prisma.observationMapping.createMany({
+        data: [
+          // 대표(최근접). is_primary 는 1 또는 NULL 이다("1 또는 NULL" 트릭).
+          { beachId: beachIdBig, stationId: nearStationId, stationType: 'marine', distanceKm: 1, isPrimary: true },
+          { beachId: beachIdBig, stationId: farStationId, stationType: 'marine', distanceKm: 50, isPrimary: null },
+        ],
+      });
+    });
+
+    /** 그 해변의 관측을 지우고 두 관측소에 하나씩 심는다. */
+    async function seedPair(nearAt: Date, farAt: Date): Promise<void> {
+      await prisma.observation.deleteMany({
+        where: { stationId: { in: [nearStationId, farStationId] } },
+      });
+      await prisma.observation.create({
+        data: {
+          stationId: nearStationId,
+          observedAt: nearAt,
+          waterTemp: 20,
+          // 가까운 관측소만 해류를 준다(실제로 국립해양조사원만 유향·유속을 관측한다).
+          currentDirection: 90,
+          currentSpeed: 1.5,
+        },
+      });
+      await prisma.observation.create({
+        data: { stationId: farStationId, observedAt: farAt, waterTemp: 25 },
+      });
+    }
+
+    it('둘 다 신선하면 먼 곳이 더 최근이어도 최근접을 쓴다', async () => {
+      const now = Date.now();
+      await seedPair(new Date(now - 60 * 60_000), new Date(now - 5 * 60_000));
+
+      const bundle = await riskInput.collectForBeach(beachId, {
+        reportWindowDays: 3,
+        nearbyWindowDays: 7,
+        recentTempDays: 3,
+        nearbyRadiusKm: 30,
+        pastSeasonWindowDays: 14,
+        pastSeasonYears: 5,
+      });
+
+      // 최근접(수온 20, 해류 있음)이 선택돼야 한다. 먼 곳이면 수온 25, 해류 null 이다.
+      expect(bundle?.latestObservation?.waterTemp).toBe(20);
+      expect(bundle?.latestObservation?.currentSpeed).not.toBeNull();
+    });
+
+    it('최근접이 낡았고 먼 곳만 신선하면 먼 곳을 쓴다 — 아무것도 없는 것보다 낫다', async () => {
+      const now = Date.now();
+      // 최근접은 이틀 전(신선 기준 24시간 초과), 먼 곳은 방금.
+      await seedPair(new Date(now - 48 * 60 * 60_000), new Date(now - 5 * 60_000));
+
+      const bundle = await riskInput.collectForBeach(beachId, {
+        reportWindowDays: 3,
+        nearbyWindowDays: 7,
+        recentTempDays: 3,
+        nearbyRadiusKm: 30,
+        pastSeasonWindowDays: 14,
+        pastSeasonYears: 5,
+      });
+
+      expect(bundle?.latestObservation?.waterTemp).toBe(25);
+    });
+
+    afterAll(async () => {
+      // 뒤 테스트가 이 해변의 관측·매핑을 전제하지 않도록 정리한다.
+      await prisma.observation.deleteMany({
+        where: { stationId: { in: [nearStationId, farStationId] } },
+      });
+      await prisma.observationMapping.deleteMany({
+        where: { beachId: beachIdBig, stationType: 'marine' },
+      });
+    });
+  });
+
   describe('운영 지표 (Kysely)', () => {
     it('집계가 돌고 노출 형식으로 렌더링된다', async () => {
       const snapshot = await app.get(MetricsKyselyQuery).collect();
