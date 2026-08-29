@@ -252,6 +252,17 @@ class EnvSchema {
   SECONDARY_ENABLED?: string;
 
   /**
+   * 공개 조회 캐시 TTL(초, 기본 30). 0 이면 끈다.
+   *
+   * 상한을 두지 않는다 — 길게 잡아도 **산출이 끝나면 비워지므로** 낡은 위험도가 남지 않는다.
+   * 음수나 숫자가 아닌 값은 기본값으로 되돌린다(AppConfig).
+   */
+  @IsOptional()
+  @IsInt()
+  @Min(0)
+  PUBLIC_CACHE_TTL_SECONDS?: number;
+
+  /**
    * 배치 락 구현. mysql(기본) | memory.
    *
    * ⚠️ 오타를 조용히 어느 한쪽으로 떨어뜨리지 않는다. `memroy` 같은 오타가 mysql 로 읽히면

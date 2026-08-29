@@ -8,6 +8,7 @@ import { RequestIdMiddleware } from './shared/http/request-id.middleware';
 import { buildThrottlers } from './shared/http/rate-limit.config';
 import { PrismaModule } from './shared/persistence/prisma/prisma.module';
 import { KyselyModule } from './shared/persistence/kysely/kysely.module';
+import { CacheModule } from './shared/cache/cache.module';
 import { AuthModule } from './shared/auth/auth.module';
 import { HealthModule } from './shared/health/health.module';
 import { ObservabilityModule } from './shared/observability/observability.module';
@@ -62,6 +63,9 @@ import { SecondaryModule } from './contexts/secondary/secondary.module';
     }),
     PrismaModule,
     KyselyModule,
+    // 공개 조회 캐시. 부하 측정에서 병목이 DB 왕복으로 확인돼 넣었다(docs/load-test.md).
+    // 신선도는 TTL 이 아니라 산출 후 무효화가 지킨다.
+    CacheModule,
     AuthModule,
     HealthModule,
     // 운영 지표(GET /system/metrics). 배치가 멎었는데 API 는 멀쩡한 상태를 밖에서 볼 수 있게 한다.
