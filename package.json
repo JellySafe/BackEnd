@@ -34,9 +34,6 @@
     "load:test": "ts-node -r tsconfig-paths/register scripts/load-test.ts",
     "sql:check-constraints": "ts-node -r tsconfig-paths/register scripts/generate-check-constraints.ts"
   },
-  "prisma": {
-    "seed": "ts-node -r tsconfig-paths/register prisma/seed.ts"
-  },
   "dependencies": {
     "@aws-sdk/client-s3": "^3.1114.0",
     "@aws-sdk/s3-request-presigner": "^3.1114.0",
