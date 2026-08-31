@@ -22,6 +22,10 @@ import {
 } from '@contexts/risk/application/port/in/risk-use-cases';
 import { CONTRACTS } from '../prisma/value-contracts';
 import {
+  BEACH_QUERY,
+  BeachQueryPort,
+} from '@contexts/beach/application/port/out/beach-query.port';
+import {
   PURGED_IMAGE_MARKER,
   REPORT_PURGE,
   ReportPurgePort,
@@ -80,6 +84,7 @@ describe('영속성 스모크', () => {
   let db: KyselyService;
   let riskQuery: RiskQueryPort;
   let riskInput: RiskInputPort;
+  let beachQuery: BeachQueryPort;
   let calculateRisk: CalculateRiskUseCase;
 
   beforeAll(async () => {
@@ -101,6 +106,7 @@ describe('영속성 스모크', () => {
     db = app.get(KyselyService);
     riskQuery = app.get<RiskQueryPort>(RISK_QUERY);
     riskInput = app.get<RiskInputPort>(RISK_INPUT);
+    beachQuery = app.get<BeachQueryPort>(BEACH_QUERY);
     calculateRisk = app.get<CalculateRiskUseCase>(CALCULATE_RISK_USE_CASE);
 
     // 조회를 검증하려면 볼 것이 있어야 한다. 전 해변 1회 산출로 risk_scores 를 채운다.
@@ -240,6 +246,110 @@ describe('영속성 스모크', () => {
 
     it('없는 해변은 null 이다', async () => {
       expect(await riskQuery.findBeach(999_999_999)).toBeNull();
+    });
+  });
+
+  /**
+   * 해변 목록 조회 (USR-001).
+   *
+   * 시민이 **가장 많이 부르는 경로**이고, 캐시를 씌운 바로 그 질의다. 그런데 커버리지가
+   * 0% 였다 — 컨트롤러는 얇은 위임이라 단위 테스트 가치가 낮지만, 이 SQL 은 위험도 조인과
+   * 필터가 얽혀 있어 **DB 없이는 검증할 수 없다.**
+   */
+  describe('해변 목록 조회 (Kysely)', () => {
+    it('활성 해변을 priority 순으로 돌려준다', async () => {
+      const rows = await beachQuery.listPublic({});
+
+      expect(rows.length).toBeGreaterThan(0);
+      const priorities = rows.map((r) => r.priority);
+      expect(priorities).toEqual([...priorities].sort((a, b) => a - b));
+
+      const activeCount = await prisma.beach.count({ where: { isActive: true } });
+      expect(rows).toHaveLength(activeCount);
+    });
+
+    it('비활성 해변은 빠진다 — 운영에서 내린 해변이 시민 화면에 남으면 안 된다', async () => {
+      const target = await prisma.beach.findFirstOrThrow({ where: { isActive: true } });
+      await prisma.beach.update({ where: { id: target.id }, data: { isActive: false } });
+
+      try {
+        const rows = await beachQuery.listPublic({});
+        expect(rows.some((r) => Number(r.beachId) === Number(target.id))).toBe(false);
+      } finally {
+        await prisma.beach.update({ where: { id: target.id }, data: { isActive: true } });
+      }
+    });
+
+    it('현재 위험 단계를 조인해 준다 (horizon=now, is_latest)', async () => {
+      const rows = await beachQuery.listPublic({});
+      const withRisk = rows.filter((r) => r.currentRiskLevel !== null);
+
+      expect(withRisk.length).toBeGreaterThan(0);
+      for (const row of withRisk) {
+        expect(['safe', 'caution', 'danger', 'severe']).toContain(row.currentRiskLevel);
+      }
+    });
+
+    it('산출 이력이 없는 해변은 위험 단계가 null 이다 — 0 이나 safe 로 채우지 않는다', async () => {
+      // "모른다" 를 "안전하다" 로 채우는 것이 이 서비스에서 가장 나쁜 응답이다.
+      const fresh = await prisma.beach.create({
+        data: {
+          name: `스모크-신규해변-${Date.now()}`,
+          region: '제주시',
+          lat: 33.9,
+          lng: 126.9,
+          priority: 99,
+          isActive: true,
+        },
+      });
+
+      try {
+        const rows = await beachQuery.listPublic({});
+        const mine = rows.find((r) => Number(r.beachId) === Number(fresh.id));
+        expect(mine).toBeDefined();
+        expect(mine!.currentRiskLevel).toBeNull();
+      } finally {
+        await prisma.beach.delete({ where: { id: fresh.id } });
+      }
+    });
+
+    it('지역 필터가 실제로 걸린다', async () => {
+      const all = await beachQuery.listPublic({});
+      const region = all[0].region;
+
+      const filtered = await beachQuery.listPublic({ region });
+      expect(filtered.length).toBeGreaterThan(0);
+      expect(filtered.every((r) => r.region === region)).toBe(true);
+      expect(filtered.length).toBeLessThanOrEqual(all.length);
+    });
+
+    it('이름 검색이 부분 일치로 걸린다', async () => {
+      const all = await beachQuery.listPublic({});
+      // 이름 가운데 두 글자로 찾아도 잡혀야 한다(앞부분 일치만 되면 검색이 쓸모없다).
+      const target = all[0].name;
+      const middle = target.slice(1, 3);
+
+      const found = await beachQuery.listPublic({ keyword: middle });
+      expect(found.some((r) => r.name === target)).toBe(true);
+    });
+
+    it('없는 지역으로 거르면 빈 배열이다 — 조건이 무시되고 전체가 나오면 안 된다', async () => {
+      expect(await beachQuery.listPublic({ region: '존재하지-않는-지역' })).toEqual([]);
+    });
+
+    it('검색어에 와일드카드가 들어가도 전체가 새어 나오지 않는다', async () => {
+      // LIKE 패턴을 문자 그대로 다루지 않으면 `%` 하나로 목록이 통째로 노출된다.
+      // (지금은 필터가 좁혀지기만 하면 되고, 전체와 같아지지 않는 것이 핵심이다)
+      const all = await beachQuery.listPublic({});
+      const wild = await beachQuery.listPublic({ keyword: '존재하지않는이름%' });
+      expect(wild.length).toBeLessThan(all.length);
+    });
+
+    it('좌표 조회는 비활성 해변까지 준다 — 활성 판단은 부르는 쪽 도메인이 한다', async () => {
+      const locations = await beachQuery.listLocations();
+      const total = await prisma.beach.count();
+      expect(locations).toHaveLength(total);
+      expect(locations.every((l) => typeof l.isActive === 'boolean')).toBe(true);
     });
   });
 
