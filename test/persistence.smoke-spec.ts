@@ -22,6 +22,27 @@ import {
 } from '@contexts/risk/application/port/in/risk-use-cases';
 import { CONTRACTS } from '../prisma/value-contracts';
 import {
+  BEACH_QUERY,
+  BeachQueryPort,
+} from '@contexts/beach/application/port/out/beach-query.port';
+import {
+  PURGED_IMAGE_MARKER,
+  REPORT_PURGE,
+  ReportPurgePort,
+} from '@contexts/report/application/port/out/report-purge.port';
+import {
+  RISK_HISTORY_PURGE,
+  RiskHistoryPurgePort,
+} from '@contexts/risk/application/port/out/risk-history-purge.port';
+import {
+  NOTIFICATION_PURGE,
+  NotificationPurgePort,
+} from '@contexts/notification/application/port/out/notification-purge.port';
+import {
+  OBSERVATION_PURGE,
+  ObservationPurgePort,
+} from '@contexts/observation/application/port/out/observation-purge.port';
+import {
   DailyPredictionRow,
   GROUNDTRUTH_QUERY,
   GroundtruthQueryPort,
@@ -63,6 +84,7 @@ describe('영속성 스모크', () => {
   let db: KyselyService;
   let riskQuery: RiskQueryPort;
   let riskInput: RiskInputPort;
+  let beachQuery: BeachQueryPort;
   let calculateRisk: CalculateRiskUseCase;
 
   beforeAll(async () => {
@@ -84,6 +106,7 @@ describe('영속성 스모크', () => {
     db = app.get(KyselyService);
     riskQuery = app.get<RiskQueryPort>(RISK_QUERY);
     riskInput = app.get<RiskInputPort>(RISK_INPUT);
+    beachQuery = app.get<BeachQueryPort>(BEACH_QUERY);
     calculateRisk = app.get<CalculateRiskUseCase>(CALCULATE_RISK_USE_CASE);
 
     // 조회를 검증하려면 볼 것이 있어야 한다. 전 해변 1회 산출로 risk_scores 를 채운다.
@@ -223,6 +246,110 @@ describe('영속성 스모크', () => {
 
     it('없는 해변은 null 이다', async () => {
       expect(await riskQuery.findBeach(999_999_999)).toBeNull();
+    });
+  });
+
+  /**
+   * 해변 목록 조회 (USR-001).
+   *
+   * 시민이 **가장 많이 부르는 경로**이고, 캐시를 씌운 바로 그 질의다. 그런데 커버리지가
+   * 0% 였다 — 컨트롤러는 얇은 위임이라 단위 테스트 가치가 낮지만, 이 SQL 은 위험도 조인과
+   * 필터가 얽혀 있어 **DB 없이는 검증할 수 없다.**
+   */
+  describe('해변 목록 조회 (Kysely)', () => {
+    it('활성 해변을 priority 순으로 돌려준다', async () => {
+      const rows = await beachQuery.listPublic({});
+
+      expect(rows.length).toBeGreaterThan(0);
+      const priorities = rows.map((r) => r.priority);
+      expect(priorities).toEqual([...priorities].sort((a, b) => a - b));
+
+      const activeCount = await prisma.beach.count({ where: { isActive: true } });
+      expect(rows).toHaveLength(activeCount);
+    });
+
+    it('비활성 해변은 빠진다 — 운영에서 내린 해변이 시민 화면에 남으면 안 된다', async () => {
+      const target = await prisma.beach.findFirstOrThrow({ where: { isActive: true } });
+      await prisma.beach.update({ where: { id: target.id }, data: { isActive: false } });
+
+      try {
+        const rows = await beachQuery.listPublic({});
+        expect(rows.some((r) => Number(r.beachId) === Number(target.id))).toBe(false);
+      } finally {
+        await prisma.beach.update({ where: { id: target.id }, data: { isActive: true } });
+      }
+    });
+
+    it('현재 위험 단계를 조인해 준다 (horizon=now, is_latest)', async () => {
+      const rows = await beachQuery.listPublic({});
+      const withRisk = rows.filter((r) => r.currentRiskLevel !== null);
+
+      expect(withRisk.length).toBeGreaterThan(0);
+      for (const row of withRisk) {
+        expect(['safe', 'caution', 'danger', 'severe']).toContain(row.currentRiskLevel);
+      }
+    });
+
+    it('산출 이력이 없는 해변은 위험 단계가 null 이다 — 0 이나 safe 로 채우지 않는다', async () => {
+      // "모른다" 를 "안전하다" 로 채우는 것이 이 서비스에서 가장 나쁜 응답이다.
+      const fresh = await prisma.beach.create({
+        data: {
+          name: `스모크-신규해변-${Date.now()}`,
+          region: '제주시',
+          lat: 33.9,
+          lng: 126.9,
+          priority: 99,
+          isActive: true,
+        },
+      });
+
+      try {
+        const rows = await beachQuery.listPublic({});
+        const mine = rows.find((r) => Number(r.beachId) === Number(fresh.id));
+        expect(mine).toBeDefined();
+        expect(mine!.currentRiskLevel).toBeNull();
+      } finally {
+        await prisma.beach.delete({ where: { id: fresh.id } });
+      }
+    });
+
+    it('지역 필터가 실제로 걸린다', async () => {
+      const all = await beachQuery.listPublic({});
+      const region = all[0].region;
+
+      const filtered = await beachQuery.listPublic({ region });
+      expect(filtered.length).toBeGreaterThan(0);
+      expect(filtered.every((r) => r.region === region)).toBe(true);
+      expect(filtered.length).toBeLessThanOrEqual(all.length);
+    });
+
+    it('이름 검색이 부분 일치로 걸린다', async () => {
+      const all = await beachQuery.listPublic({});
+      // 이름 가운데 두 글자로 찾아도 잡혀야 한다(앞부분 일치만 되면 검색이 쓸모없다).
+      const target = all[0].name;
+      const middle = target.slice(1, 3);
+
+      const found = await beachQuery.listPublic({ keyword: middle });
+      expect(found.some((r) => r.name === target)).toBe(true);
+    });
+
+    it('없는 지역으로 거르면 빈 배열이다 — 조건이 무시되고 전체가 나오면 안 된다', async () => {
+      expect(await beachQuery.listPublic({ region: '존재하지-않는-지역' })).toEqual([]);
+    });
+
+    it('검색어에 와일드카드가 들어가도 전체가 새어 나오지 않는다', async () => {
+      // LIKE 패턴을 문자 그대로 다루지 않으면 `%` 하나로 목록이 통째로 노출된다.
+      // (지금은 필터가 좁혀지기만 하면 되고, 전체와 같아지지 않는 것이 핵심이다)
+      const all = await beachQuery.listPublic({});
+      const wild = await beachQuery.listPublic({ keyword: '존재하지않는이름%' });
+      expect(wild.length).toBeLessThan(all.length);
+    });
+
+    it('좌표 조회는 비활성 해변까지 준다 — 활성 판단은 부르는 쪽 도메인이 한다', async () => {
+      const locations = await beachQuery.listLocations();
+      const total = await prisma.beach.count();
+      expect(locations).toHaveLength(total);
+      expect(locations.every((l) => typeof l.isActive === 'boolean')).toBe(true);
     });
   });
 
@@ -673,6 +800,286 @@ describe('영속성 스모크', () => {
           where: { beachId: BigInt(target.beachId), targetDate: target.targetDate },
         });
         expect(rows).toBe(1);
+      });
+    });
+  });
+
+  /**
+   * 파기 배치.
+   *
+   * ── 왜 여기서 보는가 ──────────────────────────────────────────────────────────────
+   * 파기는 **되돌릴 수 없다.** 다른 버그는 고치면 되지만 지워진 제보 사진과 관측 이력은
+   * 돌아오지 않는다. 그런데 파기 리포지토리에는 테스트가 하나도 없었다.
+   *
+   * 그리고 실제로 사고가 났던 자리다 — 다중 테이블 DELETE 제약(#28). 전부 Prisma 원시
+   * SQL 이라 **DB 없이는 원리적으로 검증할 수 없다.**
+   *
+   * 조용히 실패하는 방향이 둘이라 양쪽을 다 본다.
+   *   · 안 지워야 할 것을 지운다 → 화면에 표시할 값이 사라진다(가장 나쁘다)
+   *   · 지워야 할 것을 안 지운다 → 보관 기간이 늘어나 개인정보 파기 의무를 어긴다
+   */
+  describe('파기 배치', () => {
+    const HOUR = 60 * 60 * 1000;
+    const DAY = 24 * HOUR;
+
+    describe('위험도 산출 이력', () => {
+      /**
+       * 산출 1건을 만들고 점수(is_latest 여부 지정)와 요인을 붙인다.
+       * @returns 산출 id
+       */
+      async function makeCalculation(options: {
+        startedAt: Date;
+        isLatest: boolean;
+        beachId: bigint;
+        horizon: string;
+      }): Promise<bigint> {
+        const calc = await prisma.riskCalculation.create({
+          data: {
+            calculationUid: `purge-${Math.round(options.startedAt.getTime())}-${options.horizon}-${options.isLatest ? 'L' : 'H'}`,
+            triggerType: 'manual',
+            ruleVersion: 'v3',
+            calcStatus: 'success',
+            startedAt: options.startedAt,
+            finishedAt: options.startedAt,
+          },
+        });
+        const score = await prisma.riskScore.create({
+          data: {
+            calculationId: calc.id,
+            beachId: options.beachId,
+            horizon: options.horizon,
+            riskScore: 10,
+            riskLevel: 'safe',
+            dataConfidence: 'medium',
+            ruleVersion: 'v3',
+            // "1 또는 NULL" 트릭 — 최신본에만 1 이 들어간다.
+            isLatest: options.isLatest ? true : null,
+            generatedAt: options.startedAt,
+          },
+        });
+        await prisma.riskFactor.create({
+          data: {
+            riskScoreId: score.id,
+            factorCode: 'TEMP_UP',
+            factorName: '수온 상승',
+            scoreDelta: 10,
+            displayOrder: 0,
+          },
+        });
+        return calc.id;
+      }
+
+      it('현재 값(is_latest)이 매달린 산출은 오래돼도 지우지 않는다', async () => {
+        // 이걸 지우면 CASCADE 로 risk_scores 까지 날아가고, 오래 재산출되지 않은 해변은
+        // **화면에 보여줄 위험도가 사라진다.** 파기에서 가장 나쁜 실패다.
+        const beach = await prisma.beach.findFirstOrThrow({ where: { isActive: true } });
+        const old = new Date(Date.now() - 400 * DAY);
+
+        const keepId = await makeCalculation({
+          startedAt: old,
+          isLatest: true,
+          beachId: beach.id,
+          // uk_risk_scores_latest(beach_id, horizon, is_latest) 때문에 (해변, 지평)당 최신본은
+          // 하나뿐이다. 산출기는 now/24h/72h 만 만들므로(HORIZONS) 계약에 있지만 쓰이지 않는
+          // '6h' 를 쓴다 — 제약과 부딪히지 않으면서 같은 규칙을 검증할 수 있다.
+          horizon: '6h',
+        });
+
+        const purge = app.get<RiskHistoryPurgePort>(RISK_HISTORY_PURGE);
+        await purge.purgeOlderThan(new Date(Date.now() - 90 * DAY), 50);
+
+        expect(await prisma.riskCalculation.findUnique({ where: { id: keepId } })).not.toBeNull();
+      });
+
+      it('오래된 이력은 지우고, 점수·요인도 함께 사라진다(CASCADE)', async () => {
+        const beach = await prisma.beach.findFirstOrThrow({ where: { isActive: true } });
+        const old = new Date(Date.now() - 400 * DAY);
+
+        const dropId = await makeCalculation({
+          startedAt: old,
+          isLatest: false,
+          beachId: beach.id,
+          horizon: '24h',
+        });
+        const scoresBefore = await prisma.riskScore.count({ where: { calculationId: dropId } });
+        expect(scoresBefore).toBe(1);
+
+        const purge = app.get<RiskHistoryPurgePort>(RISK_HISTORY_PURGE);
+        const deleted = await purge.purgeOlderThan(new Date(Date.now() - 90 * DAY), 50);
+
+        expect(deleted).toBeGreaterThan(0);
+        expect(await prisma.riskCalculation.findUnique({ where: { id: dropId } })).toBeNull();
+        expect(await prisma.riskScore.count({ where: { calculationId: dropId } })).toBe(0);
+      });
+
+      it('보관 기간 안의 이력은 건드리지 않는다', async () => {
+        const beach = await prisma.beach.findFirstOrThrow({ where: { isActive: true } });
+        const recent = new Date(Date.now() - 3 * DAY);
+
+        const keepId = await makeCalculation({
+          startedAt: recent,
+          isLatest: false,
+          beachId: beach.id,
+          horizon: '6h', // is_latest 가 NULL 이면 유니크 제약에 걸리지 않는다
+        });
+
+        const purge = app.get<RiskHistoryPurgePort>(RISK_HISTORY_PURGE);
+        await purge.purgeOlderThan(new Date(Date.now() - 90 * DAY), 50);
+
+        expect(await prisma.riskCalculation.findUnique({ where: { id: keepId } })).not.toBeNull();
+      });
+
+      it('배치 크기보다 많아도 끝까지 지운다 — 한 번에 한 배치만 지우면 이력이 계속 쌓인다', async () => {
+        const beach = await prisma.beach.findFirstOrThrow({ where: { isActive: true } });
+        const old = new Date(Date.now() - 500 * DAY);
+
+        const ids: bigint[] = [];
+        for (let i = 0; i < 5; i += 1) {
+          ids.push(
+            await makeCalculation({
+              startedAt: new Date(old.getTime() + i * 1000),
+              isLatest: false,
+              beachId: beach.id,
+              horizon: `24h`,
+            }),
+          );
+        }
+
+        const purge = app.get<RiskHistoryPurgePort>(RISK_HISTORY_PURGE);
+        // 배치 크기 2 — 세 번 이상 돌아야 다 지워진다.
+        await purge.purgeOlderThan(new Date(Date.now() - 90 * DAY), 2);
+
+        const left = await prisma.riskCalculation.count({ where: { id: { in: ids } } });
+        expect(left).toBe(0);
+      });
+    });
+
+    describe('제보 보관정책 (PRIV-003)', () => {
+      async function makeReport(purgeScheduledAt: Date, imageUrl: string) {
+        const beach = await prisma.beach.findFirstOrThrow({ where: { isActive: true } });
+        return prisma.jellyfishReport.create({
+          data: {
+            beachId: beach.id,
+            reportType: 'general',
+            status: 'received',
+            occurredAt: new Date(),
+            lat: 33.5,
+            lng: 126.5,
+            imageUrl,
+            purgeScheduledAt,
+          },
+        });
+      }
+
+      it('기한이 지난 제보의 사진·좌표를 마스킹하고, 마스킹 전 URL 을 돌려준다', async () => {
+        // URL 을 돌려주는 이유가 중요하다 — 마스킹하면 그 값을 다시는 알 수 없으므로,
+        // 호출자가 **파일까지** 지우려면 지우기 전에 받아야 한다.
+        const report = await makeReport(new Date(Date.now() - HOUR), '/uploads/purge-me.jpg');
+
+        const purge = app.get<ReportPurgePort>(REPORT_PURGE);
+        const targets = await purge.purgeExpired(new Date());
+
+        const mine = targets.find((t) => Number(t.reportId) === Number(report.id));
+        expect(mine).toBeDefined();
+        expect(mine!.imageUrl).toBe('/uploads/purge-me.jpg');
+
+        const after = await prisma.jellyfishReport.findUniqueOrThrow({ where: { id: report.id } });
+        expect(after.imageUrl).toBe(PURGED_IMAGE_MARKER);
+        expect(after.lat).toBeNull();
+        expect(after.lng).toBeNull();
+      });
+
+      it('기한이 아직인 제보는 건드리지 않는다 — 검수 전에 사진이 사라지면 안 된다', async () => {
+        const report = await makeReport(new Date(Date.now() + 30 * DAY), '/uploads/keep.jpg');
+
+        const purge = app.get<ReportPurgePort>(REPORT_PURGE);
+        const targets = await purge.purgeExpired(new Date());
+
+        expect(targets.some((t) => Number(t.reportId) === Number(report.id))).toBe(false);
+
+        const after = await prisma.jellyfishReport.findUniqueOrThrow({ where: { id: report.id } });
+        expect(after.imageUrl).toBe('/uploads/keep.jpg');
+        expect(after.lat).not.toBeNull();
+      });
+
+      it('이미 파기된 제보를 다시 잡지 않는다 — 매번 같은 건을 파일 삭제 대상으로 올리면 안 된다', async () => {
+        await makeReport(new Date(Date.now() - HOUR), '/uploads/once.jpg');
+
+        const purge = app.get<ReportPurgePort>(REPORT_PURGE);
+        const first = await purge.purgeExpired(new Date());
+        const second = await purge.purgeExpired(new Date());
+
+        expect(first.length).toBeGreaterThan(0);
+        expect(second.length).toBe(0);
+      });
+    });
+
+    describe('알림', () => {
+      async function makeNotification(createdAt: Date, cooldownUntil: Date | null) {
+        const beach = await prisma.beach.findFirstOrThrow({ where: { isActive: true } });
+        return prisma.notification.create({
+          data: {
+            targetType: 'public',
+            beachId: beach.id,
+            eventType: 'level_up',
+            title: '파기 테스트',
+            message: '파기 테스트',
+            createdAt,
+            cooldownUntil,
+          },
+        });
+      }
+
+      it('쿨다운이 아직 남아 있으면 오래돼도 남긴다 — 지우면 중복 방지가 조용히 풀린다', async () => {
+        const kept = await makeNotification(
+          new Date(Date.now() - 400 * DAY),
+          new Date(Date.now() + HOUR), // 아직 미래
+        );
+
+        const purge = app.get<NotificationPurgePort>(NOTIFICATION_PURGE);
+        await purge.purgeOlderThan(new Date(Date.now() - 90 * DAY), new Date(), 100);
+
+        expect(await prisma.notification.findUnique({ where: { id: kept.id } })).not.toBeNull();
+      });
+
+      it('쿨다운이 끝난 오래된 알림은 지운다', async () => {
+        const dropped = await makeNotification(
+          new Date(Date.now() - 400 * DAY),
+          new Date(Date.now() - 10 * DAY), // 이미 지났다
+        );
+
+        const purge = app.get<NotificationPurgePort>(NOTIFICATION_PURGE);
+        await purge.purgeOlderThan(new Date(Date.now() - 90 * DAY), new Date(), 100);
+
+        expect(await prisma.notification.findUnique({ where: { id: dropped.id } })).toBeNull();
+      });
+    });
+
+    describe('관측', () => {
+      it('오래된 관측만 지운다', async () => {
+        const station = await prisma.observationStation.findFirstOrThrow();
+        const old = await prisma.observation.create({
+          data: {
+            stationId: station.id,
+            observedAt: new Date(Date.now() - 400 * DAY),
+            waterTemp: 20,
+          },
+        });
+        const recent = await prisma.observation.create({
+          data: {
+            stationId: station.id,
+            observedAt: new Date(Date.now() - 2 * DAY),
+            waterTemp: 21,
+          },
+        });
+
+        const purge = app.get<ObservationPurgePort>(OBSERVATION_PURGE);
+        await purge.purgeOlderThan(new Date(Date.now() - 90 * DAY), 100);
+
+        expect(await prisma.observation.findUnique({ where: { id: old.id } })).toBeNull();
+        expect(await prisma.observation.findUnique({ where: { id: recent.id } })).not.toBeNull();
+
+        await prisma.observation.deleteMany({ where: { id: recent.id } });
       });
     });
   });

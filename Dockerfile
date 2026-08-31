@@ -8,6 +8,11 @@
 #    (Alpine 을 쓰면 musl 타깃을 schema.prisma binaryTargets 에 추가해야 하므로 slim 채택)
 # =====================================================================================
 
+# ⚠️ Node 22.12 이상이 필요하다(package.json engines).
+#    Kysely 0.29 는 **ESM 전용**이고 이 앱은 CommonJS 로 빌드된다. CJS 에서 ESM 을 require 하는
+#    것은 Node 22.12 부터 가능하다. 그보다 낮은 22.x 를 고정하면 기동하자마자 ERR_REQUIRE_ESM 이다.
+#    `node:22-slim` 은 22.x 최신을 가리키므로 지금은 안전하지만, 버전을 고정할 때 주의한다.
+
 # ---- builder ----
 FROM node:22-slim AS builder
 WORKDIR /app
