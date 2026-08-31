@@ -1,12 +1,21 @@
 {
-  "moduleFileExtensions": ["js", "json", "ts"],
+  "moduleFileExtensions": [
+    "js",
+    "json",
+    "ts"
+  ],
   "rootDir": ".",
   "testEnvironment": "node",
   "testRegex": ".smoke-spec\\.ts$",
-  "setupFiles": ["<rootDir>/smoke-env.ts"],
+  "setupFiles": [
+    "<rootDir>/smoke-env.ts"
+  ],
   "transform": {
     "^.+\\.(t|j)s$": "ts-jest"
   },
+  "transformIgnorePatterns": [
+    "/node_modules/(?!(kysely)/)"
+  ],
   "moduleNameMapper": {
     "^@shared/(.*)$": "<rootDir>/../src/shared/$1",
     "^@contexts/(.*)$": "<rootDir>/../src/contexts/$1"

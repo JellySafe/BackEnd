@@ -1,6 +1,6 @@
 import { Injectable, Logger, OnModuleDestroy } from '@nestjs/common';
 import { ConfigService } from '@nestjs/config';
-import { Kysely, MysqlDialect, MysqlPool } from 'kysely';
+import { Kysely, MysqlDialect } from 'kysely';
 import { createPool, Pool } from 'mysql2';
 import type { DB } from './database.types';
 
@@ -35,9 +35,9 @@ export class KyselyService extends Kysely<DB> implements OnModuleDestroy {
       dateStrings: false,
       timezone: 'Z',
     });
-    // mysql2 의 Pool 은 Kysely MysqlPool 과 런타임 호환되지만 타입 정의가 미묘하게 달라
-    // 콜백 시그니처에서 불일치가 난다. 구조적으로 동일하므로 캐스팅한다.
-    super({ dialect: new MysqlDialect({ pool: pool as unknown as MysqlPool }) });
+    // Kysely 0.29 부터 mysql2 의 Pool 타입이 그대로 맞는다(예전에는 콜백 시그니처가 미묘하게
+    // 달라 캐스팅이 필요했다). 캐스팅을 남겨 두면 나중에 진짜 불일치가 생겨도 조용히 통과한다.
+    super({ dialect: new MysqlDialect({ pool }) });
     this.pool = pool;
     KyselyService.logger.log(`Kysely 커넥션 풀 준비됨 (limit=${poolLimit})`);
   }
