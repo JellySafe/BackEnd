@@ -148,6 +148,32 @@ describe('환경 변수 검증', () => {
     });
   });
 
+
+  describe('RATE_LIMIT_DRIVER', () => {
+    it('미지정은 통과한다 (기본 memory)', () => {
+      expect(() => validateEnv({ ...valid })).not.toThrow();
+    });
+
+    it.each(['memory', 'redis'])('%s 는 통과한다', (driver) => {
+      const extra = driver === 'redis' ? { REDIS_URL: 'redis://localhost:6379' } : {};
+      expect(() => validateEnv({ ...valid, RATE_LIMIT_DRIVER: driver, ...extra })).not.toThrow();
+    });
+
+    it('오타는 기동을 막는다 — 켰다고 믿는데 memory 로 돌면 머신 수만큼 한도가 늘어난다', () => {
+      expect(() => validateEnv({ ...valid, RATE_LIMIT_DRIVER: 'Redis' })).toThrow(
+        /RATE_LIMIT_DRIVER/,
+      );
+    });
+
+    it('redis 인데 REDIS_URL 이 비면 기동을 막는다 — 리밋이 사실상 없는 상태가 된다', () => {
+      expect(() => validateEnv({ ...valid, RATE_LIMIT_DRIVER: 'redis' })).toThrow(/REDIS_URL/);
+    });
+
+    it('memory 면 REDIS_URL 이 없어도 된다', () => {
+      expect(() => validateEnv({ ...valid, RATE_LIMIT_DRIVER: 'memory' })).not.toThrow();
+    });
+  });
+
   it('검증에 통과하면 입력을 그대로 돌려준다(값을 변형하지 않는다)', () => {
     const input = { ...valid, API_PREFIX: 'api' };
     expect(validateEnv({ ...input })).toEqual(input);

@@ -146,6 +146,26 @@ export class AppConfig {
     return Math.floor(raw);
   }
 
+  /**
+   * 레이트 리밋 카운터 저장소. `memory`(기본) | `redis`.
+   *
+   * 기본이 memory 인 이유는 배치 락(JOB_LOCK_DRIVER)과 정반대다. 배치 락은 **머신이 하나여도
+   * 동작이 같아서** 맞는 쪽을 기본으로 둘 수 있었지만, 레이트 리밋은 redis 를 기본으로 두면
+   * **Redis 가 없는 환경에서 아무것도 못 뜬다.** 지금은 단일 머신이고 Redis 가 없으므로
+   * 기본은 memory 이고, 머신을 늘릴 때 함께 켠다.
+   *
+   * ⚠️ memory 인 채로 머신을 늘리면 **실효 한도가 머신 수만큼 늘어난다**(조용히).
+   */
+  get rateLimitDriver(): 'memory' | 'redis' {
+    return this.config.get<string>('RATE_LIMIT_DRIVER') === 'redis' ? 'redis' : 'memory';
+  }
+
+  /** 레이트 리밋용 Redis 접속 URL. `RATE_LIMIT_DRIVER=redis` 일 때만 쓴다. */
+  get redisUrl(): string | null {
+    const raw = (this.config.get<string>('REDIS_URL') ?? '').trim();
+    return raw === '' ? null : raw;
+  }
+
   get jobLockDriver(): 'mysql' | 'memory' {
     return this.config.get<string>('JOB_LOCK_DRIVER') === 'memory' ? 'memory' : 'mysql';
   }
