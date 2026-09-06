@@ -242,6 +242,20 @@ class EnvSchema {
   SMS_MIN_RISK_LEVEL?: string;
 
   /**
+   * 레이트 리밋 저장소. memory(기본) | redis.
+   *
+   * 오타를 조용히 memory 로 떨어뜨리지 않는다 — `redis` 로 켰다고 믿는데 memory 로 돌면
+   * 머신이 여럿일 때 실효 한도가 머신 수만큼 늘어난 채로 운영된다.
+   */
+  @IsOptional()
+  @IsIn(['memory', 'redis'], { message: 'RATE_LIMIT_DRIVER 는 memory | redis 중 하나여야 합니다.' })
+  RATE_LIMIT_DRIVER?: string;
+
+  @IsOptional()
+  @IsString()
+  REDIS_URL?: string;
+
+  /**
    * 2차 기능(EX-001~004) 활성 여부. 기본 true.
    *
    * 오타를 조용히 한쪽으로 떨어뜨리지 않는다 — `SECONDARY_ENABLED=fasle` 로 적고 껐다고
@@ -362,9 +376,26 @@ function checkAccessTokenLifetime(config: Record<string, unknown>): string | nul
  * 한 변수만 보고는 판정할 수 없는 규칙들(운영 여부에 따라 달라지는 것들).
  * class-validator 데코레이터로는 표현이 어색해 함수로 분리했다.
  */
+/**
+ * `RATE_LIMIT_DRIVER=redis` 인데 접속 URL 이 없으면 기동을 막는다.
+ *
+ * 통과시키면 어느 쪽으로 가도 나쁘다 — 조용히 memory 로 떨어지면 켰다고 믿는데 안 켜진
+ * 것이고, 빈 URL 로 접속을 시도하면 모든 요청이 fail-open 경로를 타 리밋이 사실상 없다.
+ * 둘 다 "켜 뒀다" 는 믿음과 어긋나므로 배포 전에 잡는다.
+ */
+function checkRateLimitStorage(config: Record<string, unknown>): string | null {
+  if (readString(config, 'RATE_LIMIT_DRIVER').trim() !== 'redis') return null;
+  if (readString(config, 'REDIS_URL').trim() !== '') return null;
+  return (
+    'RATE_LIMIT_DRIVER=redis 인데 REDIS_URL 이 비어 있습니다. ' +
+    '접속 정보 없이는 리밋이 적용되지 않습니다(모든 요청이 통과합니다).'
+  );
+}
+
 const CROSS_FIELD_CHECKS: ((config: Record<string, unknown>) => string | null)[] = [
   checkSecretNotPublic,
   checkAccessTokenLifetime,
+  checkRateLimitStorage,
 ];
 
 export function validateEnv(config: Record<string, unknown>): Record<string, unknown> {

@@ -6,6 +6,7 @@ import { ThrottlerModule } from '@nestjs/throttler';
 import { ApiThrottlerGuard } from './shared/http/api-throttler.guard';
 import { RequestIdMiddleware } from './shared/http/request-id.middleware';
 import { buildThrottlers } from './shared/http/rate-limit.config';
+import { createThrottlerStorage } from './shared/http/throttler-storage.provider';
 import { PrismaModule } from './shared/persistence/prisma/prisma.module';
 import { KyselyModule } from './shared/persistence/kysely/kysely.module';
 import { CacheModule } from './shared/cache/cache.module';
@@ -34,6 +35,9 @@ import { SecondaryModule } from './contexts/secondary/secondary.module';
  *  - ReportModule 은 RiskModule(RISK_RECALC)을 import 해 검수 확인완료 시 위험도 재산출을 트리거한다.
  *  - 그 외 컨텍스트는 서로 독립적이며 같은 DB 를 공유한다(경계는 논리적).
  *
+ * 레이트 리밋 카운터는 RATE_LIMIT_DRIVER 가 정한다(memory 기본 · redis). memory 인 채로
+ * 머신을 늘리면 각 머신이 자기 카운터만 보므로 **실효 한도가 머신 수만큼 늘어난다.**
+ *
  * 전역 미들웨어:
  *  - RequestIdMiddleware : 요청마다 상관관계 ID 를 붙인다. 가드보다 **먼저** 돌아야
  *    인증 실패(401)·레이트 리밋(429)처럼 컨트롤러에 닿지 못한 요청에도 ID 가 남는다.
@@ -59,6 +63,9 @@ import { SecondaryModule } from './contexts/secondary/secondary.module';
           reportPerMin: config.get<string>('RATE_LIMIT_REPORT_PER_MIN'),
           reportPerHour: config.get<string>('RATE_LIMIT_REPORT_PER_HOUR'),
         }),
+        // 카운터를 어디에 둘지. 기본은 프로세스 메모리(단일 머신), 머신을 늘리면 Redis.
+        // undefined 면 Throttler 가 내장 메모리 스토리지를 쓴다.
+        storage: createThrottlerStorage(config),
       }),
     }),
     PrismaModule,
