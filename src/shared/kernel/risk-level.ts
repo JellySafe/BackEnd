@@ -1,3 +1,5 @@
+import { DEFAULT_LOCALE, Locale, LocaleText, text } from '@shared/i18n/locale';
+
 /**
  * 위험 단계 — 전 컨텍스트 공용 언어 (정책서 RISK-001).
  * 관리자/일반/API 가 동일한 4단계를 쓴다. DB 는 소문자로 저장한다.
@@ -30,9 +32,46 @@ export const RISK_LEVEL_LABELS: Record<RiskLevel, string> = {
   severe: '매우 위험',
 };
 
-/** 표시 라벨. null(미산출)이면 빈 문자열 — 부르는 쪽이 문맥에 맞게 처리한다. */
-export function riskLevelLabelOf(level: RiskLevel | null): string {
-  return level === null ? '' : RISK_LEVEL_LABELS[level];
+/**
+ * 위험 단계 라벨 — 언어별.
+ *
+ * 이 서비스에서 **가장 중요한 번역**이다. 제주는 외국인 방문객이 많고, 해파리 쏘임은 말이
+ * 안 통할 때 가장 위험한 종류의 사고다. 다른 것을 하나도 못 읽어도 이 네 단어만 읽히면
+ * 핵심은 전달된다.
+ *
+ * 한국어에서 `safe` 를 '안전' 이라 쓰지 않는 이유(위 주석)는 다른 언어에도 그대로 적용했다.
+ * 'Safe' 는 쏘이지 않는다는 **보장**으로 읽히므로 위험도가 낮다는 사실 진술로 옮긴다 —
+ * en 'Low', zh '低', ja '低'. 우리가 아는 것은 '위험 신호가 낮다' 이지 '안전하다' 가 아니다.
+ */
+export const RISK_LEVEL_LABELS_I18N: Record<RiskLevel, LocaleText> = {
+  safe: { ko: '낮음', en: 'Low', zh: '低', ja: '低' },
+  caution: { ko: '주의', en: 'Caution', zh: '注意', ja: '注意' },
+  danger: { ko: '위험', en: 'Danger', zh: '危险', ja: '危険' },
+  severe: { ko: '매우 위험', en: 'Severe', zh: '非常危险', ja: '非常に危険' },
+};
+
+/**
+ * 산출 이력이 없을 때의 표시 문구 — 언어별.
+ *
+ * '낮음' 이라고 쓰지 않는다 — 우리가 아는 것은 "위험이 낮다" 가 아니라 **"아직 산출한 적이
+ * 없다"** 이고, 그 둘을 같은 말로 보여주면 사용자는 확인된 정보로 받아들인다.
+ * 빈 문자열도 안 된다. 라벨 자리가 비면 화면에서 위험 정보가 통째로 사라진 것처럼 보인다.
+ */
+export const NO_DATA_LABEL_I18N: LocaleText = {
+  ko: '정보 없음',
+  en: 'No data',
+  zh: '暂无数据',
+  ja: '情報なし',
+};
+
+/**
+ * 표시 라벨. null(미산출)이면 빈 문자열 — 부르는 쪽이 문맥에 맞게 처리한다.
+ *
+ * 언어를 주지 않으면 한국어다. 알림 문자·관리자 화면처럼 **받는 사람의 언어를 서버가
+ * 모르는 경로**가 그대로 동작해야 하기 때문이다(그쪽은 운영 주체의 언어를 쓴다).
+ */
+export function riskLevelLabelOf(level: RiskLevel | null, locale: Locale = DEFAULT_LOCALE): string {
+  return level === null ? '' : text(RISK_LEVEL_LABELS_I18N[level], locale);
 }
 
 /** 단계 서열 (낮음 → 높음). 최소 단계 보장 비교에 사용. */

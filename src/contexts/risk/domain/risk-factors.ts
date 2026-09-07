@@ -1,3 +1,4 @@
+import { Locale, LocaleText, text } from '@shared/i18n/locale';
 /**
  * 위험 요인/제보 가중치 카탈로그 (03_Data_AI 점수표).
  * factor_code → 원인 태그 표시명, 기본 점수(config 미설정 시 fallback).
@@ -62,7 +63,12 @@ export type MinLevelCode = (typeof MIN_LEVEL_CODES)[number];
 
 export type RiskFactorCode = RiskVariableCode | ReportWeightCode;
 
-/** 원인 태그 표시명 (한글). */
+/**
+ * 원인 태그 표시명 (한글).
+ *
+ * ⚠️ 이 값은 산출 시점에 `risk_factors.factor_name` 으로 **저장된다.** 조회 시 언어를 바꾸려면
+ *    저장된 이름이 아니라 함께 저장된 `factor_code` 로 다시 찾아야 한다(riskFactorNameOf).
+ */
 export const RISK_FACTOR_NAMES: Record<RiskFactorCode, string> = {
   TEMP_UP: '최근 3일 수온 상승',
   TEMP_7D_AVG: '최근 7일 평균 수온 높음',
@@ -80,6 +86,117 @@ export const RISK_FACTOR_NAMES: Record<RiskFactorCode, string> = {
   REPORT_TOXIC_MULTIPLE: '독성 의심 + 다수 출현 제보',
   REPORT_STING: '쏘임 사고 제보',
 };
+
+/**
+ * 원인 태그 표시명 — 언어별.
+ *
+ * "왜 이 단계인가" 를 설명하는 자리다. 단계와 안내 문구 다음으로 중요하다 — 근거가 보이면
+ * 사람은 판단을 스스로 조정할 수 있다("수온 상승" 과 "독성 의심 제보" 는 같은 '주의' 여도
+ * 받아들이는 무게가 다르다).
+ *
+ * 구체적 수치가 붙는 `detail`(예: "인근 해역 고밀도 출현 3건")은 **번역하지 않는다.** 숫자를
+ * 섞어 조립하는 문장이라 언어마다 어순이 달라지고, 지금 억지로 끼워 맞추면 어색한 문장이
+ * 남는다. 이름만으로도 무엇이 원인인지는 전달된다.
+ */
+export const RISK_FACTOR_NAMES_I18N: Record<RiskFactorCode, LocaleText> = {
+  TEMP_UP: {
+    ko: '최근 3일 수온 상승',
+    en: 'Water temperature rising (last 3 days)',
+    zh: '近3天水温上升',
+    ja: '直近3日の水温上昇',
+  },
+  TEMP_7D_AVG: {
+    ko: '최근 7일 평균 수온 높음',
+    en: 'High 7-day average water temperature',
+    zh: '近7天平均水温偏高',
+    ja: '直近7日の平均水温が高い',
+  },
+  WAVE_HIGH: { ko: '파고 높음', en: 'High waves', zh: '浪高', ja: '波が高い' },
+  WIND_INFLOW: {
+    ko: '해변 방향 유입 풍향',
+    en: 'Onshore wind',
+    zh: '向岸风',
+    ja: '海岸方向への風',
+  },
+  CURRENT_INFLOW: {
+    ko: '해변 방향 유입 해류',
+    en: 'Onshore current',
+    zh: '向岸海流',
+    ja: '海岸方向への海流',
+  },
+  PAST_OCCURRENCE: {
+    ko: '과거 동일 시기 출현 이력',
+    en: 'Past occurrences in the same season',
+    zh: '往年同期出没记录',
+    ja: '過去の同時期の出現履歴',
+  },
+  NEARBY_ALERT: {
+    ko: '인근 해역 해파리 속보',
+    en: 'Jellyfish alert in nearby waters',
+    zh: '邻近海域水母快报',
+    ja: '近隣海域のクラゲ速報',
+  },
+  NEARBY_ALERT_HIGH: {
+    ko: '인근 해역 고밀도 출현',
+    en: 'High-density occurrence in nearby waters',
+    zh: '邻近海域高密度出没',
+    ja: '近隣海域で高密度の出現',
+  },
+  NEARBY_ALERT_MEDIUM: {
+    ko: '인근 해역 중밀도 출현',
+    en: 'Medium-density occurrence in nearby waters',
+    zh: '邻近海域中密度出没',
+    ja: '近隣海域で中密度の出現',
+  },
+  NEARBY_ALERT_LOW: {
+    ko: '인근 해역 저밀도 출현',
+    en: 'Low-density occurrence in nearby waters',
+    zh: '邻近海域低密度出没',
+    ja: '近隣海域で低密度の出現',
+  },
+  REPORT_GENERAL: {
+    ko: '일반 해파리 발견 제보',
+    en: 'Jellyfish sighting report',
+    zh: '一般水母目击举报',
+    ja: 'クラゲ目撃の通報',
+  },
+  REPORT_MULTIPLE: {
+    ko: '다수 출현 제보',
+    en: 'Report of multiple jellyfish',
+    zh: '大量出没举报',
+    ja: '多数出現の通報',
+  },
+  REPORT_TOXIC: {
+    ko: '독성 해파리 의심 제보',
+    en: 'Suspected venomous jellyfish report',
+    zh: '疑似毒水母举报',
+    ja: '毒クラゲの疑いの通報',
+  },
+  REPORT_TOXIC_MULTIPLE: {
+    ko: '독성 의심 + 다수 출현 제보',
+    en: 'Suspected venomous jellyfish + multiple sightings',
+    zh: '疑似有毒 + 大量出没举报',
+    ja: '毒の疑い＋多数出現の通報',
+  },
+  REPORT_STING: {
+    ko: '쏘임 사고 제보',
+    en: 'Sting incident report',
+    zh: '蜇伤事故举报',
+    ja: '刺傷事故の通報',
+  },
+};
+
+/**
+ * 저장된 요인 코드를 표시명으로 옮긴다.
+ *
+ * `fallback` 은 **저장돼 있던 이름**이다. 코드가 카탈로그에 없으면(옛 데이터, 또는 룰이
+ * 사라진 뒤) 그것을 그대로 쓴다 — 여기서 빈 문자열을 내보내면 화면의 "주요 위험 원인" 이
+ * 이름 없는 항목으로 남는다. 번역이 없는 것보다 나쁜 실패다.
+ */
+export function riskFactorNameOf(code: string, fallback: string, locale: Locale): string {
+  const catalog = (RISK_FACTOR_NAMES_I18N as Record<string, LocaleText | undefined>)[code];
+  return catalog === undefined ? fallback : text(catalog, locale);
+}
 
 /**
  * config 미설정 시 fallback 점수 (03_Data_AI 기본값 = v1 점수표).
