@@ -121,5 +121,8 @@
       "^@shared/(.*)$": "<rootDir>/shared/$1",
       "^@contexts/(.*)$": "<rootDir>/contexts/$1"
     }
+  },
+  "overrides": {
+    "deepmerge-ts": "^8.0.2"
   }
 }
