@@ -60,6 +60,7 @@ import { SecondaryModule } from './contexts/secondary/secondary.module';
       useFactory: (config: ConfigService) => ({
         throttlers: buildThrottlers({
           defaultPerMin: config.get<string>('RATE_LIMIT_DEFAULT_PER_MIN'),
+          ipCeilingPerMin: config.get<string>('RATE_LIMIT_IP_CEILING_PER_MIN'),
           reportPerMin: config.get<string>('RATE_LIMIT_REPORT_PER_MIN'),
           reportPerHour: config.get<string>('RATE_LIMIT_REPORT_PER_HOUR'),
         }),
