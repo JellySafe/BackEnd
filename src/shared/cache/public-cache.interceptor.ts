@@ -6,6 +6,7 @@ import { tap } from 'rxjs/operators';
 import { AppConfig } from '@shared/config/app.config';
 import { ResponseCache } from './response-cache';
 import { ACCESS_COOKIE, REFRESH_COOKIE, parseCookies } from '@shared/auth/session-cookie';
+import { resolveLocale } from '@shared/i18n/locale';
 
 /**
  * 캐시해도 되는 경로 (**허용 목록**).
@@ -55,7 +56,10 @@ export class PublicCacheInterceptor implements NestInterceptor {
     const req = context.switchToHttp().getRequest<Request>();
     if (!this.isCacheable(req)) return next.handle();
 
-    const key = req.originalUrl ?? req.url;
+    // 키에 **언어가 들어가야 한다.** 공개 응답의 표시 문구가 Accept-Language 로 갈리는데
+    // URL 만으로 키를 만들면, 한국어로 채워진 캐시가 영어 요청에 그대로 나간다. `?lang=` 은
+    // URL 에 있어 저절로 갈리지만 헤더는 그렇지 않다 — 헤더 쪽이 조용히 틀리는 경로다.
+    const key = `${resolveLocale(req.query?.lang, req.headers['accept-language'])}|${req.originalUrl ?? req.url}`;
 
     const cached = this.cache.get(key);
     if (cached.hit) {

@@ -11,14 +11,10 @@ import {
 } from '../port/in/risk-use-cases';
 import { RiskCardRow, RiskQueryPort, RISK_QUERY } from '../port/out/risk-query.port';
 import { buildSafetyGuide } from '../../domain/risk-guide';
+import { riskFactorNameOf } from '../../domain/risk-factors';
+import { DEFAULT_LOCALE, Locale, text } from '@shared/i18n/locale';
+import { NO_DATA_LABEL_I18N } from '@shared/kernel/risk-level';
 
-/**
- * 산출 이력이 없는 해변의 표시 라벨.
- *
- * '낮음' 이라고 쓰지 않는다 — 우리가 아는 것은 "위험이 낮다" 가 아니라 **"아직 산출한 적이
- * 없다"** 이고, 그 둘을 같은 말로 보여주면 사용자는 확인된 정보로 받아들인다.
- */
-const NO_PREDICTION_LABEL = '정보 없음';
 
 /** 일반 사용자 시간별 예측 표시 순서(= 대표 카드 우선순위, now 우선). */
 const PUBLIC_HORIZON_ORDER: RiskHorizon[] = ['now', '24h', '72h'];
@@ -73,13 +69,16 @@ export class GetBeachRiskDetailService implements GetBeachRiskDetailUseCase {
    * USR-002. now/24h/72h 세 시점을 모두 담아 "시간별 위험도 예측" 화면을 채운다.
    * 최상위 필드(riskLevel/riskScore/factors/...)는 대표 카드('현재') 값으로 유지한다(기존 응답 하위호환).
    */
-  async getPublicView(beachId: Id): Promise<PublicBeachRiskView> {
+  async getPublicView(
+    beachId: Id,
+    locale: Locale = DEFAULT_LOCALE,
+  ): Promise<PublicBeachRiskView> {
     const beach = await this.query.findBeach(beachId);
     if (!beach) {
       throw new NotFoundError('BEACH_NOT_FOUND', '해변을 찾을 수 없습니다.', { beachId });
     }
     const cards = await this.query.getBeachRiskCards(beachId);
-    const timeline = await this.buildTimeline(cards);
+    const timeline = await this.buildTimeline(cards, locale);
     const primary = this.pickPrimary(timeline);
 
     if (!primary) {
@@ -94,10 +93,10 @@ export class GetBeachRiskDetailService implements GetBeachRiskDetailUseCase {
         beachName: beach.name,
         horizon: 'now',
         riskLevel: 'safe',
-        riskLevelLabel: NO_PREDICTION_LABEL,
+        riskLevelLabel: text(NO_DATA_LABEL_I18N, locale),
         riskScore: 0,
         factors: [],
-        guideText: buildSafetyGuide('safe'),
+        guideText: buildSafetyGuide('safe', locale),
         dataConfidence: 'low',
         generatedAt: null,
         riskTimeline: [],
@@ -109,10 +108,10 @@ export class GetBeachRiskDetailService implements GetBeachRiskDetailUseCase {
       beachName: beach.name,
       horizon: primary.horizon,
       riskLevel: primary.riskLevel,
-      riskLevelLabel: riskLevelLabelOf(primary.riskLevel),
+      riskLevelLabel: riskLevelLabelOf(primary.riskLevel, locale),
       riskScore: primary.riskScore,
       factors: primary.factors,
-      guideText: buildSafetyGuide(primary.riskLevel),
+      guideText: buildSafetyGuide(primary.riskLevel, locale),
       dataConfidence: primary.dataConfidence,
       generatedAt: primary.generatedAt,
       riskTimeline: timeline,
@@ -123,7 +122,10 @@ export class GetBeachRiskDetailService implements GetBeachRiskDetailUseCase {
    * horizon 별 최신 카드를 now → 24h → 72h 순으로 정리하고 요약 원인을 붙인다.
    * 알려지지 않은 지평(향후 '6h' 등)은 뒤에 이어 붙여 누락시키지 않는다.
    */
-  private async buildTimeline(cards: RiskCardRow[]): Promise<PublicRiskPointView[]> {
+  private async buildTimeline(
+    cards: RiskCardRow[],
+    locale: Locale,
+  ): Promise<PublicRiskPointView[]> {
     const known = PUBLIC_HORIZON_ORDER.map((h) => cards.find((c) => c.horizon === h)).filter(
       (c): c is RiskCardRow => c !== undefined,
     );
@@ -144,7 +146,10 @@ export class GetBeachRiskDetailService implements GetBeachRiskDetailUseCase {
         // detail 은 그 시점의 실제 수치("인근 해역 속보 3건"). 합치면 되돌릴 수 없다.
         factors: factors.slice(0, PUBLIC_FACTOR_LIMIT).map((f) => ({
           code: f.code,
-          name: f.name,
+          // 이름은 **저장된 문자열이 아니라 코드로 다시 찾는다.** factor_name 은 산출 시점의
+          // 한국어가 굳어 있는 값이라 그대로 쓰면 언어를 바꿀 수 없다. 카탈로그에 없는
+          // 코드(옛 데이터)면 저장돼 있던 이름으로 되돌아간다.
+          name: riskFactorNameOf(f.code, f.name, locale),
           detail: f.detail,
           scoreDelta: f.delta,
         })),

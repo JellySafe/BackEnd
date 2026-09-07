@@ -237,6 +237,40 @@ describe('공개 조회 캐시', () => {
       expect(counter.calls).toBe(2);
     });
 
+    it('언어가 다르면 다른 응답이다 — 한국어 캐시가 영어 요청에 나가면 안 된다', async () => {
+      // 표시 문구가 Accept-Language 로 갈리는데 키가 URL 뿐이면, 먼저 채워진 언어가
+      // 그대로 다른 언어 요청에 나간다. 조용히 틀리고, 안전 정보라 비용이 크다.
+      const { interceptor } = build();
+      const counter = { calls: 0 };
+
+      await run(interceptor, contextFor({ headers: { 'accept-language': 'ko-KR' } }), counter);
+      await run(interceptor, contextFor({ headers: { 'accept-language': 'en-US' } }), counter);
+
+      expect(counter.calls).toBe(2);
+    });
+
+    it('같은 언어면 캐시를 쓴다 — 헤더 문자열이 달라도 결과 언어가 같으면 같은 응답이다', async () => {
+      // ko-KR 과 ko;q=0.9 는 다른 문자열이지만 둘 다 한국어다. 헤더 원문을 키로 쓰면
+      // 사실상 캐시가 동작하지 않는다(브라우저마다 헤더가 조금씩 다르다).
+      const { interceptor } = build();
+      const counter = { calls: 0 };
+
+      await run(interceptor, contextFor({ headers: { 'accept-language': 'ko-KR,ko;q=0.9' } }), counter);
+      await run(interceptor, contextFor({ headers: { 'accept-language': 'ko' } }), counter);
+
+      expect(counter.calls).toBe(1);
+    });
+
+    it('지원하지 않는 언어끼리는 같은 캐시를 쓴다 — 둘 다 한국어로 답한다', async () => {
+      const { interceptor } = build();
+      const counter = { calls: 0 };
+
+      await run(interceptor, contextFor({ headers: { 'accept-language': 'fr-FR' } }), counter);
+      await run(interceptor, contextFor({ headers: { 'accept-language': 'de-DE' } }), counter);
+
+      expect(counter.calls).toBe(1);
+    });
+
     it('해변 위험도 상세도 캐시한다', async () => {
       const { interceptor } = build();
       const counter = { calls: 0 };

@@ -1,11 +1,13 @@
 import { Id } from '@shared/kernel/id';
 import {
+  NO_DATA_LABEL_I18N,
   RISK_LEVELS,
   RiskLevel,
-  RISK_LEVEL_LABELS,
   compareRiskLevel,
   maxRiskLevel,
+  riskLevelLabelOf,
 } from '@shared/kernel/risk-level';
+import { DEFAULT_LOCALE, Locale, text } from '@shared/i18n/locale';
 import { reportDateLabel } from './daily-report';
 
 /**
@@ -36,8 +38,8 @@ import { reportDateLabel } from './daily-report';
 /** 위험 단계가 하나도 산출되지 않은 해변을 세는 칸. */
 export const UNKNOWN_LEVEL = 'unknown' as const;
 
-/** 산출 이력이 없을 때 쓰는 표시 문구. */
-export const NO_DATA_LABEL = '정보 없음';
+/** 산출 이력이 없을 때 쓰는 표시 문구(한국어). 언어별 값은 커널의 NO_DATA_LABEL_I18N. */
+export const NO_DATA_LABEL = NO_DATA_LABEL_I18N.ko;
 
 /** 해변 하나의 그날치 사실. 어댑터가 원본에서 모아 온다. */
 export interface BeachDayFacts {
@@ -119,6 +121,7 @@ export function summarizePublicDailyReport(
   reportDate: Date,
   facts: BeachDayFacts[],
   now: Date,
+  locale: Locale = DEFAULT_LOCALE,
 ): PublicDailyReport {
   const levelCounts = emptyLevelCounts();
   let overallMax: RiskLevel | null = null;
@@ -149,8 +152,8 @@ export function summarizePublicDailyReport(
         name: fact.name,
         from: fact.firstRiskLevel,
         to: fact.lastRiskLevel,
-        fromLabel: RISK_LEVEL_LABELS[fact.firstRiskLevel],
-        toLabel: RISK_LEVEL_LABELS[fact.lastRiskLevel],
+        fromLabel: riskLevelLabelOf(fact.firstRiskLevel, locale),
+        toLabel: riskLevelLabelOf(fact.lastRiskLevel, locale),
       });
     }
 
@@ -175,7 +178,8 @@ export function summarizePublicDailyReport(
     reportDate: reportDateLabel(reportDate),
     generatedAt: now.toISOString(),
     maxRiskLevel: overallMax,
-    maxRiskLabel: overallMax === null ? NO_DATA_LABEL : RISK_LEVEL_LABELS[overallMax],
+    maxRiskLabel:
+      overallMax === null ? text(NO_DATA_LABEL_I18N, locale) : riskLevelLabelOf(overallMax, locale),
     beachCount: facts.length,
     levelCounts,
     raisedBeaches,

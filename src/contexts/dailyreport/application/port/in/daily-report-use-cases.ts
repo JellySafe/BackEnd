@@ -6,6 +6,7 @@ import {
   DailyRiskFactor,
   RiskTrendPoint,
 } from '../out/daily-report-query.port';
+import { Locale } from '@shared/i18n/locale';
 
 /** 리포트 응답 뷰 (저장본 또는 즉석 집계본 공용). */
 export interface DailyReportView {
@@ -91,6 +92,8 @@ export function toDailyReportView(report: DailyReport, persisted: boolean): Dail
 export interface GetPublicDailyReportQuery {
   /** KST 날짜 키(그 날짜의 UTC 자정). 어댑터가 parseKstDateKey 로 만든다. */
   date: Date;
+  /** 표시 문구 언어. 생략하면 한국어. */
+  locale?: Locale;
 }
 
 export interface GetPublicDailyReportUseCase {

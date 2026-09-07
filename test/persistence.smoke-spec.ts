@@ -1411,4 +1411,117 @@ describe('영속성 스모크', () => {
       });
     });
   });
+
+  /**
+   * 다국어 표시 문구 (i18n).
+   *
+   * ── 왜 HTTP 로 봐야 하나 ─────────────────────────────────────────────────────────
+   * 번역 카탈로그 자체는 단위 테스트가 본다. 여기서 보는 것은 **언어가 요청에서 응답까지
+   * 실제로 흘러가는가** 다 — 데코레이터·컨트롤러·서비스·도메인·캐시가 모두 맞물려야 한다.
+   * 한 군데만 어긋나면 단위 테스트는 다 통과하는데 화면은 한국어 그대로다.
+   *
+   * 그리고 **캐시**가 여기서 가장 조용히 틀린다. 키에 언어가 빠지면 먼저 채워진 언어가
+   * 다른 언어 요청에 그대로 나가고, 아무 오류도 나지 않는다.
+   */
+  describe('다국어 표시 문구 (i18n)', () => {
+    interface RiskDetailBody {
+      riskLevelLabel: string;
+      guideText: string;
+      factors: { name: string }[];
+    }
+
+    /** 위험도 상세를 언어를 지정해 부른다. */
+    async function riskDetail(
+      beachId: number,
+      options: { lang?: string; header?: string } = {},
+    ): Promise<RiskDetailBody> {
+      const url =
+        `/api/public/beaches/${beachId}/risk` + (options.lang ? `?lang=${options.lang}` : '');
+      const req = request(http).get(url);
+      if (options.header) req.set('Accept-Language', options.header);
+      const res = await req.expect(200);
+      return (res.body as { data: RiskDetailBody }).data;
+    }
+
+    let beachId: number;
+
+    beforeAll(async () => {
+      const beach = await prisma.beach.findFirstOrThrow({ where: { isActive: true } });
+      beachId = Number(beach.id);
+    });
+
+    it('기본은 한국어다', async () => {
+      const body = await riskDetail(beachId);
+      expect(['낮음', '주의', '위험', '매우 위험', '정보 없음']).toContain(body.riskLevelLabel);
+    });
+
+    it('?lang=en 이면 단계 라벨과 안전 안내가 영어로 나온다', async () => {
+      const body = await riskDetail(beachId, { lang: 'en' });
+
+      expect(['Low', 'Caution', 'Danger', 'Severe', 'No data']).toContain(body.riskLevelLabel);
+      // 안내 문구가 함께 번역되지 않으면 "Danger" 만 읽고 무엇을 할지 모른다.
+      expect(body.guideText).toMatch(/[A-Za-z]/);
+      expect(body.guideText).not.toMatch(/[가-힣]/);
+    });
+
+    it.each(['ja', 'zh'])('?lang=%s 도 한국어가 아닌 문구를 준다', async (lang) => {
+      const body = await riskDetail(beachId, { lang });
+      expect(body.guideText).not.toMatch(/[가-힣]/);
+    });
+
+    it('Accept-Language 헤더만으로도 언어가 바뀐다', async () => {
+      const body = await riskDetail(beachId, { header: 'en-US,en;q=0.9' });
+      expect(body.guideText).not.toMatch(/[가-힣]/);
+    });
+
+    it('?lang= 이 헤더보다 우선한다', async () => {
+      const body = await riskDetail(beachId, { lang: 'ko', header: 'en-US' });
+      expect(body.guideText).toMatch(/[가-힣]/);
+    });
+
+    it('지원하지 않는 언어는 한국어로 되돌아간다 — 조회를 실패시키지 않는다', async () => {
+      const body = await riskDetail(beachId, { lang: 'fr' });
+      expect(body.guideText).toMatch(/[가-힣]/);
+    });
+
+    it('요인 이름도 번역된다 — 저장된 한국어 이름을 그대로 쓰면 바뀌지 않는다', async () => {
+      // factor_name 은 산출 시점의 한국어가 굳어 있는 값이라, 코드로 다시 찾아야 한다.
+      const korean = await riskDetail(beachId, { lang: 'ko' });
+      const english = await riskDetail(beachId, { lang: 'en' });
+
+      if (korean.factors.length > 0) {
+        expect(english.factors[0].name).not.toBe(korean.factors[0].name);
+        expect(english.factors[0].name).not.toMatch(/[가-힣]/);
+      }
+    });
+
+    it('⚠️ 캐시가 언어를 섞지 않는다 — 헤더만 다른 같은 URL 이 위험한 자리다', async () => {
+      // 오늘의 리포트는 캐시 대상이다. 키에 언어가 빠지면 먼저 채워진 언어가 그대로 나간다.
+      const ko = await request(http)
+        .get('/api/public/daily-report')
+        .set('Accept-Language', 'ko-KR')
+        .expect(200);
+      const en = await request(http)
+        .get('/api/public/daily-report')
+        .set('Accept-Language', 'en-US')
+        .expect(200);
+
+      const koLabel = (ko.body as { data: { maxRiskLabel: string } }).data.maxRiskLabel;
+      const enLabel = (en.body as { data: { maxRiskLabel: string } }).data.maxRiskLabel;
+
+      expect(koLabel).toMatch(/[가-힣]/);
+      expect(enLabel).not.toMatch(/[가-힣]/);
+    });
+
+    it('오늘의 리포트도 ?lang= 을 받는다 — DTO 화이트리스트에 막히면 400 이 난다', async () => {
+      const res = await request(http).get('/api/public/daily-report?lang=en').expect(200);
+      expect((res.body as { data: { maxRiskLabel: string } }).data.maxRiskLabel).not.toMatch(
+        /[가-힣]/,
+      );
+    });
+
+    it('오늘의 리포트도 모르는 언어를 거부하지 않는다 — 경로마다 다르게 굴면 안 된다', async () => {
+      await request(http).get('/api/public/daily-report?lang=fr').expect(200);
+    });
+  });
 });
