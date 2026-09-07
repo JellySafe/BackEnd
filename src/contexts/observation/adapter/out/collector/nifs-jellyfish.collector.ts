@@ -1,6 +1,5 @@
 import { Injectable, Logger } from '@nestjs/common';
 import { ConfigService } from '@nestjs/config';
-import { PDFParse } from 'pdf-parse';
 import { kstMidnightInstant, toKstDateParts } from '@shared/kernel/kst-date';
 import { DataSource } from '../../../domain/data-source';
 import { OccurrenceReading } from '../../../domain/observation';
@@ -26,6 +25,9 @@ import { NifsReportContext, parseNifsWeeklyReport } from './nifs-report.parser';
  *  NIFS_API_KEY 미설정 / HTTP·PDF·파싱 실패 / 종 블록 미검출 / 제주 항목 없음
  *  → 각각 warn 로그 후 **빈 배열**을 반환한다. 수집 배치는 계속 진행되어야 하고 앱은 죽으면 안 된다.
  *  로그에는 인증키를 마스킹한 URL 만 남긴다.
+ *
+ * ⚠️ **pdf-parse 는 쓸 때 불러온다**(loadPdfParser 주석 참고). 최상단에서 import 하면
+ *    위의 "앱은 죽으면 안 된다" 가 그 한 줄 때문에 무너진다 — 실제로 그랬다.
  */
 @Injectable()
 export class NifsJellyfishCollector {
@@ -168,6 +170,7 @@ export class NifsJellyfishCollector {
         return null;
       }
 
+      const PDFParse = await this.loadPdfParser();
       const parser = new PDFParse({ data: new Uint8Array(buffer) });
       try {
         const result = await parser.getText();
@@ -242,6 +245,32 @@ export class NifsJellyfishCollector {
     } finally {
       clearTimeout(timer);
     }
+  }
+
+  /**
+   * pdf-parse 를 **쓸 때** 불러온다.
+   *
+   * ── 왜 최상단 import 가 아닌가 ─────────────────────────────────────────────────────
+   * pdf-parse 는 내부적으로 pdf.js 를 쓰고, 그건 `@napi-rs/canvas` 라는 **선택적 네이티브
+   * 패키지**로 DOM 을 흉내 낸다. 그 바이너리가 없으면 모듈을 읽는 순간
+   * `DOMMatrix is not defined` 로 터진다 — import 시점이므로 **앱이 기동조차 못 한다.**
+   *
+   * 그리고 그 바이너리는 없을 수 있다. npm 은 **선택적 의존성 설치 실패를 조용히 넘긴다.**
+   * 이미지 빌드 중 네트워크가 한 번 흔들리면 `npm ci` 는 성공으로 끝나고, 그렇게 만들어진
+   * 이미지는 부팅에 실패한다. 실제로 운영 사양 측정을 하려고 이미지를 띄웠다가 이 상태를
+   * 만났다(installed 232 packages — 바이너리 하나가 빠진 채였다).
+   *
+   * ── 무엇이 달라지나 ────────────────────────────────────────────────────────────────
+   * 이 컬렉터가 하는 일은 **국립수산과학원 주간보고 PDF 에서 해파리 출현 기록을 뽑는 것**
+   * 하나다. 그게 안 되면 그 자료원만 비는 것이 맞다. 위험도 조회·알림·제보는 PDF 와 아무
+   * 상관이 없는데, 지금까지는 그 전부가 이 라이브러리와 함께 죽었다.
+   *
+   * 늦게 불러오면 실패가 **호출부의 try/catch 안에서** 일어나 warn 로그 + 스킵으로 끝난다.
+   * 이 파일이 원래 선언한 방어 설계(위 주석)가 그제야 실제로 지켜진다.
+   */
+  private async loadPdfParser(): Promise<typeof import('pdf-parse').PDFParse> {
+    const module = await import('pdf-parse');
+    return module.PDFParse;
   }
 }
 
