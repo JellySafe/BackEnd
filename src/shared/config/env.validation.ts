@@ -392,10 +392,42 @@ function checkRateLimitStorage(config: Record<string, unknown>): string | null {
   );
 }
 
+/**
+ * 운영에서 CORS_ORIGIN 미지정을 막는다.
+ *
+ * ── 왜 이 검사가 **쿠키 세션과 함께** 생겼나 ────────────────────────────────────────
+ * CORS_ORIGIN 이 비면 `buildCorsOrigin` 은 **모든 오리진을 허용**한다(로컬 개발 편의).
+ * 지금까지는 그 느슨함이 큰 문제가 아니었다 — 자격증명이 `Authorization` 헤더에 있었고,
+ * 공격자 사이트는 남의 토큰을 알 수 없으니 허용된 오리진이어도 인증된 요청을 만들 수 없었다.
+ *
+ * 세션을 쿠키로 옮기면(이슈 #55) 전제가 뒤집힌다. **브라우저가 쿠키를 자동으로 실어 주므로**,
+ * 오리진을 모두 허용한 채 `credentials: true` 를 두면 아무 웹사이트나 로그인한 운영자의
+ * 권한으로 관리자 API 를 부르고 **그 응답까지 읽을 수 있다.** 해변 마스터·사용자 목록·감사
+ * 로그가 그대로 나간다.
+ *
+ * 그래서 운영에서는 허용 오리진을 명시하게 **기동을 막는다.** 통과시키고 경고만 남기는 선택도
+ * 있지만, 그 경고는 아무도 보지 않는 사이 계속 열려 있게 된다. 설정 하나를 빠뜨린 배포가
+ * 실패하는 쪽이, 조용히 열린 채 뜨는 쪽보다 낫다(SYSTEM_API_KEY 와 같은 기준이다).
+ *
+ * 개발/테스트는 그대로 둔다 — localhost 포트가 계속 바뀌는 환경에서 매번 적기는 어렵고,
+ * 그 환경에는 지킬 자료가 없다.
+ */
+function checkCorsOriginInProduction(config: Record<string, unknown>): string | null {
+  if (readString(config, 'NODE_ENV').trim() !== 'production') return null;
+  if (readString(config, 'CORS_ORIGIN').trim() !== '') return null;
+  return (
+    '운영(NODE_ENV=production)에서 CORS_ORIGIN 이 비어 있습니다. ' +
+    '이 상태로 뜨면 모든 오리진이 허용되고, 세션 쿠키는 브라우저가 자동으로 실어 주므로 ' +
+    '아무 웹사이트나 로그인한 운영자 권한으로 관리자 API 를 호출·열람할 수 있습니다(CSRF/정보 유출). ' +
+    '관리자 웹과 앱의 오리진을 지정하세요. 예: CORS_ORIGIN="https://admin.example.kr,https://app.example.kr"'
+  );
+}
+
 const CROSS_FIELD_CHECKS: ((config: Record<string, unknown>) => string | null)[] = [
   checkSecretNotPublic,
   checkAccessTokenLifetime,
   checkRateLimitStorage,
+  checkCorsOriginInProduction,
 ];
 
 export function validateEnv(config: Record<string, unknown>): Record<string, unknown> {

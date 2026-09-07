@@ -7,6 +7,7 @@ import { NestExpressApplication } from '@nestjs/platform-express';
 import { DocumentBuilder, OpenAPIObject, SwaggerModule } from '@nestjs/swagger';
 import { AppModule } from './app.module';
 import { SYSTEM_KEY_HEADER, SYSTEM_KEY_SECURITY } from './shared/auth/system-auth.guard';
+import { CSRF_HEADER } from './shared/auth/session-cookie';
 import { AppConfig } from './shared/config/app.config';
 import { buildCorsOrigin } from './shared/http/cors-origin';
 import { GlobalExceptionFilter } from './shared/http/global-exception.filter';
@@ -29,12 +30,24 @@ async function bootstrap(): Promise<void> {
   // CORS: 프론트엔드(브라우저)에서 API 를 호출할 수 있게 허용한다.
   // CORS_ORIGIN 은 콤마 구분 목록이며 `*` 와일드카드를 지원한다(Vercel 프리뷰·localhost 포트).
   // 미지정 시 개발 편의로 모든 origin 을 허용한다. 규칙은 cors-origin.ts 참고.
+  //
+  // ⚠️ `credentials: true` + 모든 오리진 허용은 **세션 쿠키가 생긴 뒤로는 위험한 조합**이다.
+  //    브라우저가 쿠키를 자동으로 실어 주므로 아무 사이트나 로그인한 운영자 권한으로 관리자
+  //    API 를 부르고 응답까지 읽을 수 있다. 그래서 운영에서는 CORS_ORIGIN 미지정 자체를
+  //    기동 시점에 막는다(shared/config/env.validation.ts 의 checkCorsOriginInProduction).
   app.enableCors({
     origin: buildCorsOrigin(configService.get<string>('CORS_ORIGIN')),
     credentials: true,
     methods: ['GET', 'POST', 'PATCH', 'PUT', 'DELETE', 'OPTIONS'],
-    // x-system-key: /system/* 시스템 인증 헤더(Swagger UI·운영 도구가 브라우저에서 호출할 때 필요).
-    allowedHeaders: ['Content-Type', 'Authorization', SYSTEM_KEY_HEADER],
+    allowedHeaders: [
+      'Content-Type',
+      'Authorization',
+      // /system/* 시스템 인증 헤더(Swagger UI·운영 도구가 브라우저에서 호출할 때 필요).
+      SYSTEM_KEY_HEADER,
+      // 쿠키 세션의 CSRF 이중 제출 토큰. 이게 빠지면 프리플라이트가 막혀 관리자 웹의
+      // 모든 상태 변경 요청이 실패한다(이슈 #55).
+      CSRF_HEADER,
+    ],
   });
 
   // Fly 프록시 뒤에서 동작한다. 레이트 리밋이 프록시 IP 하나로 뭉뚱그려지지 않도록
@@ -127,6 +140,13 @@ async function bootstrap(): Promise<void> {
         '1. `POST /admin/auth/login` 으로 accessToken 을 받는다.',
         '2. 우측 상단 **Authorize** 버튼에 그 토큰을 넣는다.',
         '3. 이후 `/admin/*` 을 호출한다.',
+        '',
+        '**브라우저(관리자 웹)는 위 절차가 필요 없다.** 로그인 응답이 `httpOnly` 세션 쿠키를 함께',
+        '심으므로 이후 요청에 브라우저가 자동으로 싣는다. JS 가 토큰을 보관하지 않으므로 XSS 로',
+        '유출되지 않는다. 대신 **쿠키로 인증하는 상태 변경 요청(POST/PATCH/DELETE)에는**',
+        `\`${CSRF_HEADER}\` 헤더가 필요하다(값은 \`js_csrf_token\` 쿠키). 없으면 403 \`CSRF_TOKEN_INVALID\`.`,
+        '`Authorization: Bearer` 로 인증한 요청은 이 검사를 하지 않는다 — 위 1~3 절차는 그대로다.',
+        '세션 확인은 `GET /admin/auth/session`(프론트 미들웨어의 서버 사이드 검증용).',
         '',
         '### 공통 응답 형태',
         '모든 성공 응답은 `{ "success": true, "data": ... }` 로 감싸진다.',
