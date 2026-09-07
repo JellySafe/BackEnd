@@ -1,5 +1,7 @@
 import { Controller, Get, Inject, Param, ParseIntPipe } from '@nestjs/common';
-import { ApiOperation, ApiParam, ApiTags } from '@nestjs/swagger';
+import { ApiOperation, ApiParam, ApiQuery, ApiTags } from '@nestjs/swagger';
+import { RequestLocale } from '@shared/i18n/locale.decorator';
+import { Locale, SUPPORTED_LOCALES } from '@shared/i18n/locale';
 import { ApiOkData } from '@shared/http/api-response.decorator';
 import {
   GetBeachRiskDetailUseCase,
@@ -38,8 +40,15 @@ export class PublicRiskController {
   })
   @Get(':beachId/risk')
   @ApiParam({ name: 'beachId', example: 12, description: '해변 식별자' })
+  @ApiQuery({
+    name: 'lang',
+    required: false,
+    enum: SUPPORTED_LOCALES,
+    description:
+      '표시 문구 언어. 생략하면 Accept-Language 를 보고, 그것도 없으면 한국어. 지정하면 헤더보다 우선한다.',
+  })
   @ApiOkData(PublicBeachRiskResponse)
-  beachRisk(@Param('beachId', ParseIntPipe) beachId: number) {
-    return this.beachDetail.getPublicView(beachId);
+  beachRisk(@Param('beachId', ParseIntPipe) beachId: number, @RequestLocale() locale: Locale) {
+    return this.beachDetail.getPublicView(beachId, locale);
   }
 }

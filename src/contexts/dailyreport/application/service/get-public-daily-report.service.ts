@@ -1,6 +1,7 @@
 import { Inject, Injectable } from '@nestjs/common';
 import { ValidationError } from '@shared/kernel/domain-error';
 import { kstToday, toKstDateString } from '@shared/kernel/kst-date';
+import { DEFAULT_LOCALE } from '@shared/i18n/locale';
 import {
   GetPublicDailyReportQuery,
   GetPublicDailyReportUseCase,
@@ -31,7 +32,7 @@ export class GetPublicDailyReportService implements GetPublicDailyReportUseCase 
     this.rejectFutureDate(query.date, now);
 
     const facts = await this.query.beachDayFacts(query.date);
-    return summarizePublicDailyReport(query.date, facts, now);
+    return summarizePublicDailyReport(query.date, facts, now, query.locale ?? DEFAULT_LOCALE);
   }
 
   /**

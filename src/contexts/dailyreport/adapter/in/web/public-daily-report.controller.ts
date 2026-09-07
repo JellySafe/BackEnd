@@ -2,6 +2,8 @@ import { Controller, Get, Inject, Query } from '@nestjs/common';
 import { ApiOperation, ApiTags } from '@nestjs/swagger';
 import { ApiOkData } from '@shared/http/api-response.decorator';
 import { kstToday, parseKstDateKey } from '@shared/kernel/kst-date';
+import { RequestLocale } from '@shared/i18n/locale.decorator';
+import { Locale } from '@shared/i18n/locale';
 import {
   GetPublicDailyReportUseCase,
   GET_PUBLIC_DAILY_REPORT_USE_CASE,
@@ -58,14 +60,18 @@ export class PublicDailyReportController {
       '',
       '저장된 리포트가 없어도 원본에서 그 자리에서 집계하므로 **오늘도 그대로 답한다**',
       '(일간 리포트 배치는 전날 것만 만든다).',
+      '',
+      '**표시 언어** — `?lang=ko|en|zh|ja` 또는 `Accept-Language` 헤더. `lang` 이 우선한다.',
+      '`maxRiskLabel` 과 `raisedBeaches[].fromLabel/toLabel` 이 그 언어로 나온다.',
+      '해변 이름과 운영기관 코멘트는 **작성된 언어 그대로다**(사람이 쓴 글이라 기계 번역하지 않는다).',
     ].join('\n'),
   })
   @ApiOkData(PublicDailyReportResponse)
   @Get()
-  get(@Query() query: GetPublicDailyReportQueryDto) {
+  get(@Query() query: GetPublicDailyReportQueryDto, @RequestLocale() locale: Locale) {
     // 날짜 해석은 KST 기준으로 한다. `new Date('2026-09-06')` 은 UTC 자정이라 그대로 쓰면
     // KST 09:00~익일 09:00 을 보게 된다(admin 컨트롤러와 같은 이유로 parseKstDateKey 를 쓴다).
     const date = query.date === undefined ? kstToday() : parseKstDateKey(query.date);
-    return this.getReport.get({ date });
+    return this.getReport.get({ date, locale });
   }
 }

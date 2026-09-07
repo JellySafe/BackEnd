@@ -2,6 +2,7 @@ import { Id } from '@shared/kernel/id';
 import { DataConfidence, RiskHorizon, RiskLevel } from '@shared/kernel/risk-level';
 import { TriggerType } from '../../../domain/risk-enums';
 import { LatestRiskFilter, LatestRiskRow } from '../out/risk-query.port';
+import { Locale } from '@shared/i18n/locale';
 
 // ===== SYS-003 위험도 산출 (POST /system/risk/calculate) =====
 export interface CalculateRiskCommand {
@@ -108,7 +109,11 @@ export interface PublicBeachRiskView {
 
 export interface GetBeachRiskDetailUseCase {
   getAdminView(beachId: Id): Promise<AdminBeachRiskView>;
-  getPublicView(beachId: Id): Promise<PublicBeachRiskView>;
+  /**
+   * 시민 화면용 상세. `locale` 은 표시 문구의 언어다(단계 라벨·안전 안내·요인 이름).
+   * 관리자 화면에는 없는 인자다 — 운영자는 한국어를 쓴다.
+   */
+  getPublicView(beachId: Id, locale?: Locale): Promise<PublicBeachRiskView>;
 }
 export const GET_BEACH_RISK_DETAIL_USE_CASE = Symbol('GET_BEACH_RISK_DETAIL_USE_CASE');
 
