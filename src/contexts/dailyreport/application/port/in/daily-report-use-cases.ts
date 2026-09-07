@@ -1,6 +1,7 @@
 import { Id } from '@shared/kernel/id';
 import { RiskLevel } from '@shared/kernel/risk-level';
 import { DailyReport, reportDateLabel } from '../../../domain/daily-report';
+import { PublicDailyReport } from '../../../domain/public-daily-report';
 import {
   DailyRiskFactor,
   RiskTrendPoint,
@@ -18,6 +19,8 @@ export interface DailyReportView {
   stingCount: number;
   actionCount: number;
   memo: string | null;
+  /** 공개용 운영기관 코멘트(이슈 #56). 내부 메모와 다른 값이다. */
+  publicComment: string | null;
   summaryJson: unknown;
   persisted: boolean;
   /** 그날의 위험도 산출 이력(시간순). 화면의 "위험도 변화" 그래프 원자료. */
@@ -78,7 +81,32 @@ export function toDailyReportView(report: DailyReport, persisted: boolean): Dail
     stingCount: s.stingCount,
     actionCount: s.actionCount,
     memo: s.memo,
+    publicComment: s.publicComment,
     summaryJson: s.summaryJson,
     persisted,
   };
 }
+
+// ----- 이슈 #56 공개 일간 리포트 조회 -----
+export interface GetPublicDailyReportQuery {
+  /** KST 날짜 키(그 날짜의 UTC 자정). 어댑터가 parseKstDateKey 로 만든다. */
+  date: Date;
+}
+
+export interface GetPublicDailyReportUseCase {
+  /** 제주 전체의 그날치 요약을 만든다. 저장된 리포트가 없어도 원본에서 집계한다. */
+  get(query: GetPublicDailyReportQuery): Promise<PublicDailyReport>;
+}
+export const GET_PUBLIC_DAILY_REPORT_USE_CASE = Symbol('GET_PUBLIC_DAILY_REPORT_USE_CASE');
+
+// ----- 이슈 #56 공개용 운영기관 코멘트 저장 -----
+export interface UpdatePublicCommentCommand {
+  reportId: Id;
+  /** null·빈 문자열이면 공개를 내린다. */
+  comment: string | null;
+}
+
+export interface UpdatePublicCommentUseCase {
+  updatePublicComment(command: UpdatePublicCommentCommand): Promise<DailyReportView>;
+}
+export const UPDATE_PUBLIC_COMMENT_USE_CASE = Symbol('UPDATE_PUBLIC_COMMENT_USE_CASE');

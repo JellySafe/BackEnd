@@ -19,12 +19,15 @@ import {
   GENERATE_DAILY_REPORT_USE_CASE,
   GetDailyReportUseCase,
   GET_DAILY_REPORT_USE_CASE,
+  UpdatePublicCommentUseCase,
+  UPDATE_PUBLIC_COMMENT_USE_CASE,
   UpdateReportMemoUseCase,
   UPDATE_REPORT_MEMO_USE_CASE,
 } from '../../../application/port/in/daily-report-use-cases';
 import { GetDailyReportQueryDto } from './dto/get-daily-report.query';
 import { GenerateDailyReportRequest } from './dto/generate-daily-report.request';
 import { UpdateMemoRequest } from './dto/update-memo.request';
+import { UpdatePublicCommentRequest } from './dto/update-public-comment.request';
 import { DailyReportResponse } from './dto/daily-report.response';
 
 /**
@@ -45,6 +48,8 @@ export class AdminDailyReportController {
     @Inject(GENERATE_DAILY_REPORT_USE_CASE)
     private readonly generateDailyReport: GenerateDailyReportUseCase,
     @Inject(UPDATE_REPORT_MEMO_USE_CASE) private readonly updateMemo: UpdateReportMemoUseCase,
+    @Inject(UPDATE_PUBLIC_COMMENT_USE_CASE)
+    private readonly updatePublicComment: UpdatePublicCommentUseCase,
   ) {}
 
   /** ADM-011 특정일·해변 리포트 조회(없으면 즉석 집계본 반환). */
@@ -104,5 +109,33 @@ export class AdminDailyReportController {
   @Patch(':id/memo')
   patchMemo(@Param('id', ParseIntPipe) id: number, @Body() body: UpdateMemoRequest) {
     return this.updateMemo.updateMemo({ reportId: id, memo: body.memo ?? null });
+  }
+
+  /** 이슈 #56 공개용 운영기관 코멘트 저장. **내부 메모와 다른 경로다.** */
+  @ApiOperation({
+    summary: '[관리자] 공개 코멘트 저장 — ⚠️ 시민 화면에 그대로 나간다',
+    description: [
+      '`GET /public/daily-report` 응답의 `comments` 에 실려 **시민에게 그대로 공개되는** 안내 문구다.',
+      '',
+      '⚠️ **내부 메모(`PATCH :id/memo`)와 다른 API 다.** 담당자 이름·확인 요청·제보자 관련 사항은',
+      '여기 쓰지 않는다 — 그런 내용은 내부 메모에 남긴다. 두 경로를 나눠 둔 것이 안전장치다.',
+      '',
+      '`comment` 에 null 이나 빈 문자열을 보내면 **공개를 내린다.** 잘못 올라간 글을 즉시 내리는 수단이다.',
+      '300자를 넘으면 400 이다(시민 화면의 한 줄 안내이므로 길이를 제한한다).',
+      '',
+      '`id` 는 **리포트 id** 다(해변 id 아님). 코멘트를 달려면 리포트가 저장돼 있어야 하므로,',
+      '즉석 집계본만 본 상태라면 `POST /admin/daily-reports` 를 먼저 호출한다.',
+    ].join('\n'),
+  })
+  @ApiOkData(DailyReportResponse)
+  @Patch(':id/public-comment')
+  patchPublicComment(
+    @Param('id', ParseIntPipe) id: number,
+    @Body() body: UpdatePublicCommentRequest,
+  ) {
+    return this.updatePublicComment.updatePublicComment({
+      reportId: id,
+      comment: body.comment ?? null,
+    });
   }
 }
