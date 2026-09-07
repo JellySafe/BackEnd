@@ -17,6 +17,19 @@ describe('환경 변수 검증', () => {
     JWT_SECRET: 'a'.repeat(32),
   };
 
+  /**
+   * 운영에서 통과하는 최소 구성.
+   *
+   * CORS_ORIGIN 이 들어 있는 것이 개발 구성과의 차이다 — 세션 쿠키가 생긴 뒤로 운영에서는
+   * 허용 오리진을 명시해야 기동한다(이슈 #55). 미지정이면 모든 오리진이 허용되는데,
+   * 브라우저가 쿠키를 자동으로 실어 주므로 아무 사이트나 운영자 권한으로 API 를 부를 수 있다.
+   */
+  const validProduction = {
+    ...valid,
+    NODE_ENV: 'production',
+    CORS_ORIGIN: 'https://admin.jellysafe.kr',
+  };
+
   it('최소 구성이면 통과한다', () => {
     expect(() => validateEnv({ ...valid })).not.toThrow();
   });
@@ -76,7 +89,9 @@ describe('환경 변수 검증', () => {
 
   describe('NODE_ENV', () => {
     it.each(['development', 'test', 'production'])('%s 는 통과한다', (env) => {
-      expect(() => validateEnv({ ...valid, NODE_ENV: env })).not.toThrow();
+      // 운영은 CORS_ORIGIN 이 함께 있어야 한다(아래 CORS_ORIGIN 절 참고).
+      const base = env === 'production' ? validProduction : valid;
+      expect(() => validateEnv({ ...base, NODE_ENV: env })).not.toThrow();
     });
 
     it('알 수 없는 값은 기동을 막는다 — production 오타는 mock 폴백 게이트를 뒤집는다', () => {
@@ -107,7 +122,7 @@ describe('환경 변수 검증', () => {
 
     it('운영이라도 직접 만든 키면 통과한다', () => {
       expect(() =>
-        validateEnv({ ...valid, NODE_ENV: 'production', JWT_SECRET: 'f3a9'.repeat(16) }),
+        validateEnv({ ...validProduction, JWT_SECRET: 'f3a9'.repeat(16) }),
       ).not.toThrow();
     });
   });
@@ -136,9 +151,7 @@ describe('환경 변수 검증', () => {
     });
 
     it('운영에서 상한 이내면 통과한다', () => {
-      expect(() =>
-        validateEnv({ ...valid, NODE_ENV: 'production', JWT_EXPIRES: '2h' }),
-      ).not.toThrow();
+      expect(() => validateEnv({ ...validProduction, JWT_EXPIRES: '2h' })).not.toThrow();
     });
 
     it('개발에서는 긴 수명을 허용한다 — 로컬 편의를 막을 이유가 없다', () => {
@@ -177,5 +190,40 @@ describe('환경 변수 검증', () => {
   it('검증에 통과하면 입력을 그대로 돌려준다(값을 변형하지 않는다)', () => {
     const input = { ...valid, API_PREFIX: 'api' };
     expect(validateEnv({ ...input })).toEqual(input);
+  });
+
+  describe('CORS_ORIGIN (쿠키 세션이 데려온 요구사항 — 이슈 #55)', () => {
+    /**
+     * 세션이 헤더에 있던 시절에는 오리진을 모두 허용해도 큰 문제가 아니었다 — 공격자 사이트는
+     * 남의 토큰을 알 수 없으니 인증된 요청을 만들 수 없었다. 쿠키로 옮기면 전제가 뒤집힌다.
+     * **브라우저가 알아서 쿠키를 실어 주므로** 아무 사이트나 로그인한 운영자 권한으로 관리자
+     * API 를 부르고 응답까지 읽을 수 있다.
+     */
+    it('운영에서 미지정이면 기동을 막는다', () => {
+      expect(() => validateEnv({ ...valid, NODE_ENV: 'production' })).toThrow(/CORS_ORIGIN/);
+    });
+
+    it('공백만 있어도 미지정으로 본다', () => {
+      expect(() =>
+        validateEnv({ ...valid, NODE_ENV: 'production', CORS_ORIGIN: '   ' }),
+      ).toThrow(/CORS_ORIGIN/);
+    });
+
+    it('무엇이 위험한지와 어떻게 고치는지를 알려준다', () => {
+      // "CORS_ORIGIN 이 필요합니다" 만으로는 왜 갑자기 필요해졌는지 알 수 없다.
+      expect(() => validateEnv({ ...valid, NODE_ENV: 'production' })).toThrow(/세션 쿠키/);
+      expect(() => validateEnv({ ...valid, NODE_ENV: 'production' })).toThrow(/예: CORS_ORIGIN=/);
+    });
+
+    it('운영에서 지정하면 통과한다', () => {
+      expect(() => validateEnv({ ...validProduction })).not.toThrow();
+    });
+
+    it.each(['development', 'test'])(
+      '%s 에서는 미지정을 허용한다 — localhost 포트가 계속 바뀌고, 지킬 자료도 없다',
+      (env) => {
+        expect(() => validateEnv({ ...valid, NODE_ENV: env })).not.toThrow();
+      },
+    );
   });
 });

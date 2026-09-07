@@ -60,9 +60,20 @@ import {
 import {
   addKstDays,
   kstDayStart,
+  kstToday,
   parseKstDateKey,
   toKstDateString,
 } from '@shared/kernel/kst-date';
+import {
+  PUBLIC_DAILY_REPORT_QUERY,
+  PublicDailyReportQueryPort,
+} from '@contexts/dailyreport/application/port/out/public-daily-report-query.port';
+import {
+  GENERATE_DAILY_REPORT_USE_CASE,
+  GenerateDailyReportUseCase,
+  UPDATE_PUBLIC_COMMENT_USE_CASE,
+  UpdatePublicCommentUseCase,
+} from '@contexts/dailyreport/application/port/in/daily-report-use-cases';
 
 /**
  * 영속성 계층 스모크 — **SQL 이 실제로 맞는지**를 진짜 MySQL 위에서 본다.
@@ -1152,6 +1163,252 @@ describe('영속성 스모크', () => {
 
       released();
       await first;
+    });
+  });
+
+  /**
+   * 공개 일간 리포트 (이슈 #56).
+   *
+   * ── 왜 실 DB 로 봐야 하나 ────────────────────────────────────────────────────────
+   * 이 기능의 핵심 두 가지가 **DB 없이는 검증되지 않는다.**
+   *
+   *  1) `public_comment` 컬럼이 실제로 존재하는가. DB-first 라 코드가 먼저 배포되고 DDL
+   *     (prisma/sql/005-...sql)은 나중에 적용된다. 컬럼이 없으면 조회가 통째로 터진다.
+   *  2) **내부 메모(memo)가 새어 나가지 않는가.** 이건 SQL 이 무엇을 SELECT 하는지의 문제라
+   *     포트를 가짜로 바꾸면 원리적으로 볼 수 없다. 그리고 한 번 새면 되돌릴 수 없다.
+   */
+  describe('공개 일간 리포트 (이슈 #56)', () => {
+    const TODAY = kstToday();
+
+    it('활성 해변을 하나도 빠뜨리지 않는다 — 산출 이력이 없어도 포함된다', async () => {
+      // 빼 버리면 화면에서 그 해변이 사라져, "관측이 끊긴 것" 과 "해변이 없는 것" 이 같아 보인다.
+      const query = app.get<PublicDailyReportQueryPort>(PUBLIC_DAILY_REPORT_QUERY);
+      const facts = await query.beachDayFacts(TODAY);
+
+      const activeCount = await prisma.beach.count({ where: { isActive: true } });
+      expect(facts).toHaveLength(activeCount);
+      expect(facts.every((f) => typeof f.name === 'string' && f.name.length > 0)).toBe(true);
+    });
+
+    it('오늘 산출된 위험 단계를 읽어 온다', async () => {
+      // beforeAll 이 전 해변 1회 산출을 돌렸으므로 오늘 이력이 있어야 한다.
+      const query = app.get<PublicDailyReportQueryPort>(PUBLIC_DAILY_REPORT_QUERY);
+      const facts = await query.beachDayFacts(TODAY);
+
+      const withRisk = facts.filter((f) => f.maxRiskLevel !== null);
+      expect(withRisk.length).toBeGreaterThan(0);
+      for (const fact of withRisk) {
+        expect(['safe', 'caution', 'danger', 'severe']).toContain(fact.maxRiskLevel);
+        // 산출이 있으면 처음·마지막도 함께 채워져야 한다(변화 판정의 재료다).
+        expect(fact.firstRiskLevel).not.toBeNull();
+        expect(fact.lastRiskLevel).not.toBeNull();
+      }
+    });
+
+    it('비활성 해변은 집계에서 빠진다', async () => {
+      const target = await prisma.beach.findFirstOrThrow({ where: { isActive: true } });
+      await prisma.beach.update({ where: { id: target.id }, data: { isActive: false } });
+
+      try {
+        const query = app.get<PublicDailyReportQueryPort>(PUBLIC_DAILY_REPORT_QUERY);
+        const facts = await query.beachDayFacts(TODAY);
+        expect(facts.some((f) => Number(f.beachId) === Number(target.id))).toBe(false);
+      } finally {
+        await prisma.beach.update({ where: { id: target.id }, data: { isActive: true } });
+      }
+    });
+
+    it('공개 코멘트를 읽어 온다 — 컬럼이 실제로 있어야 통과한다', async () => {
+      const beach = await prisma.beach.findFirstOrThrow({ where: { isActive: true } });
+      const report = await prisma.dailyReport.create({
+        data: {
+          beachId: beach.id,
+          reportDate: TODAY,
+          publicComment: '오후 입수 통제 중입니다.',
+        },
+      });
+
+      try {
+        const query = app.get<PublicDailyReportQueryPort>(PUBLIC_DAILY_REPORT_QUERY);
+        const facts = await query.beachDayFacts(TODAY);
+        const mine = facts.find((f) => Number(f.beachId) === Number(beach.id));
+
+        expect(mine?.publicComment).toBe('오후 입수 통제 중입니다.');
+      } finally {
+        await prisma.dailyReport.delete({ where: { id: report.id } });
+      }
+    });
+
+    it('⚠️ 내부 메모는 절대 나오지 않는다 — 공개를 전제하지 않고 쓰인 글이다', async () => {
+      // 이 테스트가 이 기능에서 가장 중요하다. 한 번 새면 되돌릴 수 없다.
+      const beach = await prisma.beach.findFirstOrThrow({ where: { isActive: true } });
+      const secret = '내부메모-담당자확인요망-공개금지';
+      const report = await prisma.dailyReport.create({
+        data: {
+          beachId: beach.id,
+          reportDate: TODAY,
+          memo: secret,
+          publicComment: null, // 공개는 고르지 않았다
+        },
+      });
+
+      try {
+        const query = app.get<PublicDailyReportQueryPort>(PUBLIC_DAILY_REPORT_QUERY);
+        const facts = await query.beachDayFacts(TODAY);
+
+        expect(JSON.stringify(facts)).not.toContain(secret);
+        const mine = facts.find((f) => Number(f.beachId) === Number(beach.id));
+        expect(mine?.publicComment).toBeNull();
+
+        // HTTP 응답에도 없어야 한다(직렬화 과정에서 딸려 나가지 않는지).
+        // 날짜를 명시해 캐시 키를 갈라 둔다 — 파라미터 없이 부르면 **메모를 만들기 전에
+        // 캐시된 응답**이 돌아와, 통과했는데 아무것도 검증하지 않은 테스트가 된다.
+        const res = await request(http)
+          .get(`/api/public/daily-report?date=${toKstDateString(TODAY)}`)
+          .expect(200);
+        expect(JSON.stringify(res.body)).not.toContain(secret);
+      } finally {
+        await prisma.dailyReport.delete({ where: { id: report.id } });
+      }
+    });
+
+    it('다른 날짜의 코멘트를 끌어오지 않는다', async () => {
+      const beach = await prisma.beach.findFirstOrThrow({ where: { isActive: true } });
+      const yesterday = addKstDays(TODAY, -1);
+      const report = await prisma.dailyReport.create({
+        data: { beachId: beach.id, reportDate: yesterday, publicComment: '어제 안내' },
+      });
+
+      try {
+        const query = app.get<PublicDailyReportQueryPort>(PUBLIC_DAILY_REPORT_QUERY);
+        const facts = await query.beachDayFacts(TODAY);
+        expect(facts.every((f) => f.publicComment !== '어제 안내')).toBe(true);
+      } finally {
+        await prisma.dailyReport.delete({ where: { id: report.id } });
+      }
+    });
+
+    it('공개 코멘트 저장·삭제가 왕복한다', async () => {
+      const beach = await prisma.beach.findFirstOrThrow({ where: { isActive: true } });
+      const created = await prisma.dailyReport.create({
+        data: { beachId: beach.id, reportDate: addKstDays(TODAY, -2), memo: '내부 메모는 남는다' },
+      });
+
+      try {
+        const useCase = app.get<UpdatePublicCommentUseCase>(UPDATE_PUBLIC_COMMENT_USE_CASE);
+
+        const saved = await useCase.updatePublicComment({
+          reportId: Number(created.id),
+          comment: '  안전요원 안내에 따라 주세요.  ',
+        });
+        expect(saved.publicComment).toBe('안전요원 안내에 따라 주세요.'); // 공백은 다듬는다
+        expect(saved.memo).toBe('내부 메모는 남는다'); // 내부 메모는 건드리지 않는다
+
+        const cleared = await useCase.updatePublicComment({
+          reportId: Number(created.id),
+          comment: null,
+        });
+        expect(cleared.publicComment).toBeNull();
+        expect(cleared.memo).toBe('내부 메모는 남는다');
+      } finally {
+        await prisma.dailyReport.delete({ where: { id: created.id } });
+      }
+    });
+
+    it('리포트를 재생성해도 공개 코멘트가 지워지지 않는다 — 매일 밤 배치가 지우면 안 된다', async () => {
+      // SYS-006 배치는 매일 전날 리포트를 다시 만든다. 그때 upsert 가 사람이 쓴 글까지
+      // 덮어쓰면, 운영자가 올린 안내가 밤사이 조용히 사라진다.
+      const beach = await prisma.beach.findFirstOrThrow({ where: { isActive: true } });
+      const date = addKstDays(TODAY, -4);
+      const created = await prisma.dailyReport.create({
+        data: {
+          beachId: beach.id,
+          reportDate: date,
+          publicComment: '입수 통제 안내',
+          memo: '내부 확인 사항',
+        },
+      });
+
+      try {
+        const generate = app.get<GenerateDailyReportUseCase>(GENERATE_DAILY_REPORT_USE_CASE);
+        await generate.generate({ beachId: Number(beach.id), date, createdBy: null });
+
+        const after = await prisma.dailyReport.findUniqueOrThrow({ where: { id: created.id } });
+        expect(after.publicComment).toBe('입수 통제 안내');
+        expect(after.memo).toBe('내부 확인 사항');
+      } finally {
+        await prisma.dailyReport.delete({ where: { id: created.id } });
+      }
+    });
+
+    it('300자를 넘겨도 저장이 깨지지 않는다 — 컬럼 길이에 맞춰 자른다', async () => {
+      // 넘겨서 DB 오류로 실패시키면 운영자는 무엇이 문제인지 알 수 없다.
+      const beach = await prisma.beach.findFirstOrThrow({ where: { isActive: true } });
+      const created = await prisma.dailyReport.create({
+        data: { beachId: beach.id, reportDate: addKstDays(TODAY, -3) },
+      });
+
+      try {
+        const useCase = app.get<UpdatePublicCommentUseCase>(UPDATE_PUBLIC_COMMENT_USE_CASE);
+        const saved = await useCase.updatePublicComment({
+          reportId: Number(created.id),
+          comment: '가'.repeat(500),
+        });
+
+        expect(saved.publicComment).toHaveLength(300);
+      } finally {
+        await prisma.dailyReport.delete({ where: { id: created.id } });
+      }
+    });
+
+    describe('HTTP', () => {
+      it('인증 없이 오늘의 리포트를 준다', async () => {
+        const res = await request(http).get('/api/public/daily-report').expect(200);
+        const body = res.body as { data: { reportDate: string; beachCount: number } };
+
+        expect(body.data.reportDate).toBe(toKstDateString(TODAY));
+        expect(body.data.beachCount).toBeGreaterThan(0);
+      });
+
+      it('등급별 합계가 해변 수와 맞는다 — 어느 칸으로도 새지 않는다', async () => {
+        const res = await request(http).get('/api/public/daily-report').expect(200);
+        const body = res.body as {
+          data: { beachCount: number; levelCounts: Record<string, number> };
+        };
+
+        const sum = Object.values(body.data.levelCounts).reduce((a, b) => a + b, 0);
+        expect(sum).toBe(body.data.beachCount);
+      });
+
+      it('날짜를 지정할 수 있다', async () => {
+        const yesterday = toKstDateString(addKstDays(TODAY, -1));
+        const res = await request(http)
+          .get(`/api/public/daily-report?date=${yesterday}`)
+          .expect(200);
+
+        expect((res.body as { data: { reportDate: string } }).data.reportDate).toBe(yesterday);
+      });
+
+      it('미래 날짜는 400 이다 — 빈 요약을 주면 "안 온 날"과 "자료 없는 날"이 같아 보인다', async () => {
+        const tomorrow = toKstDateString(addKstDays(TODAY, 1));
+        const res = await request(http)
+          .get(`/api/public/daily-report?date=${tomorrow}`)
+          .expect(400);
+
+        expect((res.body as { error: { code: string } }).error.code).toBe(
+          'DAILY_REPORT_FUTURE_DATE',
+        );
+      });
+
+      it('날짜 형식이 틀리면 400 이다', async () => {
+        await request(http).get('/api/public/daily-report?date=어제').expect(400);
+      });
+
+      it('내부 메모 필드 이름 자체가 응답에 없다', async () => {
+        // 값이 비어 있어서 안 보이는 것과, 계약에 아예 없는 것은 다르다.
+        const res = await request(http).get('/api/public/daily-report').expect(200);
+        expect(JSON.stringify(res.body)).not.toContain('memo');
+      });
     });
   });
 });

@@ -6,6 +6,7 @@ import type { StringValue } from 'ms';
 import { AppConfig } from '@shared/config/app.config';
 import { JwtAuthGuard } from './jwt-auth.guard';
 import { SystemAuthGuard } from './system-auth.guard';
+import { CsrfGuard } from './csrf.guard';
 import { GuestTokenService } from './guest-token.service';
 import { GuestTokenController } from './guest-token.controller';
 
@@ -13,6 +14,7 @@ import { GuestTokenController } from './guest-token.controller';
  * 전역 인증 모듈.
  * - JwtModule 을 전역 등록해 user 컨텍스트가 토큰을 발급하고 가드가 검증한다.
  * - JwtAuthGuard 를 전역 가드(APP_GUARD)로 등록한다(/admin 은 토큰 필수, 그 외는 선택).
+ * - CsrfGuard 를 전역 가드로 등록한다(쿠키로 인증한 상태 변경 요청만 검사 — 이슈 #55).
  * - SystemAuthGuard 를 전역 가드로 함께 등록한다(/system 경로만 보호, x-system-key 헤더).
  *   두 가드는 서로 다른 경로만 검사하고 나머지는 통과시키므로 경로별로 정확히 하나만 실효한다.
  *   (`/public/*` 은 비로그인 접근이 계속 가능하되, Bearer 토큰이 실려 오면 req.user 가 채워진다)
@@ -39,6 +41,9 @@ import { GuestTokenController } from './guest-token.controller';
   providers: [
     { provide: APP_GUARD, useClass: JwtAuthGuard },
     { provide: APP_GUARD, useClass: SystemAuthGuard },
+    // JwtAuthGuard 다음에 둔다. 인증이 먼저 끝나야 401 과 403 이 뒤바뀌지 않는다
+    // (토큰이 아예 없는 요청에 "CSRF 토큰이 틀렸다" 고 답하면 원인을 엉뚱한 데서 찾게 된다).
+    { provide: APP_GUARD, useClass: CsrfGuard },
     GuestTokenService,
   ],
   exports: [JwtModule, GuestTokenService],

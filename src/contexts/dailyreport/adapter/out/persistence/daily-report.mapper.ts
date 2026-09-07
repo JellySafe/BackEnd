@@ -17,6 +17,7 @@ export function toDomain(row: PrismaDailyReport): DailyReport {
     stingCount: row.stingCount,
     actionCount: row.actionCount,
     memo: row.memo,
+    publicComment: row.publicComment,
     createdBy: row.createdBy === null ? null : toId(row.createdBy),
   });
 }
@@ -35,6 +36,7 @@ export function toPersistence(report: DailyReport): Prisma.DailyReportUncheckedC
     stingCount: s.stingCount,
     actionCount: s.actionCount,
     memo: s.memo,
+    publicComment: s.publicComment,
     createdBy: s.createdBy === null ? null : BigInt(s.createdBy),
   };
 }

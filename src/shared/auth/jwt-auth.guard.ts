@@ -5,6 +5,7 @@ import { Request } from 'express';
 import { DomainError } from '@shared/kernel/domain-error';
 import { AuthUser, JwtPayload } from './auth-user';
 import { IS_PUBLIC_KEY, ROLES_KEY } from './auth.decorators';
+import { ACCESS_COOKIE, parseCookies } from './session-cookie';
 
 /** `/admin/*` 에 @Roles 가 붙어 있지 않을 때 적용되는 기본 허용 역할. */
 export const ADMIN_DEFAULT_ROLES = ['operator', 'admin'] as const;
@@ -33,6 +34,19 @@ export const ADMIN_DEFAULT_ROLES = ['operator', 'admin'] as const;
  * `x-user-id` 헤더에서 받았는데, 그건 신원이 아니라 **자칭**이라 누구나 남을 사칭할 수 있었다.
  * 이제 신원은 오직 여기서 검증한 JWT 에서만 나온다(shared/auth/public-owner.ts).
  *
+ * ── 토큰을 어디서 읽나 (헤더와 쿠키) ────────────────────────────────────────────────
+ * `Authorization: Bearer` 를 먼저 보고, 없으면 `js_access_token` **쿠키**를 본다(이슈 #55).
+ * 두 경로를 병행하는 이유는 쓰는 쪽이 다르기 때문이다 — 브라우저(관리자 웹)는 쿠키가 안전하고
+ * (JS 가 못 읽는다), Swagger·운영 스크립트·서버 간 호출은 헤더가 편하다. 한쪽으로 강제하면
+ * 다른 쪽이 통째로 깨진다.
+ *
+ * **헤더가 우선**이다. 둘 다 있으면 헤더를 쓴다 — 호출자가 명시적으로 지정한 값이고,
+ * 브라우저가 자동으로 붙인 쿠키보다 의도가 분명하다(Swagger 에서 다른 계정으로 시험할 때
+ * 남아 있는 쿠키에 가려지지 않는다).
+ *
+ * 어느 쪽으로 인증했는지는 `req.authVia` 에 남긴다. `GET /admin/auth/session` 이 이 값을 그대로
+ * 돌려주므로, 프론트가 쿠키 전환이 실제로 먹었는지(헤더로 되돌아가 있지 않은지) 확인할 수 있다.
+ *
  * ── 유효하지 않은 토큰을 왜 익명으로 강등하지 않나 ───────────────────────────────────
  * 만료된 토큰을 조용히 무시하면, 사용자는 로그인 상태라고 믿는데 서버는 익명으로 처리한다.
  * 그러면 관심 해변이 게스트 쪽에 저장되는 등 **조용히 엉뚱한 소유자에 붙는다.**
@@ -48,7 +62,7 @@ export class JwtAuthGuard implements CanActivate {
   canActivate(context: ExecutionContext): boolean {
     if (context.getType() !== 'http') return true;
 
-    const req = context.switchToHttp().getRequest<Request & { user?: AuthUser }>();
+    const req = context.switchToHttp().getRequest<AuthenticatedRequest>();
 
     const isPublic = this.reflector.getAllAndOverride<boolean>(IS_PUBLIC_KEY, [
       context.getHandler(),
@@ -57,25 +71,29 @@ export class JwtAuthGuard implements CanActivate {
     if (isPublic) return true;
 
     const isAdminPath = /\/admin(\/|$)/.test(req.path ?? req.url ?? '');
-    const header = req.headers.authorization;
-    const hasBearer = header?.startsWith('Bearer ') === true;
+    const presented = extractToken(req);
 
-    if (!hasBearer) {
+    if (!presented) {
       // 관리자 경로는 토큰이 없으면 거기서 끝. 그 외 경로는 익명으로 통과한다.
       if (isAdminPath) {
-        throw new DomainError('UNAUTHORIZED', 'AUTH_TOKEN_MISSING', '관리자 인증 토큰이 필요합니다.');
+        throw new DomainError(
+          'UNAUTHORIZED',
+          'AUTH_TOKEN_MISSING',
+          '관리자 인증 토큰이 필요합니다. 로그인하거나 Authorization: Bearer 헤더를 보내세요.',
+        );
       }
       return true;
     }
 
     let payload: JwtPayload;
     try {
-      payload = this.jwt.verify<JwtPayload>(header.slice(7));
+      payload = this.jwt.verify<JwtPayload>(presented.token);
     } catch {
       throw new DomainError('UNAUTHORIZED', 'AUTH_TOKEN_INVALID', '유효하지 않은 인증 토큰입니다.');
     }
 
     req.user = { userId: payload.sub, role: payload.role, email: payload.email };
+    req.authVia = presented.via;
 
     // 명시된 @Roles 가 우선하고, 없으면 관리자 경로에 한해 기본값을 적용한다.
     // (공개 경로는 @Roles 가 없으면 역할을 따지지 않는다 — 애초에 누구나 쓰는 경로다)
@@ -99,4 +117,31 @@ export class JwtAuthGuard implements CanActivate {
 
     return true;
   }
+}
+
+/** 인증 결과가 실리는 요청. `authVia` 는 CsrfGuard 가 읽는다. */
+export interface AuthenticatedRequest extends Request {
+  user?: AuthUser;
+  /** 어느 자격증명으로 인증했는지. 인증되지 않았으면 undefined. */
+  authVia?: 'bearer' | 'cookie';
+}
+
+/**
+ * 요청에서 액세스 토큰을 꺼낸다. **헤더가 쿠키보다 우선**이다(위 주석 참고).
+ * 값이 비어 있는 `Bearer ` 헤더는 없는 것으로 본다 — 그대로 verify 에 넘기면 401 이 나긴
+ * 하지만, 쿠키 세션이 있는데도 빈 헤더 하나 때문에 막히는 것은 원인을 찾기 어렵다.
+ */
+function extractToken(req: Request): { token: string; via: 'bearer' | 'cookie' } | null {
+  const header = req.headers.authorization;
+  if (header?.startsWith('Bearer ') === true) {
+    const token = header.slice(7).trim();
+    if (token.length > 0) return { token, via: 'bearer' };
+  }
+
+  const cookieToken = parseCookies(req.headers.cookie)[ACCESS_COOKIE];
+  if (typeof cookieToken === 'string' && cookieToken.length > 0) {
+    return { token: cookieToken, via: 'cookie' };
+  }
+
+  return null;
 }

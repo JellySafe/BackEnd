@@ -5,6 +5,7 @@ import { Observable, of } from 'rxjs';
 import { tap } from 'rxjs/operators';
 import { AppConfig } from '@shared/config/app.config';
 import { ResponseCache } from './response-cache';
+import { ACCESS_COOKIE, REFRESH_COOKIE, parseCookies } from '@shared/auth/session-cookie';
 
 /**
  * 캐시해도 되는 경로 (**허용 목록**).
@@ -13,12 +14,16 @@ import { ResponseCache } from './response-cache';
  * 나중에 추가되는 개인 자료 경로가 자동으로 끌려 들어온다 — 관심 해변·알림함처럼 소유자가
  * 있는 응답이 캐시되면 **남의 자료가 다른 사람에게 보인다.** 표시가 없으면 캐시하지 않는다.
  *
- * 여기 있는 둘은 누가 부르든 같은 값이고(해변 목록·해변별 위험도), 부하 측정에서 가장 무거운
- * 경로로 확인된 것들이다(docs/load-test.md).
+ * 여기 있는 것들은 누가 부르든 같은 값이고(해변 목록·해변별 위험도·오늘의 리포트), 부하
+ * 측정에서 가장 무거운 경로로 확인된 것들이다(docs/load-test.md).
  */
 const CACHEABLE: RegExp[] = [
   /^\/api\/public\/beaches\/?$/,
   /^\/api\/public\/beaches\/\d+\/risk\/?$/,
+  // 오늘의 리포트(이슈 #56). 앱 첫 화면이라 호출이 몰리는데, 해변 전부를 훑는 집계라
+  // 공개 경로 중 가장 무겁다. 게다가 **하루에 한 번 바뀌는 자료**라 캐시가 가장 잘 맞는다.
+  // 개인 자료가 섞이지 않는다 — 등급 집계와 운영자가 공개를 선택한 코멘트뿐이다.
+  /^\/api\/public\/daily-report\/?$/,
 ];
 
 /**
@@ -75,6 +80,11 @@ export class PublicCacheInterceptor implements NestInterceptor {
     // 자격증명이 실렸으면 캐시하지 않는다(위 주석의 이유).
     if (typeof req.headers.authorization === 'string') return false;
     if (typeof req.query?.token === 'string') return false;
+    // 세션 쿠키도 자격증명이다(이슈 #55). 헤더만 보던 시절의 규칙을 그대로 두면, 관리자가
+    // 로그인한 브라우저로 공개 화면을 여는 순간 **자격증명이 실린 요청이 캐시를 타게 된다.**
+    // 지금 허용 목록에 개인화 응답이 없어 실제 유출은 없지만, 이 규칙이 지키려던 것은
+    // "자격증명이 실린 요청은 캐시하지 않는다" 이지 "Authorization 헤더를 본다" 가 아니다.
+    if (hasSessionCookie(req.headers.cookie)) return false;
 
     return true;
   }
@@ -82,3 +92,10 @@ export class PublicCacheInterceptor implements NestInterceptor {
 
 /** 테스트에서 목록을 확인할 수 있게 노출한다. */
 export const CACHEABLE_PATTERNS = CACHEABLE;
+
+/** 세션 쿠키가 실려 있는지. 값까지 검증할 필요는 없다 — 있으면 캐시하지 않는 것으로 족하다. */
+function hasSessionCookie(header: unknown): boolean {
+  if (typeof header !== 'string') return false;
+  const cookies = parseCookies(header);
+  return typeof cookies[ACCESS_COOKIE] === 'string' || typeof cookies[REFRESH_COOKIE] === 'string';
+}

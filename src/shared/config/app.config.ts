@@ -1,6 +1,6 @@
 import { resolve } from 'node:path';
 import { ConfigService } from '@nestjs/config';
-import { DEFAULT_JWT_EXPIRES } from './duration';
+import { DEFAULT_JWT_EXPIRES, parseDurationSeconds } from './duration';
 
 /**
  * 환경 변수 접근 헬퍼. 타입 안전하게 읽는다.
@@ -44,6 +44,31 @@ export class AppConfig {
   get jwtExpires(): string {
     const raw = (this.config.get<string>('JWT_EXPIRES') ?? '').trim();
     return raw === '' ? DEFAULT_JWT_EXPIRES : raw;
+  }
+
+  /**
+   * 액세스 토큰 수명(ms). 세션 쿠키의 만료를 토큰 만료와 같이 맞추는 데 쓴다(이슈 #55).
+   *
+   * 둘을 맞추는 이유 — 쿠키가 더 오래 살면 **이미 죽은 토큰이 계속 실려 와** 매 요청이 401 이
+   * 되고, 사용자에게는 "로그인은 돼 있는데 아무것도 안 되는" 상태로 보인다. 쿠키가 먼저
+   * 사라지면 브라우저가 알아서 안 보내고, 프론트는 재발급을 부르면 된다.
+   *
+   * 형식은 env 검증이 이미 강제하므로(duration.ts) 파싱 실패는 기본값으로 되돌린다.
+   */
+  get accessTokenMaxAgeMs(): number {
+    const seconds = parseDurationSeconds(this.jwtExpires) ?? parseDurationSeconds(DEFAULT_JWT_EXPIRES);
+    return (seconds ?? 1_800) * 1_000;
+  }
+
+  /**
+   * 세션 쿠키에 `Secure` 를 붙일지. 운영에서만 붙인다.
+   *
+   * 로컬은 http 라 `Secure` 를 붙이면 브라우저가 쿠키를 **조용히 버린다** — 로그인은 200 인데
+   * 다음 요청이 401 이 되어 원인을 찾기 어렵다. 반대로 운영에서 빠지면 평문 구간에서
+   * 세션이 새므로, 환경으로 가르는 것이 맞다.
+   */
+  get cookieSecure(): boolean {
+    return this.isProduction;
   }
 
   /**

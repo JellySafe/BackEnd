@@ -631,6 +631,9 @@ model DailyReport {
   stingCount        Int      @default(0) @map("sting_count")
   actionCount       Int      @default(0) @map("action_count")
   memo              String?  @db.Text
+  /// 공개용 운영기관 코멘트(이슈 #56). 내부 메모(memo)와 **일부러 분리**한다 —
+  /// memo 는 공개를 전제하지 않고 쓰인 값이라 소급 공개하면 안 된다.
+  publicComment     String?  @map("public_comment") @db.VarChar(300)
   createdBy         BigInt?  @map("created_by")
   createdAt         DateTime @default(now()) @map("created_at") @db.DateTime(0)
   updatedAt         DateTime @updatedAt @map("updated_at") @db.DateTime(0)
