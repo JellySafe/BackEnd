@@ -54,6 +54,11 @@ export type DailyReport = {
     sting_count: Generated<number>;
     action_count: Generated<number>;
     memo: string | null;
+    /**
+     * 공개용 운영기관 코멘트(이슈 #56). 내부 메모(memo)와 **일부러 분리**한다 —
+     * memo 는 공개를 전제하지 않고 쓰인 값이라 소급 공개하면 안 된다.
+     */
+    public_comment: string | null;
     created_by: number | null;
     created_at: Generated<Timestamp>;
     updated_at: Timestamp;

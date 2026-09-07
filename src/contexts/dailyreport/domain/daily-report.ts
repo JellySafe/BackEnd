@@ -32,6 +32,9 @@ export function reportDateLabel(reportDate: Date): string {
   return toKstDateString(reportDate);
 }
 
+/** 공개 코멘트 최대 길이. DB 컬럼 VARCHAR(300) 과 맞춘다(prisma/sql/005-...sql). */
+export const PUBLIC_COMMENT_MAX_LENGTH = 300;
+
 /** SYS-006 집계 결과 (Kysely 쿼리 어댑터가 산출). */
 export interface DailyReportAggregation {
   /** 그날 발생한 위험도 산출 중 최고 단계. */
@@ -59,6 +62,14 @@ export interface DailyReportProps {
   stingCount: number;
   actionCount: number;
   memo: string | null;
+  /**
+   * 공개용 운영기관 코멘트 (이슈 #56). **memo 와 일부러 나눠 둔 값이다.**
+   *
+   * memo 는 운영자가 내부용으로 적은 글이라 담당자 이름·확인 요청 같은 것이 섞여 있을 수
+   * 있다. 그걸 공개 경로에 그대로 붙이면 **공개를 전제하지 않고 쓴 글이 소급해서 전부**
+   * **공개된다.** 되돌릴 수 없는 종류의 실수다. 그래서 공개는 명시적으로 고르게 한다.
+   */
+  publicComment: string | null;
   createdBy: Id | null;
 }
 
@@ -96,6 +107,7 @@ export class DailyReport {
       stingCount: agg.stingCount,
       actionCount: agg.actionCount,
       memo: null,
+      publicComment: null,
       createdBy,
     });
   }
@@ -105,10 +117,24 @@ export class DailyReport {
     return new DailyReport(props);
   }
 
-  /** FLOW-ADM-004 운영자 메모 저장/수정. */
+  /** FLOW-ADM-004 운영자 메모 저장/수정. **내부용** — 공개되지 않는다. */
   updateMemo(memo: string | null): void {
     const trimmed = memo?.trim() ?? '';
     this.props.memo = trimmed.length > 0 ? trimmed : null;
+  }
+
+  /**
+   * 공개용 운영기관 코멘트 저장/수정 (이슈 #56). 시민 화면(`GET /public/daily-report`)에 그대로 나간다.
+   *
+   * null 이나 빈 문자열을 주면 **공개를 내린다.** 잘못 올린 글을 지우는 것은 즉시 되어야 하므로
+   * 별도 삭제 API 를 두지 않고 같은 경로로 처리한다.
+   *
+   * 길이는 DB 컬럼(VARCHAR(300))에 맞춰 자른다. 넘겨서 DB 오류로 실패시키면 운영자는 무엇이
+   * 문제인지 알 수 없고, 그렇다고 통과시키면 저장 자체가 깨진다.
+   */
+  updatePublicComment(comment: string | null): void {
+    const trimmed = comment?.trim() ?? '';
+    this.props.publicComment = trimmed.length > 0 ? trimmed.slice(0, PUBLIC_COMMENT_MAX_LENGTH) : null;
   }
 
   /** 재생성 시 기존 리포트에 집계값을 다시 반영한다(메모는 보존). */
@@ -162,6 +188,9 @@ export class DailyReport {
   }
   get memo(): string | null {
     return this.props.memo;
+  }
+  get publicComment(): string | null {
+    return this.props.publicComment;
   }
 
   /** 영속화/응답용 스냅샷 (어댑터 전용). */
