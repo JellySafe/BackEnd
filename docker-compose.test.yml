@@ -5,6 +5,10 @@
 #     이미 쓰는 포트라면 TEST_MYSQL_PORT 로 바꾼다(접속 URL 은 TEST_DATABASE_URL 로 함께 지정).
 #   - 데이터는 tmpfs 라 컨테이너를 내리면 사라진다. 매번 같은 상태에서 시작하기 위해서다.
 #     (스모크는 시드 직후 상태를 전제로 검증한다 — 이전 실행의 잔재가 남으면 그 전제가 깨진다)
+# ⚠️ 프로젝트 이름을 못박는다. 없으면 개발용 파일(docker-compose.dev.yml)과 같은 프로젝트로
+#    묶여 서로의 컨테이너를 대체한다 — 같은 디렉터리에 있고 서비스명이 둘 다 mysql 이기 때문이다.
+name: jellysafe-test
+
 services:
   mysql:
     image: mysql:8.0
