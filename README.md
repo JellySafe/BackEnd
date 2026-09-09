@@ -60,20 +60,35 @@ src/
 
 ### 1. 사전 준비
 ```bash
-cp .env.example .env          # DATABASE_URL 등 확인/수정
+cp .env.example .env          # DATABASE_URL·PORT·JWT_SECRET 확인/수정
 npm install
 ```
 
-### 2. DB 스키마 적용
-스키마 원본은 `../db/jellysafe_schema.sql` (ERwin/MySQL DDL). 이 파일을 MySQL 8 에 적용한다:
+### 2. 개발 DB 올리기
 ```bash
-mysql -u<user> -p jellysafe < ../db/jellysafe_schema.sql
+npm run db:dev:up        # MySQL 8 컨테이너 (3400 포트, 볼륨 — 내려도 데이터 유지)
+npm run db:dev:init      # 스키마 + 추가 DDL + 시드
 ```
-적용 후 Prisma 클라이언트/Kysely 타입을 생성한다(스키마 변경 시마다):
-```bash
-npm run prisma:generate
-```
-> Prisma 는 DB-first 로 운용한다. 운영 DB 와 대조하려면 `npm run prisma:pull` 로 `schema.prisma` 를 역생성해 비교할 수 있다.
+
+⚠️ **테스트용 DB(3399)와 반드시 분리해서 쓴다.** 스모크 준비 스크립트는 시작할 때 **테이블을
+전부 지우므로**, 같은 DB 를 개발에 쓰면 `npm run test:smoke` 한 번에 작업 데이터가 사라진다.
+`.env` 의 `DATABASE_URL` 이 `test` 를 가리키면 `db:dev:init` 이 거부한다.
+
+| | 포트 | 데이터 | 용도 |
+|---|---|---|---|
+| `docker-compose.dev.yml` | 3400 | 볼륨(유지) | 개발 |
+| `docker-compose.test.yml` | 3399 | tmpfs(소멸) | 스모크 |
+
+`db:dev:init` 은 **지우지 않고 더하기만** 한다(여러 번 돌려도 안전). 처음부터 다시 만들려면
+`npm run db:dev:reset`(볼륨째 삭제 후 재생성).
+
+스키마는 두 경로 중 하나로 만들어진다. 스키마 원본(`../db/jellysafe_schema.sql`, ERwin DDL)이
+있으면 그것을 그대로 적용해 **운영과 같은 제약**이 걸리고, 없으면 `prisma db push` 로 만든다
+(콜레이션·COMMENT 는 달라지지만 CHECK 제약은 `prisma/sql/999-...` 로 함께 걸린다).
+어느 경로로 만들었는지는 실행 로그에 찍힌다.
+
+> 스키마를 고친 뒤에는 `npm run prisma:generate` 로 Prisma 클라이언트/Kysely 타입을 다시 만든다.
+> Prisma 는 DB-first 로 운용한다 — 운영 DB 와 대조하려면 `npm run prisma:pull` 로 역생성해 비교한다.
 
 ### 3. 기동
 ```bash
@@ -81,7 +96,12 @@ npm run start:dev        # 개발(watch)
 npm run start:prod       # 빌드 후 dist 실행
 ```
 - API prefix: `/api`
-- Swagger 문서: `http://localhost:3000/api/docs`
+- Swagger 문서: `http://localhost:{PORT}/api/docs`
+- 시드 계정: `admin@jellysafe.local` / `admin1234`
+
+> 포트는 `.env` 의 `PORT`(기본 3000)를 따른다. 프론트엔드가 3000 을 쓰고 있으면 비켜서 잡는다.
+> `/system/*`(배치 수동 트리거)을 로컬에서 부르려면 `SYSTEM_API_KEY` 를 채워야 한다 — 비어 있으면
+> 그 경로는 전면 차단된다(fail-closed).
 
 ### 검증 스크립트
 ```bash
@@ -105,6 +125,8 @@ CI(`.github/workflows/ci.yml`)가 위를 그대로 돌린다.
 
 ```bash
 npm run db:test:up       # 테스트용 MySQL 컨테이너 (3399 포트, tmpfs — 내리면 데이터 소멸)
+                         # 개발용(3400)과 **다른 컨테이너**다. compose 프로젝트 이름을 서로
+                         # 못박아 두어 한쪽을 띄워도 다른 쪽이 지워지지 않는다.
 npm run test:smoke       # 스키마 준비 + 시드 + 흐름 검증
 npm run db:test:down     # 정리
 ```

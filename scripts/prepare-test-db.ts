@@ -17,10 +17,14 @@
  * 읽으면 안 되기 때문이다. 원본 DDL 로 돌리려면 TEST_SCHEMA_SQL 에 경로를 주면 된다.
  */
 import { execFileSync } from 'node:child_process';
-import { existsSync, readFileSync, readdirSync } from 'node:fs';
-import { join, resolve } from 'node:path';
+import { existsSync } from 'node:fs';
+import { resolve } from 'node:path';
 import { createConnection, RowDataPacket } from 'mysql2/promise';
+// 접속 대기·SQL 파일 적용은 개발용 준비 스크립트와 공유한다. 규칙이 두 벌이 되면
+// 한쪽만 고쳐져 "개발 DB 에만 CHECK 제약이 빠지는" 식이 된다.
+import { applyManualDdl, runSqlFile, waitForDatabase } from './db-setup';
 
+const LOG = '[prepare-test-db]';
 const DEFAULT_URL = 'mysql://jellysafe:jellysafe@127.0.0.1:3399/jellysafe_test';
 const DATABASE_URL = process.env.TEST_DATABASE_URL ?? DEFAULT_URL;
 
@@ -29,29 +33,6 @@ const SCHEMA_SQL = process.env.TEST_SCHEMA_SQL ?? resolve(__dirname, '../../db/j
 
 /** 운영에 수동 적용하는 추가 DDL. 번호 순서대로 적용한다. */
 const EXTRA_SQL_DIR = resolve(__dirname, '../prisma/sql');
-
-const CONNECT_RETRIES = 60;
-const CONNECT_INTERVAL_MS = 2000;
-
-async function waitForDatabase(): Promise<void> {
-  for (let attempt = 1; attempt <= CONNECT_RETRIES; attempt++) {
-    try {
-      const conn = await createConnection(DATABASE_URL);
-      await conn.end();
-      console.log(`[prepare-test-db] DB 접속 확인 (${attempt}번째 시도)`);
-      return;
-    } catch (err) {
-      if (attempt === CONNECT_RETRIES) {
-        throw new Error(
-          `DB 에 접속하지 못했다(${DATABASE_URL}). \`npm run db:test:up\` 으로 컨테이너를 먼저 띄운다. 원인: ${
-            err instanceof Error ? err.message : String(err)
-          }`,
-        );
-      }
-      await new Promise((r) => setTimeout(r, CONNECT_INTERVAL_MS));
-    }
-  }
-}
 
 /**
  * 기존 테이블을 전부 지운다 — **매번 같은 상태에서 시작하기 위해서다.**
@@ -89,25 +70,6 @@ async function resetSchema(): Promise<void> {
   }
 }
 
-/** SQL 파일 하나를 통째로 실행한다(multipleStatements). */
-async function runSqlFile(path: string, tolerateErrors: boolean): Promise<void> {
-  const sql = readFileSync(path, 'utf8');
-  const conn = await createConnection({ uri: DATABASE_URL, multipleStatements: true });
-  try {
-    await conn.query(sql);
-    console.log(`[prepare-test-db] 적용: ${path}`);
-  } catch (err) {
-    const message = err instanceof Error ? err.message : String(err);
-    if (!tolerateErrors) throw err;
-    // 추가 DDL 은 "이미 없는 인덱스를 지우려는" 식으로 실패할 수 있다. 그건 문제가 아니라
-    // 이미 그 상태라는 뜻이다(prisma/sql/001 주석 참고). 테이블 생성 실패라면 뒤의 시드가 깨지므로
-    // 여기서 감춰도 결국 드러난다.
-    console.warn(`[prepare-test-db] 건너뜀: ${path} — ${message}`);
-  } finally {
-    await conn.end();
-  }
-}
-
 function run(command: string, args: string[]): void {
   execFileSync(command, args, {
     stdio: 'inherit',
@@ -118,12 +80,21 @@ function run(command: string, args: string[]): void {
 
 async function main(): Promise<void> {
   console.log(`[prepare-test-db] 대상: ${DATABASE_URL}`);
-  await waitForDatabase();
+  await waitForDatabase({
+    databaseUrl: DATABASE_URL,
+    logPrefix: LOG,
+    upCommand: 'npm run db:test:up',
+  });
   await resetSchema();
 
   if (existsSync(SCHEMA_SQL)) {
     console.log(`[prepare-test-db] 스키마 원본 DDL 로 만든다 — 운영과 같은 제약이 걸린다.`);
-    await runSqlFile(SCHEMA_SQL, false);
+    await runSqlFile({
+      databaseUrl: DATABASE_URL,
+      path: SCHEMA_SQL,
+      tolerateErrors: false,
+      logPrefix: LOG,
+    });
   } else {
     console.log(
       `[prepare-test-db] 스키마 원본(${SCHEMA_SQL})이 없어 prisma db push 로 만든다.\n` +
@@ -134,14 +105,7 @@ async function main(): Promise<void> {
 
   // 운영에 수동 적용하는 DDL(신규 테이블·인덱스 정리)을 이어서 적용한다.
   // 이게 없으면 리프레시 토큰 테이블이 없는 스키마로 스모크가 돌아, 정작 검증하려던 흐름이 빠진다.
-  const extras = existsSync(EXTRA_SQL_DIR)
-    ? readdirSync(EXTRA_SQL_DIR)
-        .filter((f) => f.endsWith('.sql'))
-        .sort()
-    : [];
-  for (const file of extras) {
-    await runSqlFile(join(EXTRA_SQL_DIR, file), true);
-  }
+  await applyManualDdl({ databaseUrl: DATABASE_URL, dir: EXTRA_SQL_DIR, logPrefix: LOG });
 
   console.log('[prepare-test-db] 시드 적용');
   run('npx', ['prisma', 'db', 'seed']);
