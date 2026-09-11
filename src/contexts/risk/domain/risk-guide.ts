@@ -17,17 +17,25 @@ import { RiskLevel } from '@shared/kernel/risk-level';
  *  · **행동을 남긴다.** 어느 언어에서도 "무엇을 하라" 가 빠지지 않게 했다. 상태 설명만
  *    남으면 읽는 사람이 판단을 떠안는다.
  *  · **현장 지시를 우선하게 한다.** 서버가 아는 것보다 현장 안전요원이 아는 것이 늘 정확하다.
+ *  · **라벨과 같은 말을 쓴다.** 문구는 그 단계의 표시 라벨(RISK_LEVEL_LABELS_I18N)을 그대로
+ *    포함해야 한다. 화면은 라벨을 제목으로, 이 문구를 본문으로 함께 띄우므로 서로 다른 단어를
+ *    쓰면 한 카드 안에서 제목과 본문이 어긋난다 — 실제로 그랬다(라벨을 '매우 위험' 으로
+ *    바꾸면서 문구의 '심각 단계' 가 따라오지 않았고, zh·en 에도 같은 어긋남이 있었다).
+ *    risk-guide.i18n.spec.ts 가 이 규칙을 강제한다.
+ *
+ *    `safe` 만 예외다. 라벨이 '낮음' 인데 "낮음 단계입니다" 는 어색하고, 무엇보다 이 문구가
+ *    하려는 말은 단계 이름이 아니라 **"특이사항이 없다"** 는 사실 진술이기 때문이다.
  */
 const SAFETY_GUIDES: Record<RiskLevel, LocaleText> = {
   severe: {
-    ko: '심각 단계입니다. 입수를 삼가고 해수욕장 통제 안내와 현장 안전요원의 지시를 따라주세요.',
+    ko: '매우 위험 단계입니다. 입수를 삼가고 해수욕장 통제 안내와 현장 안전요원의 지시를 따라주세요.',
     en: 'Severe risk. Do not enter the water. Follow beach closure notices and the instructions of on-site lifeguards.',
-    zh: '严重等级。请勿下水，并遵守海水浴场管制通知和现场安全员的指示。',
+    zh: '非常危险等级。请勿下水，并遵守海水浴场管制通知和现场安全员的指示。',
     ja: '非常に危険な段階です。入水を控え、海水浴場の規制案内と現場の安全員の指示に従ってください。',
   },
   danger: {
     ko: '위험 단계입니다. 입수를 자제하고 방문 전 현장 안전 안내를 반드시 확인해주세요.',
-    en: 'High risk. Avoid entering the water, and be sure to check on-site safety notices before visiting.',
+    en: 'Danger. Avoid entering the water, and be sure to check on-site safety notices before visiting.',
     zh: '危险等级。请避免下水，前往前务必确认现场安全须知。',
     ja: '危険な段階です。入水を控え、訪問前に必ず現場の安全案内をご確認ください。',
   },

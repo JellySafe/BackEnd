@@ -1,4 +1,4 @@
-import { RISK_LEVELS, RiskLevel } from '@shared/kernel/risk-level';
+import { RISK_LEVELS, RiskLevel, riskLevelLabelOf } from '@shared/kernel/risk-level';
 import { SUPPORTED_LOCALES } from '@shared/i18n/locale';
 import { buildSafetyGuide } from './risk-guide';
 import { RISK_FACTOR_NAMES, RISK_FACTOR_NAMES_I18N, riskFactorNameOf } from './risk-factors';
@@ -51,6 +51,40 @@ describe('안전 안내 문구 (i18n)', () => {
     // 빈 문자열이 나가면 화면에서 행동 지침이 통째로 없어진다.
     const guide = buildSafetyGuide('unknown' as RiskLevel, 'en');
     expect(guide.length).toBeGreaterThan(0);
+  });
+
+  /**
+   * 라벨과 문구가 같은 말을 쓰는지.
+   *
+   * 화면은 라벨을 **제목**으로, 안내 문구를 **본문**으로 함께 띄운다. 서로 다른 단어를 쓰면
+   * 한 카드 안에서 제목과 본문이 어긋난다.
+   *
+   *     매우 위험                           ← 라벨
+   *     심각 단계입니다. 입수를 삼가고…      ← 문구
+   *
+   * 실제로 그랬다. 라벨을 '매우 위험' 으로 바꿀 때 문구의 '심각 단계' 가 따라오지 않았고,
+   * 같은 어긋남이 zh(severe)·en(danger)에도 있었다. 프론트에서 덮으면 서버와 앱이 같은
+   * 단계를 다른 문장으로 말하게 되므로 여기서 맞춘다.
+   *
+   * `safe` 는 대상이 아니다 — 라벨이 '낮음' 인데 "낮음 단계입니다" 는 어색하고, 그 문구가
+   * 하려는 말은 단계 이름이 아니라 "특이사항이 없다" 는 사실 진술이다.
+   */
+  describe('라벨과 안내 문구가 같은 말을 쓴다', () => {
+    const NAMED_LEVELS: RiskLevel[] = ['caution', 'danger', 'severe'];
+
+    it.each(
+      NAMED_LEVELS.flatMap((level) =>
+        SUPPORTED_LOCALES.map((locale) => [level, locale] as const),
+      ),
+    )('%s / %s: 문구가 라벨을 그대로 포함한다', (level, locale) => {
+      const label = riskLevelLabelOf(level, locale);
+      expect(buildSafetyGuide(level, locale)).toContain(label);
+    });
+
+    it("safe 는 예외다 — '낮음 단계입니다' 는 어색하고, 하려는 말이 다르다", () => {
+      // 규칙을 적용하지 않는다는 것 자체를 고정한다(나중에 무심코 맞추지 않도록).
+      expect(buildSafetyGuide('safe', 'ko')).not.toContain(riskLevelLabelOf('safe', 'ko'));
+    });
   });
 });
 
