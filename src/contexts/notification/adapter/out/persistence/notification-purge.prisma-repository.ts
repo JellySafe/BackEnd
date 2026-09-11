@@ -72,4 +72,36 @@ export class NotificationPurgePrismaRepository implements NotificationPurgePort 
 
     return total;
   }
+
+  async purgeRevokedConsentsBefore(cutoff: Date, batchSize: number): Promise<number> {
+    let total = 0;
+
+    // 배치로 끊어 지운다. 한 번에 지우면 잠금이 길어져 그동안 알림 발송이 밀린다.
+    for (;;) {
+      const { count } = await this.prisma.notificationConsent.deleteMany({
+        where: {
+          // ⚠️ `revokedAt: { lt: cutoff }` 는 NULL 을 **매칭하지 않는다.** 그래서 살아 있는
+          //    동의는 구조적으로 걸리지 않는다 — 그걸 지우면 구독자가 조용히 사라져
+          //    위험 알림이 안 간다(이 배치가 낼 수 있는 가장 나쁜 실패다).
+          revokedAt: { lt: cutoff },
+          id: { in: await this.revokedIds(cutoff, batchSize) },
+        },
+      });
+      total += count;
+      if (count < batchSize) break;
+    }
+
+    return total;
+  }
+
+  /** 이번 배치에서 지울 id 들. deleteMany 에 LIMIT 이 없어 id 목록으로 끊는다. */
+  private async revokedIds(cutoff: Date, batchSize: number): Promise<bigint[]> {
+    const rows = await this.prisma.notificationConsent.findMany({
+      where: { revokedAt: { lt: cutoff } },
+      select: { id: true },
+      take: batchSize,
+    });
+    return rows.map((r) => r.id);
+  }
+
 }

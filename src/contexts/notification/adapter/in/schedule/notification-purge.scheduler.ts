@@ -88,6 +88,24 @@ export class NotificationPurgeScheduler implements OnModuleInit {
       if (purged > 0) {
         this.logger.log(`알림 파기 완료: ${purged}행 (${days}일 이전). 발송 이력도 함께 정리됨`);
       }
+
+      // 해지된 알림 동의(웹푸시 구독·문자 번호)도 함께 파기한다.
+      //
+      // 같은 크론에 붙이는 이유 — 둘 다 "오래된 알림 흔적을 지우는" 같은 성격이고, 크론을
+      // 하나 더 늘리면 새벽 시간대에 배치가 겹칠 자리만 늘어난다(파기 배치가 이미 다섯이다).
+      //
+      // 실패해도 위 알림 파기는 이미 끝났다. 따로 잡아 로그를 남기고, 한쪽 실패가 다른 쪽을
+      // 되돌리지 않게 한다.
+      const consentCutoff = new Date(
+        now.getTime() - Math.max(this.config.revokedConsentRetentionDays, MIN_RETENTION_DAYS) * MS_PER_DAY,
+      );
+      const purgedConsents = await this.purge.purgeRevokedConsentsBefore(consentCutoff, BATCH_SIZE);
+      if (purgedConsents > 0) {
+        this.logger.log(
+          `해지된 알림 동의 파기 완료: ${purgedConsents}행. ` +
+            '쓰지 않는 기기 식별자(웹푸시 구독·수신 번호)를 기한 없이 들고 있지 않기 위한 보관정책이다.',
+        );
+      }
     } catch (err) {
       this.logger.error(
         `알림 파기 배치 실패: ${err instanceof Error ? err.message : String(err)}`,
