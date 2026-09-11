@@ -218,6 +218,12 @@ export const CONTRACTS: readonly ValueContract[] = [
     note: '시민에게 보여주는 위험 단계. 이 컬럼이 이 서비스의 결론이다.',
   },
   {
+    table: 'risk_overrides',
+    column: 'min_risk_level',
+    values: RISK_LEVELS,
+    note: "운영자가 보장하는 최소 단계. 도메인은 'safe' 도 거부하지만(아무것도 올리지 못한다), DB 는 계약 밖 값만 막는다.",
+  },
+  {
     table: 'risk_scores',
     column: 'base_risk_level',
     values: RISK_LEVELS,

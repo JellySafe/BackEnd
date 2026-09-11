@@ -59,6 +59,8 @@ model User {
   auditLogs           AuditLog[]
   notifications       Notification[]
   notificationConsent NotificationConsent[]
+  riskOverridesMade     RiskOverride[]        @relation("RiskOverrideCreatedBy")
+  riskOverridesReleased RiskOverride[]        @relation("RiskOverrideReleasedBy")
   subscriptions       Subscription[]
   refreshTokens       RefreshToken[]
 
@@ -107,6 +109,7 @@ model Beach {
   weatherForecasts    WeatherForecast[]
   jellyfishReports    JellyfishReport[]
   riskScores          RiskScore[]
+  riskOverrides       RiskOverride[]
   operationActions    OperationAction[]
   operationStatusLogs OperationStatusLog[]
   notifications       Notification[]
@@ -476,6 +479,29 @@ model RiskCalculation {
 
   @@index([startedAt], name: "ix_risk_calculations_time")
   @@map("risk_calculations")
+}
+
+/// 운영자 수동 등급 상향 (prisma/sql/006-risk-overrides.sql).
+/// 엔진 산출값을 **올리기만** 한다 — 낮추는 조작은 두지 않는다(틀리면 사람이 물에 들어간다).
+model RiskOverride {
+  id           BigInt    @id @default(autoincrement())
+  beachId      BigInt    @map("beach_id")
+  minRiskLevel String    @map("min_risk_level") @db.VarChar(20)
+  reason       String    @db.VarChar(300)
+  createdBy    BigInt?   @map("created_by")
+  startsAt     DateTime  @map("starts_at") @db.DateTime(0)
+  /// 자동 해제 시각. **NULL 을 허용하지 않는다** — 아무도 기억하지 않는 영구 상향을 막는다.
+  expiresAt    DateTime  @map("expires_at") @db.DateTime(0)
+  releasedAt   DateTime? @map("released_at") @db.DateTime(0)
+  releasedBy   BigInt?   @map("released_by")
+  createdAt    DateTime  @default(now()) @map("created_at") @db.DateTime(0)
+
+  beach    Beach @relation(fields: [beachId], references: [id], onDelete: Cascade)
+  creator  User? @relation("RiskOverrideCreatedBy", fields: [createdBy], references: [id], onDelete: SetNull)
+  releaser User? @relation("RiskOverrideReleasedBy", fields: [releasedBy], references: [id], onDelete: SetNull)
+
+  @@index([beachId, expiresAt, releasedAt], name: "ix_risk_overrides_active")
+  @@map("risk_overrides")
 }
 
 model RiskScore {

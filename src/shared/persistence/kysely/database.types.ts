@@ -389,6 +389,21 @@ export type RiskFactor = {
     source_report_id: number | null;
     display_order: Generated<number>;
 };
+export type RiskOverride = {
+    id: Generated<number>;
+    beach_id: number;
+    min_risk_level: string;
+    reason: string;
+    created_by: number | null;
+    starts_at: Timestamp;
+    /**
+     * 자동 해제 시각. **NULL 을 허용하지 않는다** — 아무도 기억하지 않는 영구 상향을 막는다.
+     */
+    expires_at: Timestamp;
+    released_at: Timestamp | null;
+    released_by: number | null;
+    created_at: Generated<Timestamp>;
+};
 export type RiskRecommendation = {
     id: Generated<number>;
     action_code: string;
@@ -551,6 +566,7 @@ export type DB = {
     report_reviews: ReportReview;
     risk_calculations: RiskCalculation;
     risk_factors: RiskFactor;
+    risk_overrides: RiskOverride;
     risk_recommendations: RiskRecommendation;
     risk_rule_configs: RiskRuleConfig;
     risk_scores: RiskScore;

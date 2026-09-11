@@ -11,6 +11,7 @@ import {
 } from '../port/in/risk-use-cases';
 import { RiskCardRow, RiskQueryPort, RISK_QUERY } from '../port/out/risk-query.port';
 import { buildSafetyGuide } from '../../domain/risk-guide';
+import { MANUAL_OVERRIDE_RULE_CODE } from '../../domain/risk-override';
 import { riskFactorNameOf } from '../../domain/risk-factors';
 import { DEFAULT_LOCALE, Locale, text } from '@shared/i18n/locale';
 import { NO_DATA_LABEL_I18N } from '@shared/kernel/risk-level';
@@ -99,6 +100,7 @@ export class GetBeachRiskDetailService implements GetBeachRiskDetailUseCase {
         guideText: buildSafetyGuide('safe', locale),
         dataConfidence: 'low',
         generatedAt: null,
+        manuallyRaised: false,
         riskTimeline: [],
       };
     }
@@ -114,6 +116,9 @@ export class GetBeachRiskDetailService implements GetBeachRiskDetailUseCase {
       guideText: buildSafetyGuide(primary.riskLevel, locale),
       dataConfidence: primary.dataConfidence,
       generatedAt: primary.generatedAt,
+      // 최소 단계 보장이 걸렸고 그 근거가 **사람**일 때만 true. 제보·인근 출현 기반 보장
+      // (RISK-002)은 여전히 시스템 판단이므로 여기서 구분한다.
+      manuallyRaised: primary.manuallyRaised,
       riskTimeline: timeline,
     };
   }
@@ -155,6 +160,7 @@ export class GetBeachRiskDetailService implements GetBeachRiskDetailUseCase {
         })),
         dataConfidence: card.confidence,
         generatedAt: card.generatedAt,
+        manuallyRaised: card.minLevelRuleCode === MANUAL_OVERRIDE_RULE_CODE,
       });
     }
     return points;

@@ -19,7 +19,14 @@ import {
 import {
   CALCULATE_RISK_USE_CASE,
   CalculateRiskUseCase,
+  CREATE_RISK_OVERRIDE_USE_CASE,
+  CreateRiskOverrideUseCase,
+  LIST_RISK_OVERRIDES_USE_CASE,
+  ListRiskOverridesUseCase,
+  RELEASE_RISK_OVERRIDE_USE_CASE,
+  ReleaseRiskOverrideUseCase,
 } from '@contexts/risk/application/port/in/risk-use-cases';
+import { MANUAL_OVERRIDE_RULE_CODE } from '@contexts/risk/domain/risk-override';
 import { CONTRACTS } from '../prisma/value-contracts';
 import {
   BEACH_QUERY,
@@ -1522,6 +1529,262 @@ describe('영속성 스모크', () => {
 
     it('오늘의 리포트도 모르는 언어를 거부하지 않는다 — 경로마다 다르게 굴면 안 된다', async () => {
       await request(http).get('/api/public/daily-report?lang=fr').expect(200);
+    });
+  });
+
+  /**
+   * 운영자 수동 등급 상향.
+   *
+   * ── 왜 실 DB 로 봐야 하나 ────────────────────────────────────────────────────────
+   * 이 기능의 결론은 **risk_scores 에 저장된 단계**다. 도메인 테스트는 "상향 객체가 올바른
+   * 트리거를 만든다" 까지만 보고, 그 트리거가 산출을 지나 실제로 저장되는지는 엔진·조립·
+   * 저장이 전부 맞물려야 확인된다.
+   *
+   * 그리고 여기서 지켜야 할 것이 **단계가 내려가지 않는 것**이다. 그건 코드 한 줄이 아니라
+   * 엔진의 maxRiskLevel + 트리거 조립 + 지평별 유효성 판단이 함께 만드는 성질이라,
+   * 실제로 돌려 보지 않으면 지켜지는지 알 수 없다.
+   */
+  describe('수동 등급 상향', () => {
+    const HOUR = 60 * 60 * 1000;
+
+    let createOverride: CreateRiskOverrideUseCase;
+    let releaseOverride: ReleaseRiskOverrideUseCase;
+    let listOverrides: ListRiskOverridesUseCase;
+    let targetBeachId: number;
+
+    beforeAll(async () => {
+      createOverride = app.get<CreateRiskOverrideUseCase>(CREATE_RISK_OVERRIDE_USE_CASE);
+      releaseOverride = app.get<ReleaseRiskOverrideUseCase>(RELEASE_RISK_OVERRIDE_USE_CASE);
+      listOverrides = app.get<ListRiskOverridesUseCase>(LIST_RISK_OVERRIDES_USE_CASE);
+      const beach = await prisma.beach.findFirstOrThrow({ where: { isActive: true } });
+      targetBeachId = Number(beach.id);
+    });
+
+    /** 이 해변의 현재(now) 단계. */
+    async function currentLevel(beachId: number): Promise<string | null> {
+      const row = await prisma.riskScore.findFirst({
+        where: { beachId: BigInt(beachId), horizon: 'now', isLatest: true },
+      });
+      return row?.riskLevel ?? null;
+    }
+
+    /** 테스트가 만든 상향을 모두 지운다(다음 산출에 새어 들어가지 않게). */
+    async function clearOverrides(beachId: number): Promise<void> {
+      await prisma.riskOverride.deleteMany({ where: { beachId: BigInt(beachId) } });
+    }
+
+    afterEach(async () => {
+      // 상향만 지우면 **저장된 단계는 직전 테스트가 올려놓은 채로 남는다.** 다음 테스트가
+      // 그걸 "엔진 기준선" 으로 읽어 엉뚱하게 실패한다. 지운 뒤 한 번 더 산출해 되돌린다.
+      await clearOverrides(targetBeachId);
+      await app
+        .get<CalculateRiskUseCase>(CALCULATE_RISK_USE_CASE)
+        .calculate({ beachId: targetBeachId, triggerType: 'manual' });
+    });
+
+    it('상향하면 저장된 단계가 실제로 올라간다', async () => {
+      const before = await currentLevel(targetBeachId);
+      expect(['safe', 'caution', null]).toContain(before); // 시드 상태에서는 낮다
+
+      const result = await createOverride.create({
+        beachId: targetBeachId,
+        minRiskLevel: 'danger',
+        reason: '스모크 — 현장 육안 확인',
+        durationHours: 6,
+        createdBy: null,
+      });
+
+      expect(result.currentLevel).toBe('danger');
+      expect(await currentLevel(targetBeachId)).toBe('danger');
+    });
+
+    it('바로 반영된다 — 다음 배치를 기다리지 않는다', async () => {
+      // 현장이 위험을 알리려고 누른 버튼이 30분 뒤에 반영되면 이 기능의 목적을 배반한다.
+      await createOverride.create({
+        beachId: targetBeachId,
+        minRiskLevel: 'severe',
+        reason: '스모크 — 즉시 반영 확인',
+        durationHours: 6,
+        createdBy: null,
+      });
+
+      // 배치를 따로 돌리지 않았는데도 이미 바뀌어 있어야 한다.
+      expect(await currentLevel(targetBeachId)).toBe('severe');
+    });
+
+    it('⚠️ 산출이 더 높으면 내리지 않는다 — 이 기능에 하향은 없다', async () => {
+      // 이 테스트가 이 기능에서 가장 중요하다. 잘못 내리면 사람이 물에 들어간다.
+      await createOverride.create({
+        beachId: targetBeachId,
+        minRiskLevel: 'severe',
+        reason: '스모크 — 먼저 매우 위험으로 올린다',
+        durationHours: 6,
+        createdBy: null,
+      });
+      expect(await currentLevel(targetBeachId)).toBe('severe');
+
+      // 더 낮은 단계로 "상향" 을 겹쳐도 내려가지 않아야 한다.
+      await createOverride.create({
+        beachId: targetBeachId,
+        minRiskLevel: 'caution',
+        reason: '스모크 — 더 낮은 단계를 겹친다',
+        durationHours: 6,
+        createdBy: null,
+      });
+
+      expect(await currentLevel(targetBeachId)).toBe('severe');
+    });
+
+    it('해제하면 엔진 산출값으로 돌아온다', async () => {
+      const baseline = await currentLevel(targetBeachId);
+
+      const created = await createOverride.create({
+        beachId: targetBeachId,
+        minRiskLevel: 'danger',
+        reason: '스모크 — 해제 확인',
+        durationHours: 6,
+        createdBy: null,
+      });
+      expect(await currentLevel(targetBeachId)).toBe('danger');
+
+      await releaseOverride.release(created.overrideId, null);
+
+      // 해제는 "단계를 낮추는 것" 이 아니라 사람이 얹었던 보장을 거두는 것이다.
+      expect(await currentLevel(targetBeachId)).toBe(baseline);
+    });
+
+    it('만료된 상향은 적용되지 않는다', async () => {
+      const baseline = await currentLevel(targetBeachId);
+
+      // 이미 지난 기간으로 직접 넣는다(도메인은 과거 생성을 허용하지 않으므로 DB 로).
+      await prisma.riskOverride.create({
+        data: {
+          beachId: BigInt(targetBeachId),
+          minRiskLevel: 'severe',
+          reason: '스모크 — 이미 만료된 상향',
+          startsAt: new Date(Date.now() - 48 * HOUR),
+          expiresAt: new Date(Date.now() - 24 * HOUR),
+        },
+      });
+
+      await app
+        .get<CalculateRiskUseCase>(CALCULATE_RISK_USE_CASE)
+        .calculate({ beachId: targetBeachId, triggerType: 'manual' });
+
+      expect(await currentLevel(targetBeachId)).toBe(baseline);
+    });
+
+    it('기간이 짧으면 먼 예보에는 반영되지 않는다 — 6시간짜리를 72시간 예보에 얹으면 거짓이다', async () => {
+      await createOverride.create({
+        beachId: targetBeachId,
+        minRiskLevel: 'severe',
+        reason: '스모크 — 지평별 유효성',
+        durationHours: 6,
+        createdBy: null,
+      });
+
+      const now = await prisma.riskScore.findFirst({
+        where: { beachId: BigInt(targetBeachId), horizon: 'now', isLatest: true },
+      });
+      const far = await prisma.riskScore.findFirst({
+        where: { beachId: BigInt(targetBeachId), horizon: '72h', isLatest: true },
+      });
+
+      expect(now?.riskLevel).toBe('severe');
+      expect(now?.minLevelRuleCode).toBe(MANUAL_OVERRIDE_RULE_CODE);
+      // 72시간 뒤에는 이미 만료된 상향이므로 그 지평에는 걸리지 않는다.
+      expect(far?.minLevelRuleCode).not.toBe(MANUAL_OVERRIDE_RULE_CODE);
+    });
+
+    it('공개 API 가 사람이 올린 단계임을 알린다', async () => {
+      await createOverride.create({
+        beachId: targetBeachId,
+        minRiskLevel: 'danger',
+        reason: '스모크 — 공개 노출 확인',
+        durationHours: 6,
+        createdBy: null,
+      });
+
+      const res = await request(http)
+        .get(`/api/public/beaches/${targetBeachId}/risk`)
+        .expect(200);
+      const body = (res.body as { data: { riskLevel: string; manuallyRaised: boolean } }).data;
+
+      // 모델이 낸 값과 사람이 올린 값을 시민이 같은 것으로 받아들이면 안 된다.
+      expect(body.riskLevel).toBe('danger');
+      expect(body.manuallyRaised).toBe(true);
+    });
+
+    it('상향이 없으면 manuallyRaised 는 false 다', async () => {
+      await app
+        .get<CalculateRiskUseCase>(CALCULATE_RISK_USE_CASE)
+        .calculate({ beachId: targetBeachId, triggerType: 'manual' });
+
+      const res = await request(http)
+        .get(`/api/public/beaches/${targetBeachId}/risk`)
+        .expect(200);
+
+      expect((res.body as { data: { manuallyRaised: boolean } }).data.manuallyRaised).toBe(false);
+    });
+
+    it('목록이 지금 걸린 상향을 보여준다 — 해변 이름까지', async () => {
+      await createOverride.create({
+        beachId: targetBeachId,
+        minRiskLevel: 'danger',
+        reason: '스모크 — 목록 확인',
+        durationHours: 6,
+        createdBy: null,
+      });
+
+      const rows = await listOverrides.list({ beachId: targetBeachId, activeOnly: true });
+
+      expect(rows).toHaveLength(1);
+      expect(rows[0].beachName.length).toBeGreaterThan(0);
+      expect(rows[0].reason).toBe('스모크 — 목록 확인');
+    });
+
+    it('해제한 상향은 활성 목록에서 빠진다', async () => {
+      const created = await createOverride.create({
+        beachId: targetBeachId,
+        minRiskLevel: 'danger',
+        reason: '스모크 — 해제 후 목록',
+        durationHours: 6,
+        createdBy: null,
+      });
+      await releaseOverride.release(created.overrideId, null);
+
+      expect(await listOverrides.list({ beachId: targetBeachId, activeOnly: true })).toHaveLength(0);
+      // 다만 기록은 남는다 — "그때 왜 올렸었나" 를 되짚어야 한다.
+      expect(
+        (await listOverrides.list({ beachId: targetBeachId, activeOnly: false })).length,
+      ).toBeGreaterThan(0);
+    });
+
+    it('이미 해제된 것을 다시 해제해도 오류가 아니다', async () => {
+      const created = await createOverride.create({
+        beachId: targetBeachId,
+        minRiskLevel: 'danger',
+        reason: '스모크 — 중복 해제',
+        durationHours: 6,
+        createdBy: null,
+      });
+
+      await releaseOverride.release(created.overrideId, null);
+      await expect(releaseOverride.release(created.overrideId, null)).resolves.toBeDefined();
+    });
+
+    it('DB 가 계약 밖 단계를 거부한다 (CHECK 제약)', async () => {
+      await expect(
+        prisma.riskOverride.create({
+          data: {
+            beachId: BigInt(targetBeachId),
+            minRiskLevel: 'VERY_DANGEROUS',
+            reason: '스모크 — 계약 위반',
+            startsAt: new Date(),
+            expiresAt: new Date(Date.now() + HOUR),
+          },
+        }),
+      ).rejects.toThrow();
     });
   });
 });

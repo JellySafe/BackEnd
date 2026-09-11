@@ -25,7 +25,12 @@ import {
   evaluateRiskVariables,
 } from '../../domain/risk-assessment';
 import { applyHorizon, decayMinLevelTriggers, degradeConfidence } from '../../domain/risk-horizon';
-import { pickForecast } from '../../domain/risk-forecast';
+import { horizonTargetAt, pickForecast } from '../../domain/risk-forecast';
+import { RiskOverride } from '../../domain/risk-override';
+import {
+  RISK_OVERRIDE_REPOSITORY,
+  RiskOverrideRepositoryPort,
+} from '../port/out/risk-override-repository.port';
 import { CalcStatus } from '../../domain/risk-enums';
 
 /** now/24h/72h 산출 (6h 는 2차). */
@@ -48,6 +53,11 @@ interface BeachCalcContext {
   calculatedAt: Date;
   ruleScore: (code: string, fallback: number) => number;
   version: string;
+  /**
+   * 해변별 운영자 수동 상향. 배치 시작 때 **한 번에** 읽어 나눠 둔다 —
+   * 해변마다 조회하면 배치가 왕복 지연에 그대로 묶인다(해변이 늘수록 나빠진다).
+   */
+  overridesByBeach: Map<number, RiskOverride[]>;
 }
 
 const COLLECT_OPTIONS: CollectOptions = {
@@ -75,6 +85,8 @@ export class CalculateRiskService implements CalculateRiskUseCase {
     @Inject(RISK_INPUT) private readonly riskInput: RiskInputPort,
     @Inject(RISK_PERSISTENCE) private readonly persistence: RiskPersistencePort,
     @Inject(RISK_ALERT) private readonly riskAlert: RiskAlertPort,
+    @Inject(RISK_OVERRIDE_REPOSITORY)
+    private readonly riskOverrides: RiskOverrideRepositoryPort,
     private readonly cache: ResponseCache,
   ) {
     this.config = new AppConfig(configService);
@@ -132,6 +144,19 @@ export class CalculateRiskService implements CalculateRiskUseCase {
       ruleVersion: version,
     });
 
+    // 운영자 수동 상향을 한 번에 읽어 해변별로 나눈다(아래 BeachCalcContext 주석 참고).
+    // 실패해도 산출은 계속한다 — 상향이 빠지면 단계가 **낮게** 나올 수 있지만, 산출 자체가
+    // 멈추면 화면이 통째로 낡는다. 대신 크게 남긴다.
+    let overridesByBeach = new Map<number, RiskOverride[]>();
+    try {
+      overridesByBeach = groupByBeach(await this.riskOverrides.findActive(calculatedAt));
+    } catch (err) {
+      this.logger.error(
+        '수동 등급 상향을 읽지 못해 **이번 산출에 반영되지 않는다**(단계가 낮게 나올 수 있다): ' +
+          (err instanceof Error ? err.message : String(err)),
+      );
+    }
+
     // 해변별 산출은 서로 독립적이다(각자 다른 (beach_id, horizon) 행만 건드린다).
     // 순차로 돌리면 해변 수 × 왕복 지연이 그대로 배치 시간이 되므로 제한 병렬로 처리한다.
     // 무제한 병렬은 커넥션 풀(Kysely 기본 10)을 고갈시켜 오히려 느려지므로 상한을 둔다
@@ -147,6 +172,7 @@ export class CalculateRiskService implements CalculateRiskUseCase {
               calculatedAt,
               ruleScore,
               version,
+              overridesByBeach,
             }),
           ),
         )),
@@ -215,10 +241,23 @@ export class CalculateRiskService implements CalculateRiskUseCase {
 
         const confidence = degradeConfidence(baseConfidence, horizon, forecast !== null);
 
+        // 운영자 상향은 **지평마다 따로 판단한다.** 6시간 뒤 만료되는 상향을 72시간 예보에
+        // 얹으면 그 예보는 거짓이 된다. 그래서 그 지평의 대상 시각에 아직 유효한 것만 넣는다.
+        //
+        // 그리고 decay 를 태우지 않는다 — 근거가 흐려지는 관측과 달리, 사람이 "여기는
+        // 위험하다" 고 정한 판단은 기간 안에서는 약해지지 않는다(risk-override.ts).
+        const overrideAt = horizonTargetAt(horizon, ctx.calculatedAt) ?? ctx.calculatedAt;
+        const overrideTriggers = (ctx.overridesByBeach.get(Number(beachId)) ?? [])
+          .filter((o) => o.isActiveAt(overrideAt))
+          .map((o) => o.toMinLevelTrigger());
+
         const result = RiskEngine.calculate({
           variables: applyHorizon(variables.factors, horizon, forecastFactors),
           reportWeights: applyHorizon(reportWeights, horizon),
-          minLevelTriggers: decayMinLevelTriggers(minLevelTriggers, horizon),
+          minLevelTriggers: [
+            ...decayMinLevelTriggers(minLevelTriggers, horizon),
+            ...overrideTriggers,
+          ],
           confidence,
         });
 
@@ -290,4 +329,16 @@ export class CalculateRiskService implements CalculateRiskUseCase {
     const ts = new Date().toISOString().replace(/[-:.TZ]/g, '').slice(0, 14);
     return `calc_${ts}_${nanoid(10)}`;
   }
+}
+
+/** 활성 상향을 해변별로 나눈다. 한 해변에 둘 이상이면 엔진이 그중 가장 높은 단계를 택한다. */
+function groupByBeach(overrides: RiskOverride[]): Map<number, RiskOverride[]> {
+  const map = new Map<number, RiskOverride[]>();
+  for (const override of overrides) {
+    const key = Number(override.beachId);
+    const list = map.get(key);
+    if (list) list.push(override);
+    else map.set(key, [override]);
+  }
+  return map;
 }
