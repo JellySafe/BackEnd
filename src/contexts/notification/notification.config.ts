@@ -37,6 +37,25 @@ export class NotificationConfig {
     return Number.isFinite(raw) && raw >= 0 ? raw : 90;
   }
 
+  /**
+   * 해지된 알림 동의 보관 일수(기본 90일).
+   *
+   * `notification_consents` 는 **기기 식별자**를 들고 있다 — 웹푸시 구독 정보(endpoint·키)와
+   * 문자 수신 번호. 구독을 해지하거나 브라우저가 만료시킨(410/404) 뒤에도 그 값이 영원히
+   * 남아 있었다. 제보 사진·좌표에는 보관 기간이 있는데(PRIV-003) 여기에는 없었다.
+   *
+   * 바로 지우지 않고 기간을 두는 이유 — 실수로 해지했거나 잠깐 끊긴 구독이 돌아오는 경우가
+   * 있고, 그 사이 문의가 오면 상태를 확인할 수 있어야 한다.
+   *
+   * ⚠️ 동의 **이력**(적법성 증명)은 여기가 아니라 `consent_logs` 에 있고 더 길게 보관한다
+   *    (CONSENT_RETENTION_DAYS, 기본 365일). 이 값은 운영 상태 행의 보관 기간이다.
+   */
+  get revokedConsentRetentionDays(): number {
+    const raw = Number(this.config.get<string>('REVOKED_CONSENT_RETENTION_DAYS') ?? '90');
+    if (!Number.isFinite(raw) || raw < 1) return 90;
+    return Math.floor(raw);
+  }
+
   /** 알림 파기 배치 크론. 'off' 면 비활성. 다른 파기 배치(03:20/03:40)와 겹치지 않게 03:50. */
   get notificationPurgeCron(): string {
     return this.config.get<string>('NOTIFICATION_PURGE_CRON') ?? '0 50 3 * * *';

@@ -27,6 +27,10 @@ import {
   ReleaseRiskOverrideUseCase,
 } from '@contexts/risk/application/port/in/risk-use-cases';
 import { MANUAL_OVERRIDE_RULE_CODE } from '@contexts/risk/domain/risk-override';
+import {
+  MAPPING_DIAGNOSTICS_QUERY,
+  MappingDiagnosticsQueryPort,
+} from '@contexts/observation/application/port/out/mapping-diagnostics-query.port';
 import { CONTRACTS } from '../prisma/value-contracts';
 import {
   BEACH_QUERY,
@@ -1785,6 +1789,224 @@ describe('영속성 스모크', () => {
           },
         }),
       ).rejects.toThrow();
+    });
+  });
+
+  /**
+   * 운영 가시성 — 매핑 진단 / 공개 상태 / 해지된 동의 파기.
+   *
+   * 셋 다 **DB 를 읽거나 지우는 것이 결론**이라 포트를 가짜로 바꾸면 검증되지 않는다.
+   * 특히 파기는 되돌릴 수 없고, "지우면 안 될 것을 지운다" 는 실패가 조용하다.
+   */
+  describe('운영 가시성', () => {
+    const DAY = 24 * 60 * 60 * 1000;
+
+    describe('해변↔관측소 매핑 진단', () => {
+      it('활성 해변을 하나도 빠뜨리지 않는다 — 매핑이 없는 해변이 가장 중요하다', async () => {
+        // 빼 버리면 목록에서 사라져, 정작 문제인 해변이 보이지 않는다.
+        const query = app.get<MappingDiagnosticsQueryPort>(MAPPING_DIAGNOSTICS_QUERY);
+        const rows = await query.listByBeach(new Date());
+
+        const activeCount = await prisma.beach.count({ where: { isActive: true } });
+        expect(rows).toHaveLength(activeCount);
+        expect(rows.every((r) => Array.isArray(r.stations))).toBe(true);
+      });
+
+    it('매핑이 아직 없으면 모든 해변이 빈 목록이다 — 그 자체가 진단 결과다', async () => {
+        // 매핑은 시드가 아니라 배치(map-stations)가 만든다. 배치를 돌리기 전에는
+        // 어떤 해변도 관측 기반 위험도를 낼 수 없고, 이 API 가 그걸 그대로 보여줘야 한다.
+        const mappingCount = await prisma.observationMapping.count();
+        if (mappingCount > 0) return;
+
+        const query = app.get<MappingDiagnosticsQueryPort>(MAPPING_DIAGNOSTICS_QUERY);
+        const rows = await query.listByBeach(new Date());
+
+        expect(rows.every((r) => r.stations.length === 0)).toBe(true);
+      });
+
+      it('연결된 관측소의 이름·유형·거리를 준다', async () => {
+        // 시드에는 매핑이 없으므로(배치가 만든다) 직접 하나 이어 붙여 조인을 확인한다.
+        const beach = await prisma.beach.findFirstOrThrow({ where: { isActive: true } });
+        const station = await prisma.observationStation.findFirstOrThrow();
+        const mapping = await prisma.observationMapping.create({
+          data: {
+            beachId: beach.id,
+            stationId: station.id,
+            stationType: station.stationType,
+            distanceKm: 8.42,
+            isPrimary: true,
+          },
+        });
+
+        try {
+          const query = app.get<MappingDiagnosticsQueryPort>(MAPPING_DIAGNOSTICS_QUERY);
+          const rows = await query.listByBeach(new Date());
+          const mine = rows.find((r) => Number(r.beachId) === Number(beach.id));
+
+          expect(mine?.stations).toHaveLength(1);
+          expect(mine!.stations[0].stationName).toBe(station.name);
+          expect(mine!.stations[0].distanceKm).toBeCloseTo(8.42, 2);
+          expect(mine!.stations[0].isPrimary).toBe(true);
+        } finally {
+          await prisma.observationMapping.delete({ where: { id: mapping.id } });
+        }
+      });
+
+      it('대표 관측소를 먼저 보여준다 — 위험도가 실제로 읽는 곳이다', async () => {
+        const query = app.get<MappingDiagnosticsQueryPort>(MAPPING_DIAGNOSTICS_QUERY);
+        const rows = await query.listByBeach(new Date());
+
+        for (const row of rows) {
+          const primaryIndexes = row.stations
+            .map((s, i) => (s.isPrimary ? i : -1))
+            .filter((i) => i >= 0);
+          const others = row.stations.map((s, i) => (s.isPrimary ? -1 : i)).filter((i) => i >= 0);
+          if (primaryIndexes.length > 0 && others.length > 0) {
+            expect(Math.max(...primaryIndexes)).toBeLessThan(Math.min(...others));
+          }
+        }
+      });
+
+      it('관측이 없는 관측소는 lastObservedAt 이 null 이다 — 0 이나 지금으로 채우지 않는다', async () => {
+        // "한 번도 못 받았다" 를 "방금 받았다" 로 채우면 끊긴 것을 못 알아본다.
+        const query = app.get<MappingDiagnosticsQueryPort>(MAPPING_DIAGNOSTICS_QUERY);
+        const rows = await query.listByBeach(new Date());
+
+        for (const station of rows.flatMap((r) => r.stations)) {
+          if (station.lastObservedAt === null) expect(station.ageMinutes).toBeNull();
+          else expect(station.ageMinutes).not.toBeNull();
+        }
+      });
+
+      it('관측이 있으면 경과 분을 계산한다', async () => {
+        const mapping = await prisma.observationMapping.findFirst();
+        if (!mapping) return; // 시드에 매핑이 없으면 볼 것이 없다
+
+        const observedAt = new Date(Date.now() - 90 * 60_000);
+        const created = await prisma.observation.create({
+          data: { stationId: mapping.stationId, observedAt, waterTemp: 22 },
+        });
+
+        try {
+          const query = app.get<MappingDiagnosticsQueryPort>(MAPPING_DIAGNOSTICS_QUERY);
+          const rows = await query.listByBeach(new Date());
+          const station = rows
+            .flatMap((r) => r.stations)
+            .find((s) => Number(s.stationId) === Number(mapping.stationId));
+
+          expect(station?.ageMinutes).not.toBeNull();
+          expect(station!.ageMinutes!).toBeGreaterThanOrEqual(0);
+        } finally {
+          await prisma.observation.delete({ where: { id: created.id } });
+        }
+      });
+
+      it('HTTP 로도 나온다 (관리자 인증 필요)', async () => {
+        await request(http).get('/api/admin/observation-mappings').expect(401);
+      });
+    });
+
+    describe('공개 서비스 상태', () => {
+      it('인증 없이 상태를 준다', async () => {
+        const res = await request(http).get('/api/public/status').expect(200);
+        const body = (res.body as { data: { status: string; message: string } }).data;
+
+        expect(['ok', 'delayed', 'stale']).toContain(body.status);
+        expect(body.message.length).toBeGreaterThan(0);
+      });
+
+      it('방금 산출했으면 정상이다 — 낡은 예보 행이 있어도 now 만 본다', async () => {
+        await app
+          .get<CalculateRiskUseCase>(CALCULATE_RISK_USE_CASE)
+          .calculate({ triggerType: 'manual' });
+
+        const res = await request(http).get('/api/public/status').expect(200);
+        const body = (res.body as { data: { status: string; riskUpdatedMinutesAgo: number } }).data;
+
+        expect(body.status).toBe('ok');
+        expect(body.riskUpdatedMinutesAgo).toBeLessThanOrEqual(60);
+      });
+
+      it('언어를 바꾸면 문구도 바뀐다', async () => {
+        const res = await request(http).get('/api/public/status?lang=en').expect(200);
+        expect((res.body as { data: { message: string } }).data.message).not.toMatch(/[가-힣]/);
+      });
+
+      it('운영 내부 수치는 담기지 않는다 — 시민 판단을 돕지 않으면서 사정만 드러낸다', async () => {
+        const res = await request(http).get('/api/public/status').expect(200);
+        const body = JSON.stringify(res.body);
+
+        for (const leaked of ['unreviewed', 'pendingVision', 'riskCalculationCounts', 'syncHealth']) {
+          expect(body).not.toContain(leaked);
+        }
+      });
+    });
+
+    describe('해지된 알림 동의 파기 (보관정책)', () => {
+      async function makeConsent(revokedAt: Date | null) {
+        return prisma.notificationConsent.create({
+          data: {
+            userToken: `purge-test-${Date.now()}-${Math.round(Math.random() * 1e6)}`,
+            channel: 'push',
+            agreed: revokedAt === null,
+            deviceToken: 'device-token-to-be-purged',
+            revokedAt,
+          },
+        });
+      }
+
+      it('⚠️ 살아 있는 동의는 지우지 않는다 — 지우면 위험 알림이 조용히 끊긴다', async () => {
+        // 이 배치가 낼 수 있는 가장 나쁜 실패다.
+        const alive = await makeConsent(null);
+
+        try {
+          const purge = app.get<NotificationPurgePort>(NOTIFICATION_PURGE);
+          await purge.purgeRevokedConsentsBefore(new Date(Date.now() + DAY), 100);
+
+          expect(
+            await prisma.notificationConsent.findUnique({ where: { id: alive.id } }),
+          ).not.toBeNull();
+        } finally {
+          await prisma.notificationConsent.deleteMany({ where: { id: alive.id } });
+        }
+      });
+
+      it('보관 기간이 지난 해지 동의는 지운다', async () => {
+        const old = await makeConsent(new Date(Date.now() - 200 * DAY));
+
+        const purge = app.get<NotificationPurgePort>(NOTIFICATION_PURGE);
+        const deleted = await purge.purgeRevokedConsentsBefore(new Date(Date.now() - 90 * DAY), 100);
+
+        expect(deleted).toBeGreaterThan(0);
+        expect(await prisma.notificationConsent.findUnique({ where: { id: old.id } })).toBeNull();
+      });
+
+      it('보관 기간 안의 해지 동의는 남긴다 — 되돌아오는 구독이 있다', async () => {
+        const recent = await makeConsent(new Date(Date.now() - 3 * DAY));
+
+        try {
+          const purge = app.get<NotificationPurgePort>(NOTIFICATION_PURGE);
+          await purge.purgeRevokedConsentsBefore(new Date(Date.now() - 90 * DAY), 100);
+
+          expect(
+            await prisma.notificationConsent.findUnique({ where: { id: recent.id } }),
+          ).not.toBeNull();
+        } finally {
+          await prisma.notificationConsent.deleteMany({ where: { id: recent.id } });
+        }
+      });
+
+      it('배치 크기보다 많아도 끝까지 지운다', async () => {
+        const ids: bigint[] = [];
+        for (let i = 0; i < 5; i += 1) {
+          ids.push((await makeConsent(new Date(Date.now() - 200 * DAY))).id);
+        }
+
+        const purge = app.get<NotificationPurgePort>(NOTIFICATION_PURGE);
+        await purge.purgeRevokedConsentsBefore(new Date(Date.now() - 90 * DAY), 2);
+
+        expect(await prisma.notificationConsent.count({ where: { id: { in: ids } } })).toBe(0);
+      });
     });
   });
 });

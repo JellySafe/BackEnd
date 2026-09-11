@@ -12,5 +12,8 @@ import { MetricsKyselyQuery } from './metrics.kysely-query';
 @Module({
   controllers: [MetricsController],
   providers: [MetricsKyselyQuery],
+  // 시민용 상태 API(`/public/status`, shared/health)가 같은 스냅샷을 읽는다.
+  // 지표 질의를 두 벌로 두면 "운영자가 보는 신선도" 와 "시민이 보는 신선도" 가 달라진다.
+  exports: [MetricsKyselyQuery],
 })
 export class ObservabilityModule {}
