@@ -9,6 +9,7 @@ import { ObservationPurgePrismaRepository } from './adapter/out/persistence/obse
 import { StationPrismaRepository } from './adapter/out/persistence/station.prisma-repository';
 import { ObservationPrismaRepository } from './adapter/out/persistence/observation.prisma-repository';
 import { OccurrencePrismaRepository } from './adapter/out/persistence/occurrence.prisma-repository';
+import { MappingDiagnosticsKyselyQuery } from './adapter/out/persistence/mapping-diagnostics.kysely-query';
 import { MappingPrismaRepository } from './adapter/out/persistence/mapping.prisma-repository';
 import { ObservationKyselyQuery } from './adapter/out/persistence/observation.kysely-query';
 import { WeatherForecastPrismaRepository } from './adapter/out/persistence/weather-forecast.prisma-repository';
@@ -24,6 +25,7 @@ import { MapStationsService } from './application/service/map-stations.service';
 import { ListDataSourcesService } from './application/service/list-data-sources.service';
 import { ListObservationsService } from './application/service/list-observations.service';
 import { DATA_SOURCE_REPOSITORY } from './application/port/out/data-source-repository.port';
+import { MAPPING_DIAGNOSTICS_QUERY } from './application/port/out/mapping-diagnostics-query.port';
 import { STATION_REPOSITORY } from './application/port/out/station-repository.port';
 import { OBSERVATION_REPOSITORY } from './application/port/out/observation-repository.port';
 import { OCCURRENCE_REPOSITORY } from './application/port/out/occurrence-repository.port';
@@ -53,6 +55,8 @@ import {
   imports: [RiskModule],
   controllers: [AdminObservationController, SystemObservationController],
   providers: [
+    // 해변↔관측소 매핑 진단(운영 점검용 읽기 모델).
+    { provide: MAPPING_DIAGNOSTICS_QUERY, useClass: MappingDiagnosticsKyselyQuery },
     // 인바운드 포트 → 유스케이스 서비스
     { provide: SYNC_OBSERVATIONS_USE_CASE, useClass: SyncObservationsService },
     // 예보 수집(기상청 단기 해상예보). 관측 배치에 얹혀 돌지만 유스케이스는 분리한다
