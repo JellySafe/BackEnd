@@ -2,20 +2,25 @@ import { Module } from '@nestjs/common';
 import { RISK_RECALC } from '@contexts/report/application/port/out/risk-recalc.port';
 import { RISK_RECALC_TRIGGER } from '@contexts/observation/application/port/out/risk-recalc-trigger.port';
 import { NotificationModule } from '@contexts/notification/notification.module';
+import { UserModule } from '@contexts/user/user.module';
 import { SystemRiskController } from './adapter/in/web/system-risk.controller';
 import { AdminRiskController } from './adapter/in/web/admin-risk.controller';
 import { PublicRiskController } from './adapter/in/web/public-risk.controller';
+import { AdminRiskOverrideController } from './adapter/in/web/admin-risk-override.controller';
 import { CalculateRiskService } from './application/service/calculate-risk.service';
 import { GetBeachRiskDetailService } from './application/service/get-beach-risk-detail.service';
 import { ListLatestRisksService } from './application/service/list-latest-risks.service';
 import { GetDashboardSummaryService } from './application/service/get-dashboard-summary.service';
 import { ListRiskRulesService } from './application/service/list-risk-rules.service';
+import { ManageRiskOverrideService } from './application/service/manage-risk-override.service';
 import { RiskRecalcAdapter } from './adapter/out/risk-recalc.adapter';
 import { ObservationRecalcAdapter } from './adapter/out/observation-recalc.adapter';
 import { RuleConfigKyselyQuery } from './adapter/out/persistence/rule-config.kysely-query';
 import { RiskInputKyselyQuery } from './adapter/out/persistence/risk-input.kysely-query';
 import { RiskPrismaRepository } from './adapter/out/persistence/risk.prisma-repository';
 import { RiskKyselyQuery } from './adapter/out/persistence/risk.kysely-query';
+import { RiskOverridePrismaRepository } from './adapter/out/persistence/risk-override.prisma-repository';
+import { AuditAdapter } from './adapter/out/audit.adapter';
 import { RiskAlertAdapter } from './adapter/out/risk-alert.adapter';
 import { RiskRecalcScheduler } from './adapter/in/schedule/risk-recalc.scheduler';
 import { RiskHistoryPurgeScheduler } from './adapter/in/schedule/risk-history-purge.scheduler';
@@ -27,12 +32,17 @@ import { RISK_INPUT } from './application/port/out/risk-input.port';
 import { RISK_PERSISTENCE } from './application/port/out/risk-persistence.port';
 import { RISK_QUERY } from './application/port/out/risk-query.port';
 import { RISK_ALERT } from './application/port/out/risk-alert.port';
+import { RISK_OVERRIDE_REPOSITORY } from './application/port/out/risk-override-repository.port';
+import { AUDIT_PORT } from './application/port/out/audit.port';
 import {
   CALCULATE_RISK_USE_CASE,
   GET_BEACH_RISK_DETAIL_USE_CASE,
   GET_DASHBOARD_SUMMARY_USE_CASE,
   LIST_LATEST_RISKS_USE_CASE,
   LIST_RISK_RULES_USE_CASE,
+  CREATE_RISK_OVERRIDE_USE_CASE,
+  RELEASE_RISK_OVERRIDE_USE_CASE,
+  LIST_RISK_OVERRIDES_USE_CASE,
 } from './application/port/in/risk-use-cases';
 
 /**
@@ -45,8 +55,13 @@ import {
  *  - CALCULATE_RISK_USE_CASE: 스케줄러/배치가 위험도 산출을 직접 호출할 수 있게 노출한다.
  */
 @Module({
-  imports: [NotificationModule],
-  controllers: [SystemRiskController, AdminRiskController, PublicRiskController],
+  imports: [NotificationModule, UserModule],
+  controllers: [
+    SystemRiskController,
+    AdminRiskController,
+    PublicRiskController,
+    AdminRiskOverrideController,
+  ],
   providers: [
     // 인바운드 포트 → 유스케이스 서비스
     { provide: CALCULATE_RISK_USE_CASE, useClass: CalculateRiskService },
@@ -54,11 +69,17 @@ import {
     { provide: LIST_LATEST_RISKS_USE_CASE, useClass: ListLatestRisksService },
     { provide: GET_DASHBOARD_SUMMARY_USE_CASE, useClass: GetDashboardSummaryService },
     { provide: LIST_RISK_RULES_USE_CASE, useClass: ListRiskRulesService },
+    // 운영자 수동 등급 상향 — 셋 다 한 서비스가 구현한다(생성/해제가 같은 재산출 경로를 쓴다).
+    { provide: CREATE_RISK_OVERRIDE_USE_CASE, useClass: ManageRiskOverrideService },
+    { provide: RELEASE_RISK_OVERRIDE_USE_CASE, useClass: ManageRiskOverrideService },
+    { provide: LIST_RISK_OVERRIDES_USE_CASE, useClass: ManageRiskOverrideService },
     // 아웃바운드 포트 → 어댑터
     { provide: RULE_CONFIG, useClass: RuleConfigKyselyQuery },
     { provide: RISK_INPUT, useClass: RiskInputKyselyQuery },
     { provide: RISK_PERSISTENCE, useClass: RiskPrismaRepository },
     { provide: RISK_QUERY, useClass: RiskKyselyQuery },
+    { provide: RISK_OVERRIDE_REPOSITORY, useClass: RiskOverridePrismaRepository },
+    { provide: AUDIT_PORT, useClass: AuditAdapter },
     // 산출 이력 파기 (30분마다 쌓이는 risk_scores/risk_factors 를 보관 기간 지나면 정리)
     { provide: RISK_HISTORY_PURGE, useClass: RiskHistoryPurgePrismaRepository },
     // report 의 재산출 포트 구현 (RECALC_BATCH 트리거)

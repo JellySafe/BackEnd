@@ -125,6 +125,10 @@ ALTER TABLE risk_scores
 ALTER TABLE risk_scores
   ADD CONSTRAINT ck_risk_scores_risk_level CHECK (risk_level IN ('safe', 'caution', 'danger', 'severe'));
 
+-- risk_overrides.min_risk_level — 운영자가 보장하는 최소 단계. 도메인은 'safe' 도 거부하지만(아무것도 올리지 못한다), DB 는 계약 밖 값만 막는다.
+ALTER TABLE risk_overrides
+  ADD CONSTRAINT ck_risk_overrides_min_risk_level CHECK (min_risk_level IN ('safe', 'caution', 'danger', 'severe'));
+
 -- risk_scores.base_risk_level — 최소 단계 보장 적용 전 단계.
 ALTER TABLE risk_scores
   ADD CONSTRAINT ck_risk_scores_base_risk_level CHECK (base_risk_level IN ('safe', 'caution', 'danger', 'severe'));

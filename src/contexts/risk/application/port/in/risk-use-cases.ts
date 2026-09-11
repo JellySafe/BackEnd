@@ -3,6 +3,7 @@ import { DataConfidence, RiskHorizon, RiskLevel } from '@shared/kernel/risk-leve
 import { TriggerType } from '../../../domain/risk-enums';
 import { LatestRiskFilter, LatestRiskRow } from '../out/risk-query.port';
 import { Locale } from '@shared/i18n/locale';
+import { RiskOverrideListItem } from '../out/risk-override-repository.port';
 
 // ===== SYS-003 위험도 산출 (POST /system/risk/calculate) =====
 export interface CalculateRiskCommand {
@@ -77,6 +78,13 @@ export interface PublicRiskPointView {
   factors: PublicRiskFactorView[]; // 요약 원인 3~5개
   dataConfidence: DataConfidence;
   generatedAt: Date;
+  /**
+   * 이 지평의 단계가 운영자 수동 상향으로 올라간 것인가.
+   *
+   * **지평마다 다를 수 있다.** 상향에는 만료가 있어, 지금은 걸려 있어도 72시간 뒤에는
+   * 풀려 있을 수 있기 때문이다(risk-override.ts).
+   */
+  manuallyRaised: boolean;
 }
 
 /**
@@ -103,6 +111,14 @@ export interface PublicBeachRiskView {
   guideText: string;
   dataConfidence: DataConfidence;
   generatedAt: Date | null;
+  /**
+   * 이 단계가 **운영자가 손으로 올린 것**인가.
+   *
+   * 숨기지 않는 이유 — 시민이 "모델이 계산한 값" 과 "사람이 현장을 보고 올린 값" 을 같은
+   * 것으로 받아들이면 안 된다. 오히려 후자가 더 믿을 만한 경우가 많고(관측이 끊긴 해변이
+   * 그렇다), 어느 쪽인지 알아야 판단에 쓸 수 있다.
+   */
+  manuallyRaised: boolean;
   /** now → 24h → 72h 순. 산출 이력이 없으면 빈 배열. */
   riskTimeline: PublicRiskPointView[];
 }
@@ -167,3 +183,38 @@ export interface ListRiskRulesUseCase {
   list(): Promise<RiskRuleView[]>;
 }
 export const LIST_RISK_RULES_USE_CASE = Symbol('LIST_RISK_RULES_USE_CASE');
+
+// ===== 운영자 수동 등급 상향 =====
+export interface CreateRiskOverrideCommand {
+  beachId: Id;
+  minRiskLevel: string;
+  reason: string;
+  durationHours: number;
+  createdBy: Id | null;
+}
+
+export interface RiskOverrideResult {
+  overrideId: Id;
+  beachId: Id;
+  minRiskLevel: string;
+  expiresAt: Date;
+  /** 상향을 반영해 다시 산출한 뒤의 현재 단계. 지시가 실제로 화면에 반영됐는지 바로 확인된다. */
+  currentLevel: string | null;
+}
+
+export interface CreateRiskOverrideUseCase {
+  create(command: CreateRiskOverrideCommand): Promise<RiskOverrideResult>;
+}
+export const CREATE_RISK_OVERRIDE_USE_CASE = Symbol('CREATE_RISK_OVERRIDE_USE_CASE');
+
+export interface ReleaseRiskOverrideUseCase {
+  release(overrideId: Id, releasedBy: Id | null): Promise<RiskOverrideResult>;
+}
+export const RELEASE_RISK_OVERRIDE_USE_CASE = Symbol('RELEASE_RISK_OVERRIDE_USE_CASE');
+
+export interface ListRiskOverridesUseCase {
+  list(filter: { beachId: Id | null; activeOnly: boolean }): Promise<RiskOverrideListItem[]>;
+}
+export const LIST_RISK_OVERRIDES_USE_CASE = Symbol('LIST_RISK_OVERRIDES_USE_CASE');
+
+export type { RiskOverrideListItem };

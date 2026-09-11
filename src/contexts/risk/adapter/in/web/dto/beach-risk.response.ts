@@ -159,6 +159,19 @@ export class PublicRiskPointResponse {
 
   @ApiProperty({ example: '2026-07-10T09:00:00.000Z', description: '산출 생성 일시' })
   generatedAt!: string;
+
+  @ApiProperty({
+    example: false,
+    description: [
+      '이 단계가 **운영자가 손으로 올린 것**인지. 화면에 그대로 드러내는 편이 좋다.',
+      '',
+      '숨기지 않는 이유 — 시민이 "모델이 계산한 값" 과 "사람이 현장을 보고 올린 값" 을 같은',
+      '것으로 받아들이면 안 된다. 오히려 후자가 더 믿을 만한 경우가 많다(관측이 끊긴 해변이 그렇다).',
+      '',
+      '⚠️ 지평마다 다를 수 있다 — 상향에는 만료가 있어 지금은 걸려 있어도 72시간 뒤에는 풀릴 수 있다.',
+    ].join('\n'),
+  })
+  manuallyRaised!: boolean;
 }
 
 /** USR-002 GET /public/beaches/:beachId/risk 응답 (PublicBeachRiskView 미러링). */
@@ -212,6 +225,19 @@ export class PublicBeachRiskResponse {
     nullable: true,
   })
   generatedAt!: string | null;
+
+  @ApiProperty({
+    example: false,
+    description: [
+      '이 단계가 **운영자가 손으로 올린 것**인지. 화면에 그대로 드러내는 편이 좋다.',
+      '',
+      '숨기지 않는 이유 — 시민이 "모델이 계산한 값" 과 "사람이 현장을 보고 올린 값" 을 같은',
+      '것으로 받아들이면 안 된다. 오히려 후자가 더 믿을 만한 경우가 많다(관측이 끊긴 해변이 그렇다).',
+      '',
+      '⚠️ 지평마다 다를 수 있다 — 상향에는 만료가 있어 지금은 걸려 있어도 72시간 뒤에는 풀릴 수 있다.',
+    ].join('\n'),
+  })
+  manuallyRaised!: boolean;
 
   @ApiProperty({
     type: [PublicRiskPointResponse],
