@@ -88,6 +88,31 @@ export class MetricsKyselyQuery {
   }
 
   /** 노출 중인 위험도 중 가장 오래된 것의 나이. 한 곳이라도 밀리면 드러나야 한다. */
+  /**
+   * 시민이 **실제로 보는 값**(now 지평) 중 가장 오래된 것의 나이(초).
+   *
+   * ── 왜 위의 지표와 따로 두나 ──────────────────────────────────────────────────────
+   * `oldestLatestRiskScoreAge` 는 모든 지평(now/24h/72h)을 본다. 운영자에게는 그게 맞다 —
+   * 어느 지평이든 갱신이 멎었으면 알아야 한다.
+   *
+   * 하지만 시민 화면(`/public/status`)이 답해야 할 질문은 다르다. **"지금 화면에 보이는
+   * 위험도를 믿어도 되나"** 이고, 그 화면이 쓰는 것은 now 하나다. 72시간 예보 행 하나가
+   * 낡았다고 "정보가 오래됐습니다" 배너를 띄우면, 정작 현재 값은 멀쩡한데 사용자를
+   * 불필요하게 불안하게 만든다.
+   *
+   * 반대로 now 가 낡았는데 예보가 최신이라 정상으로 보이는 것도 막는다.
+   */
+  async oldestCurrentRiskAgeSeconds(): Promise<number | null> {
+    const row = await this.db
+      .selectFrom('risk_scores')
+      .select(sql<number | null>`TIMESTAMPDIFF(SECOND, MIN(generated_at), NOW())`.as('age'))
+      .where('is_latest', '=', 1)
+      .where('horizon', '=', 'now')
+      .executeTakeFirst();
+
+    return row?.age ?? null;
+  }
+
   private async oldestLatestRiskScoreAge(): Promise<number | null> {
     const row = await this.db
       .selectFrom('risk_scores')
