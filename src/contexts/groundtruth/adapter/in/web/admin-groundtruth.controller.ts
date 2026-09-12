@@ -1,10 +1,10 @@
 import { Body, Controller, Get, Inject, Post, Query } from '@nestjs/common';
-import { ApiOperation, ApiTags } from '@nestjs/swagger';
+import { ApiOperation, ApiQuery, ApiTags } from '@nestjs/swagger';
 import { ApiOkData } from '@shared/http/api-response.decorator';
 import { CurrentUser, Roles } from '@shared/auth/auth.decorators';
 import { AuthUser } from '@shared/auth/auth-user';
 import { Page, normalizePageRequest } from '@shared/kernel/pagination';
-import { parseKstDateKey } from '@shared/kernel/kst-date';
+import { kstToday, parseKstDateKey, toKstDateString } from '@shared/kernel/kst-date';
 import {
   AccuracyReport,
   GET_ACCURACY_USE_CASE,
@@ -18,6 +18,8 @@ import {
 } from '../../../application/port/in/groundtruth-use-cases';
 import {
   FieldObservationRow,
+  OBSERVATION_COVERAGE_QUERY,
+  ObservationCoverageQueryPort,
   StingIncidentRow,
 } from '../../../application/port/out/groundtruth-ports';
 import {
@@ -27,6 +29,7 @@ import {
   RecordFieldObservationRequest,
   RecordFieldObservationResponse,
   RecordStingIncidentRequest,
+  ObservationCoverageResponse,
   RecordStingIncidentResponse,
 } from './dto/groundtruth.dto';
 
@@ -51,6 +54,10 @@ export class AdminGroundtruthController {
     private readonly recordIncident: RecordStingIncidentUseCase,
     @Inject(LIST_GROUNDTRUTH_USE_CASE) private readonly list: ListGroundtruthUseCase,
     @Inject(GET_ACCURACY_USE_CASE) private readonly accuracy: GetAccuracyUseCase,
+    // 수집 체크리스트는 유스케이스를 거치지 않고 읽기 모델을 바로 쓴다. 도메인 규칙이 없는
+    // 운영 조회라, 유스케이스를 만들어 그대로 통과시키면 계층만 늘어난다.
+    @Inject(OBSERVATION_COVERAGE_QUERY)
+    private readonly coverageQuery: ObservationCoverageQueryPort,
   ) {}
 
   @ApiOperation({
@@ -105,6 +112,52 @@ export class AdminGroundtruthController {
       },
       normalizePageRequest(query.page, query.size),
     );
+  }
+
+  @ApiOperation({
+    summary: '[관리자] 오늘 아직 기록되지 않은 해변 — 정답 데이터 수집 체크리스트',
+    description: [
+      '그날 현장 관측이 기록된 해변과 **아직 안 된 해변**을 함께 준다. 운영 화면에서 체크리스트로',
+      '쓰는 것이 목적이다.',
+      '',
+      '**왜 필요한가**',
+      '정답 데이터를 넣는 API 는 이미 있는데 아무도 넣지 않아 빈 채로 돌고 있었다. 입력이 무거워서가',
+      '아니다(필수 항목이 넷뿐이다) — **오늘 무엇을 기록해야 하는지 아무도 모르기** 때문이다.',
+      '',
+      '⚠️ **더 중요한 이유가 있다.** 사람이 자연스럽게 남기는 기록에는 치우침이 있다 — 해파리를',
+      '봤을 때는 기록하지만 **아무것도 없던 날은 그냥 지나간다.** 그러면 `correct_negative` 와',
+      '`false_alarm` 이 쌓이지 않아 **오경보율과 정밀도를 영영 잴 수 없다**(정확도 넷 중 둘).',
+      '',
+      '이 목록을 채우는 행위 자체가 "없었다" 기록을 만들게 하는 것이 설계 의도다.',
+      '`jellyfishPresent: false` 도 훌륭한 정답 데이터다.',
+      '',
+      '`date` 를 생략하면 오늘(KST)이다. 기록이 없는 해변도 목록에서 빼지 않는다 — 빼면 정작',
+      '채워야 할 곳이 사라진다.',
+    ].join('\n'),
+  })
+  @ApiQuery({
+    name: 'date',
+    required: false,
+    example: '2026-09-13',
+    description: '기준 일자(YYYY-MM-DD, KST). 생략하면 오늘',
+  })
+  @ApiOkData(ObservationCoverageResponse)
+  @Get('field-observations/coverage')
+  async coverage(@Query('date') date?: string): Promise<ObservationCoverageResponse> {
+    const dateKey = date === undefined ? kstToday() : parseKstDateKey(date);
+    const beaches = await this.coverageQuery.coverageFor(dateKey);
+
+    return {
+      date: toKstDateString(dateKey),
+      totalBeaches: beaches.length,
+      recordedBeaches: beaches.filter((beach) => beach.recorded).length,
+      beaches: beaches.map((beach) => ({
+        ...beach,
+        beachId: Number(beach.beachId),
+        lastObservedAt:
+          beach.lastObservedAt === null ? null : beach.lastObservedAt.toISOString(),
+      })),
+    };
   }
 
   @ApiOperation({

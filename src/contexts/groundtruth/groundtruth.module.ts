@@ -3,6 +3,7 @@ import { AdminGroundtruthController } from './adapter/in/web/admin-groundtruth.c
 import { SystemEvaluationController } from './adapter/in/web/system-evaluation.controller';
 import { EvaluationScheduler } from './adapter/in/schedule/evaluation.scheduler';
 import { GroundtruthPrismaRepository } from './adapter/out/persistence/groundtruth.prisma-repository';
+import { ObservationCoverageKyselyQuery } from './adapter/out/persistence/observation-coverage.kysely-query';
 import { GroundtruthKyselyQuery } from './adapter/out/persistence/groundtruth.kysely-query';
 import { RecordGroundtruthService } from './application/service/record-groundtruth.service';
 import { EvaluatePredictionsService } from './application/service/evaluate-predictions.service';
@@ -21,6 +22,7 @@ import {
   GROUNDTRUTH_QUERY,
   RISK_PREDICTION,
   STING_INCIDENT_REPOSITORY,
+  OBSERVATION_COVERAGE_QUERY,
 } from './application/port/out/groundtruth-ports';
 
 /**
@@ -41,6 +43,8 @@ import {
 @Module({
   controllers: [AdminGroundtruthController, SystemEvaluationController],
   providers: [
+    // 정답 데이터 수집 체크리스트(운영 조회용 읽기 모델).
+    { provide: OBSERVATION_COVERAGE_QUERY, useClass: ObservationCoverageKyselyQuery },
     // 인바운드 포트 → 유스케이스
     RecordGroundtruthService,
     { provide: RECORD_FIELD_OBSERVATION_USE_CASE, useExisting: RecordGroundtruthService },

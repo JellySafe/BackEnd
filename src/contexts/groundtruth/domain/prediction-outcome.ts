@@ -109,9 +109,10 @@ export interface OutcomeCounts {
 /**
  * 정확도 요약.
  *
- * 비율은 분모가 0 이면 **null 이다.** 0 으로 두면 "완벽함" 과 "잴 수 없음" 이 같은 값이 되어,
- * 데이터가 없는 초기에 지표가 좋아 보이는 착시가 생긴다(이 서비스에서 가장 피해야 할 종류의
- * 거짓 신호다).
+ * 비율은 **표본이 부족하면 null 이다**(분모 < MIN_SAMPLE_FOR_RATIO). 0 으로 두면 "완벽함" 과
+ * "잴 수 없음" 이 같은 값이 되고, 소수의 표본으로 비율을 내면 "재현율 100%(표본 1건)" 같은
+ * 거짓 신뢰가 만들어진다. 데이터가 없는 초기에 지표가 좋아 보이는 착시는 이 서비스에서
+ * 가장 피해야 할 종류의 신호다.
  */
 export interface AccuracySummary {
   counts: OutcomeCounts;
@@ -134,6 +135,31 @@ export interface AccuracySummary {
   falseAlarmRate: number | null;
 }
 
+/**
+ * 비율을 내보내기 시작하는 **최소 표본 수**(비율마다 자기 분모 기준).
+ *
+ * ── 왜 필요한가 ──────────────────────────────────────────────────────────────────────
+ * 분모가 0 일 때만 null 로 두면, 표본이 **1건일 때 "재현율 100%"** 가 나간다. 그 숫자를 본
+ * 사람은 "이 서비스는 위험한 날을 다 잡아낸다" 고 읽는다 — 실제로는 아무것도 모르는 상태다.
+ *
+ * 안전 서비스에서 이건 단순한 부정확이 아니라 **거짓 신뢰**다. 정답 데이터를 이제 막 모으기
+ * 시작하는 지금이 정확히 그 구간이라, 초기 몇 건으로 만들어진 숫자가 의사결정에 쓰일 수 있다.
+ *
+ * ── 왜 20 인가 ───────────────────────────────────────────────────────────────────────
+ * 한 건이 비율을 흔드는 폭으로 정했다. 표본 5건이면 판정 하나가 뒤집힐 때 20%p 가 움직이고,
+ * 20건이면 5%p 다. 20건에서도 95% 신뢰구간은 여전히 ±20%p 안팎으로 넓지만, **적어도
+ * 한 건에 휘둘리지는 않는다.** 그보다 아래는 숫자라기보다 잡음이다.
+ *
+ * 이 값을 올리면 지표가 더 늦게 보이고, 내리면 더 일찍 그럴듯한 거짓이 보인다. 늦게 보이는
+ * 쪽이 안전하다 — 지표가 없으면 사람은 "아직 모른다" 고 판단하지만, 잘못된 지표가 있으면
+ * 그것을 근거로 판단한다.
+ *
+ * ⚠️ 총계가 아니라 **비율마다 자기 분모**로 따진다. 재현율의 분모는 hit+miss(위험했던 날),
+ *    오경보율의 분모는 false_alarm+correct_negative(안전했던 날)로 서로 다르다. 총계로
+ *    재면 안전한 날만 잔뜩 쌓였을 때 재현율까지 믿을 만한 것처럼 보인다.
+ */
+export const MIN_SAMPLE_FOR_RATIO = 20;
+
 const EMPTY_COUNTS: OutcomeCounts = { hit: 0, miss: 0, false_alarm: 0, correct_negative: 0 };
 
 /** 판정 목록을 세어 요약한다. */
@@ -145,8 +171,10 @@ export function summarize(outcomes: readonly EvaluationOutcome[]): AccuracySumma
 
 /** 이미 집계된 건수로 요약한다(DB 에서 GROUP BY 로 세어 온 경우). */
 export function summarizeCounts(counts: OutcomeCounts): AccuracySummary {
+  // 표본이 기준에 못 미치면 **숫자를 내보내지 않는다**(MIN_SAMPLE_FOR_RATIO 주석 참고).
+  // null 은 "0%" 가 아니라 "아직 잴 수 없다" 는 뜻이고, 부르는 쪽은 counts 로 표본을 본다.
   const ratio = (numerator: number, denominator: number): number | null =>
-    denominator === 0 ? null : numerator / denominator;
+    denominator < MIN_SAMPLE_FOR_RATIO ? null : numerator / denominator;
 
   return {
     counts,

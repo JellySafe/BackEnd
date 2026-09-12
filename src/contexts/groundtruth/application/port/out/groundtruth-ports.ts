@@ -176,3 +176,50 @@ export interface AccuracyQueryPort {
   countOutcomesByBeach(filter: AccuracyFilter): Promise<BeachOutcomeCounts[]>;
 }
 export const ACCURACY_QUERY = Symbol('ACCURACY_QUERY');
+
+/** 하루치 관측 기록 현황 — 해변 한 곳. */
+export interface BeachObservationCoverage {
+  beachId: Id;
+  beachName: string;
+  region: string;
+  /** 그날 이 해변에 기록이 하나라도 있는가. */
+  recorded: boolean;
+  /** 그날 마지막 기록 시각. 없으면 null. */
+  lastObservedAt: Date | null;
+  /**
+   * 그날 마지막 기록의 판정(있었다/없었다). 기록이 없으면 null.
+   *
+   * **`false`(없었다)가 이 기능의 핵심이다.** 사람은 해파리를 봤을 때만 기록하고, 아무것도
+   * 없던 날은 기록하지 않는다. 그런데 정확도를 재려면 그 "없었던 날"이 있어야 한다.
+   */
+  jellyfishPresent: boolean | null;
+  /** 마지막 기록을 남긴 사람. */
+  observerName: string | null;
+}
+
+/**
+ * 하루치 관측 기록 현황 조회 포트.
+ *
+ * ── 왜 이게 필요한가 ─────────────────────────────────────────────────────────────────
+ * 정답 데이터를 넣는 API 는 이미 있는데 **아무도 넣지 않아 빈 채로 돌고 있다.** 입력 폼이
+ * 무거워서가 아니다(필수 항목이 넷뿐이다) — **오늘 무엇을 기록해야 하는지 아무도 모르기**
+ * 때문이다.
+ *
+ * 그리고 사람이 자연스럽게 남기는 기록에는 **치우침이 있다.** 해파리를 봤을 때는 기록하지만
+ * 아무것도 없던 날은 그냥 지나간다. 그러면 `correct_negative` 와 `false_alarm` 이 쌓이지
+ * 않아 **오경보율을 영영 잴 수 없다.** 정확도 넷 중 둘이 비는 것이다.
+ *
+ * 그래서 "오늘 아직 기록되지 않은 해변" 을 목록으로 보여준다. 채우는 행위 자체가
+ * **"없었다" 기록을 만들게 하는 것**이 이 조회의 목적이다.
+ */
+export interface ObservationCoverageQueryPort {
+  /**
+   * 그날(KST 하루)의 해변별 기록 현황.
+   *
+   * **기록이 없는 해변도 포함한다**(recorded=false 로). 그게 이 조회에서 가장 중요한 행이다 —
+   * 빼 버리면 정작 채워야 할 곳이 목록에서 사라진다.
+   */
+  coverageFor(dateKey: Date): Promise<BeachObservationCoverage[]>;
+}
+
+export const OBSERVATION_COVERAGE_QUERY = Symbol('OBSERVATION_COVERAGE_QUERY');
