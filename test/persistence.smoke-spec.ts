@@ -57,10 +57,15 @@ import {
   DailyPredictionRow,
   GROUNDTRUTH_QUERY,
   GroundtruthQueryPort,
+  OBSERVATION_COVERAGE_QUERY,
+  ObservationCoverageQueryPort,
   RISK_PREDICTION,
   RiskPredictionPort,
 } from '@contexts/groundtruth/application/port/out/groundtruth-ports';
+import { MIN_SAMPLE_FOR_RATIO } from '@contexts/groundtruth/domain/prediction-outcome';
 import {
+  GET_ACCURACY_USE_CASE,
+  GetAccuracyUseCase,
   EVALUATE_PREDICTIONS_USE_CASE,
   EvaluatePredictionsUseCase,
   RECORD_FIELD_OBSERVATION_USE_CASE,
@@ -2007,6 +2012,204 @@ describe('영속성 스모크', () => {
 
         expect(await prisma.notificationConsent.count({ where: { id: { in: ids } } })).toBe(0);
       });
+    });
+  });
+
+  /**
+   * 정답 데이터 수집 루프.
+   *
+   * ── 왜 실 DB 로 보나 ──────────────────────────────────────────────────────────────
+   * "오늘 아직 기록되지 않은 해변" 은 **KST 하루 경계**로 자르는 질의다. 경계가 어긋나면
+   * 저녁에 남긴 기록이 내일 것으로 잡혀, 운영자는 채웠는데 목록이 비지 않는다.
+   * 그 어긋남은 DB 의 시각 비교에서만 드러난다.
+   */
+  describe('정답 데이터 수집 체크리스트', () => {
+    let coverage: ObservationCoverageQueryPort;
+    let recordObservation: RecordFieldObservationUseCase;
+    let today: Date;
+
+    beforeAll(() => {
+      coverage = app.get<ObservationCoverageQueryPort>(OBSERVATION_COVERAGE_QUERY);
+      recordObservation = app.get<RecordFieldObservationUseCase>(RECORD_FIELD_OBSERVATION_USE_CASE);
+      today = kstToday();
+    });
+
+    afterEach(async () => {
+      await prisma.fieldObservation.deleteMany({ where: { observerName: '스모크-관측자' } });
+    });
+
+    it('활성 해변을 하나도 빠뜨리지 않는다 — 기록 없는 해변이 채워야 할 줄이다', async () => {
+      const rows = await coverage.coverageFor(today);
+      const activeCount = await prisma.beach.count({ where: { isActive: true } });
+
+      expect(rows).toHaveLength(activeCount);
+    });
+
+    it('기록이 없으면 recorded=false 이고 판정도 null 이다', async () => {
+      const rows = await coverage.coverageFor(today);
+      const empty = rows.filter((r) => !r.recorded);
+
+      for (const row of empty) {
+        expect(row.lastObservedAt).toBeNull();
+        // "기록 없음" 을 "없었다(false)" 로 채우면 안 된다 — 그건 관측한 적 없는 날을
+        // 정답 데이터로 세는 것이다.
+        expect(row.jellyfishPresent).toBeNull();
+      }
+    });
+
+    it('기록하면 그 해변이 목록에서 채워진다', async () => {
+      const beach = await prisma.beach.findFirstOrThrow({ where: { isActive: true } });
+
+      await recordObservation.recordObservation({
+        beachId: Number(beach.id),
+        observedAt: new Date(),
+        source: 'lifeguard',
+        jellyfishPresent: true,
+        densityLevel: 'medium',
+        observerName: '스모크-관측자',
+        observerId: null,
+      });
+
+      const rows = await coverage.coverageFor(today);
+      const mine = rows.find((r) => Number(r.beachId) === Number(beach.id));
+
+      expect(mine?.recorded).toBe(true);
+      expect(mine?.jellyfishPresent).toBe(true);
+      expect(mine?.observerName).toBe('스모크-관측자');
+    });
+
+    it('⚠️ "없었다" 기록도 똑같이 채워진다 — 이게 이 기능의 존재 이유다', async () => {
+      // 사람은 해파리를 봤을 때만 기록한다. 아무것도 없던 날이 안 쌓이면
+      // 오경보율과 정밀도를 영영 잴 수 없다(정확도 넷 중 둘).
+      const beach = await prisma.beach.findFirstOrThrow({ where: { isActive: true } });
+
+      await recordObservation.recordObservation({
+        beachId: Number(beach.id),
+        observedAt: new Date(),
+        source: 'lifeguard',
+        jellyfishPresent: false,
+        observerName: '스모크-관측자',
+        observerId: null,
+      });
+
+      const rows = await coverage.coverageFor(today);
+      const mine = rows.find((r) => Number(r.beachId) === Number(beach.id));
+
+      expect(mine?.recorded).toBe(true);
+      expect(mine?.jellyfishPresent).toBe(false);
+    });
+
+    it('같은 해변에 여러 건이면 마지막 기록을 보여준다', async () => {
+      const beach = await prisma.beach.findFirstOrThrow({ where: { isActive: true } });
+
+      await recordObservation.recordObservation({
+        beachId: Number(beach.id),
+        observedAt: new Date(Date.now() - 3 * 60 * 60 * 1000),
+        source: 'lifeguard',
+        jellyfishPresent: true,
+        densityLevel: 'low',
+        observerName: '스모크-관측자',
+        observerId: null,
+      });
+      await recordObservation.recordObservation({
+        beachId: Number(beach.id),
+        observedAt: new Date(),
+        source: 'lifeguard',
+        jellyfishPresent: false,
+        observerName: '스모크-관측자',
+        observerId: null,
+      });
+
+      const rows = await coverage.coverageFor(today);
+      const mine = rows.find((r) => Number(r.beachId) === Number(beach.id));
+
+      // 오전에 있었고 오후에 사라졌으면 지금 상태는 "없다" 이다.
+      expect(mine?.jellyfishPresent).toBe(false);
+    });
+
+    it('어제 기록은 오늘 목록을 채우지 않는다 — KST 하루 경계', async () => {
+      // 경계가 어긋나면 저녁에 남긴 기록이 내일 것으로 잡혀, 운영자는 채웠는데 목록이 비지
+      // 않는다. 다른 테스트가 남긴 오늘자 기록에 흔들리지 않도록 **전용 해변**을 만들어 본다.
+      const beach = await prisma.beach.create({
+        data: {
+          name: `스모크-경계확인-${Date.now()}`,
+          region: '제주시',
+          lat: 33.91,
+          lng: 126.91,
+          priority: 98,
+          isActive: true,
+        },
+      });
+      const yesterday = addKstDays(today, -1);
+
+      try {
+        await recordObservation.recordObservation({
+          beachId: Number(beach.id),
+          // 어제 KST 낮에 남긴 기록.
+          observedAt: new Date(kstDayStart(yesterday).getTime() + 12 * 60 * 60 * 1000),
+          source: 'lifeguard',
+          jellyfishPresent: true,
+          // 도메인 불변식: 봤다면 밀도가 필수다.
+          densityLevel: 'low',
+          observerName: '스모크-관측자',
+          observerId: null,
+        });
+
+        const todayRows = await coverage.coverageFor(today);
+        const yesterdayRows = await coverage.coverageFor(yesterday);
+        const find = (rows: typeof todayRows) =>
+          rows.find((r) => Number(r.beachId) === Number(beach.id));
+
+        expect(find(todayRows)?.recorded).toBe(false);
+        expect(find(yesterdayRows)?.recorded).toBe(true);
+      } finally {
+        await prisma.fieldObservation.deleteMany({ where: { beachId: beach.id } });
+        await prisma.beach.delete({ where: { id: beach.id } });
+      }
+    });
+
+    describe('HTTP', () => {
+      it('인증이 필요하다', async () => {
+        await request(http).get('/api/admin/field-observations/coverage').expect(401);
+      });
+    });
+  });
+
+  /**
+   * 정확도 — **표본이 부족하면 숫자를 내놓지 않는다.**
+   *
+   * 정답 데이터를 이제 막 모으기 시작한 지금이 정확히 위험한 구간이다. 초기 몇 건으로
+   * 만들어진 "재현율 100%" 가 의사결정에 쓰이면 그건 부정확이 아니라 거짓 신뢰다.
+   */
+  describe('정확도 표본 가드', () => {
+    it('평가 기록이 거의 없으면 비율이 null 이다 — 0% 가 아니다', async () => {
+      const accuracy = app.get<GetAccuracyUseCase>(GET_ACCURACY_USE_CASE);
+      const report = await accuracy.getReport({});
+
+      // 스모크 DB 에는 평가가 쌓여 있지 않다. 비율이 나온다면 그건 적은 표본으로
+      // 만들어진 숫자이므로 오히려 잘못된 것이다.
+      const denominators = [
+        report.overall.counts.hit + report.overall.counts.miss,
+        report.overall.counts.hit + report.overall.counts.false_alarm,
+        report.overall.counts.false_alarm + report.overall.counts.correct_negative,
+      ];
+      const ratios = [
+        report.overall.recall,
+        report.overall.precision,
+        report.overall.falseAlarmRate,
+      ];
+
+      ratios.forEach((ratio, i) => {
+        if (denominators[i] < MIN_SAMPLE_FOR_RATIO) expect(ratio).toBeNull();
+      });
+    });
+
+    it('표본 수는 언제나 보여준다 — 얼마나 더 모아야 하는지 알아야 한다', async () => {
+      const accuracy = app.get<GetAccuracyUseCase>(GET_ACCURACY_USE_CASE);
+      const report = await accuracy.getReport({});
+
+      expect(report.overall.counts).toBeDefined();
+      expect(typeof report.overall.total).toBe('number');
     });
   });
 });
