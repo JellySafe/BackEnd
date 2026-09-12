@@ -334,3 +334,53 @@ export class EvaluatePredictionsResponse {
   @ApiProperty({ enum: EVALUATION_OUTCOMES, isArray: true, required: false })
   outcomes?: string[];
 }
+
+/** 하루치 관측 기록 현황 — 해변 한 곳. */
+export class BeachObservationCoverageResponse {
+  @ApiProperty({ example: 3 }) beachId!: number;
+  @ApiProperty({ example: '함덕해수욕장' }) beachName!: string;
+  @ApiProperty({ example: '제주시' }) region!: string;
+
+  @ApiProperty({
+    example: false,
+    description: '그날 이 해변에 기록이 하나라도 있는가. **false 인 줄이 채워야 할 곳이다**',
+  })
+  recorded!: boolean;
+
+  @ApiProperty({ example: '2026-09-13T02:10:00.000Z', nullable: true, type: String })
+  lastObservedAt!: string | null;
+
+  @ApiProperty({
+    example: false,
+    nullable: true,
+    type: Boolean,
+    description: [
+      '그날 마지막 기록의 판정. 기록이 없으면 null.',
+      '',
+      '⚠️ **`false`(없었다)가 이 기능의 핵심이다.** 사람은 해파리를 봤을 때만 기록하고 아무것도',
+      '없던 날은 그냥 지나간다. 그러면 정확도 넷 중 둘(오경보율·정밀도)을 영영 잴 수 없다.',
+    ].join('\n'),
+  })
+  jellyfishPresent!: boolean | null;
+
+  @ApiProperty({ example: '김안전', nullable: true, type: String })
+  observerName!: string | null;
+}
+
+/** 하루치 관측 기록 현황 응답. */
+export class ObservationCoverageResponse {
+  @ApiProperty({ example: '2026-09-13', description: '기준 일자(YYYY-MM-DD, KST)' })
+  date!: string;
+
+  @ApiProperty({ example: 12, description: '집계 대상 해변 수(운영 중인 해변)' })
+  totalBeaches!: number;
+
+  @ApiProperty({ example: 4, description: '그날 기록이 있는 해변 수' })
+  recordedBeaches!: number;
+
+  @ApiProperty({
+    type: [BeachObservationCoverageResponse],
+    description: '해변별 현황. **기록이 없는 해변도 빠지지 않는다** — 그게 채워야 할 줄이다',
+  })
+  beaches!: BeachObservationCoverageResponse[];
+}
