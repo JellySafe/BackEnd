@@ -1,9 +1,11 @@
 import { RiskLevel } from '@shared/kernel/risk-level';
 import { DensityLevel } from '@contexts/observation/domain/observation-enums';
+import { EvaluationOutcome } from './groundtruth-enums';
 import {
   ALERT_THRESHOLD,
   DailyActual,
   DailyPrediction,
+  MIN_SAMPLE_FOR_RATIO,
   classifyOutcome,
   isAlert,
   summarize,
@@ -118,20 +120,68 @@ describe('예측 대조', () => {
       expect(summary.total).toBe(5);
     });
 
+    /** 같은 판정을 n 번 반복한 목록. 표본 수만 채우고 비율은 그대로 두기 위한 것이다. */
+    const repeat = (outcome: EvaluationOutcome, n: number): EvaluationOutcome[] =>
+      Array.from({ length: n }, () => outcome);
+
     it('재현율 = 위험했던 날 중 경보한 비율', () => {
-      // 위험했던 날 4일(hit 3 + miss 1) 중 3일 경보 → 0.75
-      const summary = summarize(['hit', 'hit', 'hit', 'miss']);
+      // 위험했던 날 40일(hit 30 + miss 10) 중 30일 경보 → 0.75
+      const summary = summarize([...repeat('hit', 30), ...repeat('miss', 10)]);
       expect(summary.recall).toBeCloseTo(0.75);
     });
 
     it('정밀도 = 경보한 날 중 실제로 위험했던 비율', () => {
-      const summary = summarize(['hit', 'hit', 'false_alarm', 'false_alarm']);
+      const summary = summarize([...repeat('hit', 20), ...repeat('false_alarm', 20)]);
       expect(summary.precision).toBeCloseTo(0.5);
     });
 
     it('오경보율 = 안전했던 날 중 경보한 비율', () => {
-      const summary = summarize(['false_alarm', 'correct_negative', 'correct_negative']);
+      const summary = summarize([...repeat('false_alarm', 10), ...repeat('correct_negative', 20)]);
       expect(summary.falseAlarmRate).toBeCloseTo(1 / 3);
+    });
+
+    /**
+     * 표본이 적으면 **숫자를 내보내지 않는다.**
+     *
+     * 분모가 0 일 때만 막으면 표본 1건에서 "재현율 100%" 가 나간다. 그걸 본 사람은
+     * "위험한 날을 다 잡아낸다" 고 읽는데 실제로는 아무것도 모르는 상태다. 정답 데이터를
+     * 이제 막 모으기 시작한 지금이 정확히 그 구간이다.
+     */
+    describe(`표본이 ${MIN_SAMPLE_FOR_RATIO}건 미만이면 잴 수 없다고 답한다`, () => {
+      const repeatOutcome = (outcome: EvaluationOutcome, n: number): EvaluationOutcome[] =>
+        Array.from({ length: n }, () => outcome);
+
+      it('표본 1건으로 "재현율 100%" 를 만들지 않는다', () => {
+        expect(summarize(['hit']).recall).toBeNull();
+      });
+
+      it('기준 직전까지는 잴 수 없다', () => {
+        const outcomes = repeatOutcome('hit', MIN_SAMPLE_FOR_RATIO - 1);
+        expect(summarize(outcomes).recall).toBeNull();
+      });
+
+      it('기준을 채우면 비로소 나온다', () => {
+        const outcomes = repeatOutcome('hit', MIN_SAMPLE_FOR_RATIO);
+        expect(summarize(outcomes).recall).toBe(1);
+      });
+
+      it('표본은 비율마다 자기 분모로 따진다 — 총계로 재면 안 된다', () => {
+        // 안전한 날만 잔뜩 쌓인 상황. 총계는 충분하지만 "위험했던 날" 은 2일뿐이라
+        // 재현율은 여전히 잴 수 없어야 한다(총계로 재면 믿을 만한 것처럼 보인다).
+        const outcomes = [...repeatOutcome('correct_negative', 100), 'hit' as const, 'miss' as const];
+        const summary = summarize(outcomes);
+
+        expect(summary.total).toBeGreaterThan(MIN_SAMPLE_FOR_RATIO);
+        expect(summary.recall).toBeNull();
+        expect(summary.falseAlarmRate).not.toBeNull(); // 이쪽 분모는 충분하다
+      });
+
+      it('잴 수 없어도 표본 수는 보여준다 — 얼마나 더 모아야 하는지 알아야 한다', () => {
+        const summary = summarize(['hit', 'miss']);
+
+        expect(summary.recall).toBeNull();
+        expect(summary.counts.hit + summary.counts.miss).toBe(2);
+      });
     });
 
     describe('분모가 0 이면 null 이다', () => {
@@ -170,14 +220,18 @@ describe('예측 대조', () => {
   });
 
   describe('지표 하나로는 품질을 말할 수 없다', () => {
+    /** 표본 수만 채우고 비율은 그대로 두기 위한 것. 기준 미만이면 비율이 null 이 된다. */
+    const many = (outcome: EvaluationOutcome): EvaluationOutcome[] =>
+      Array.from({ length: MIN_SAMPLE_FOR_RATIO }, () => outcome);
+
     it('항상 경보하면 재현율은 1 이지만 오경보율도 1 이다', () => {
-      const always = summarize(['hit', 'hit', 'false_alarm', 'false_alarm']);
+      const always = summarize([...many('hit'), ...many('false_alarm')]);
       expect(always.recall).toBe(1);
       expect(always.falseAlarmRate).toBe(1);
     });
 
     it('절대 경보하지 않으면 오경보율은 0 이지만 재현율도 0 이다', () => {
-      const never = summarize(['miss', 'miss', 'correct_negative']);
+      const never = summarize([...many('miss'), ...many('correct_negative')]);
       expect(never.falseAlarmRate).toBe(0);
       expect(never.recall).toBe(0);
     });
