@@ -62,7 +62,7 @@ import {
   RISK_PREDICTION,
   RiskPredictionPort,
 } from '@contexts/groundtruth/application/port/out/groundtruth-ports';
-import { MIN_SAMPLE_FOR_RATIO } from '@contexts/groundtruth/domain/prediction-outcome';
+import { MIN_SAMPLE_FOR_RATIO, wasDangerous } from '@contexts/groundtruth/domain/prediction-outcome';
 import {
   GET_ACCURACY_USE_CASE,
   GetAccuracyUseCase,
@@ -2210,6 +2210,170 @@ describe('영속성 스모크', () => {
 
       expect(report.overall.counts).toBeDefined();
       expect(typeof report.overall.total).toBe('number');
+    });
+  });
+
+  /**
+   * 제3자 출현 기록을 정답으로 쓰기.
+   *
+   * ── 여기서 지키는 것 ──────────────────────────────────────────────────────────────
+   * **자기가 올린 값을 자기가 채점하지 않는 것**이다. 출현 기록은 위험도 산출의 입력이기도
+   * 해서(인근 출현 룰), 그대로 정답으로 쓰면 "출현이 위험도를 올리고 → 그 출현으로 맞혔다고
+   * 채점" 하는 순환이 된다. 재현율이 올라가도 예측이 좋아진 것이 아니다.
+   *
+   * 그 차단은 SQL 의 날짜 비교 한 줄이라, **DB 없이는 지켜지는지 확인할 수 없다.**
+   */
+  describe('제3자 출현 기록을 정답으로', () => {
+    const DAY = 24 * 60 * 60 * 1000;
+
+    /** 해변 좌표 근처에 출현 기록 하나를 만든다. */
+    async function makeOccurrence(params: {
+      beachLat: number;
+      beachLng: number;
+      offsetDeg: number;
+      occurredAt: Date;
+      collectedAt: Date;
+      density: string;
+    }) {
+      const source = await prisma.dataSource.findFirstOrThrow({ where: { sourceType: 'jellyfish' } });
+      return prisma.jellyfishOccurrence.create({
+        data: {
+          sourceId: source.id,
+          externalId: `smoke-${Date.now()}-${Math.round(Math.random() * 1e6)}`,
+          occurredAt: params.occurredAt,
+          collectedAt: params.collectedAt,
+          region: '제주시',
+          lat: params.beachLat + params.offsetDeg,
+          lng: params.beachLng,
+          densityLevel: params.density,
+        },
+      });
+    }
+
+    let beach: { id: bigint; lat: unknown; lng: unknown };
+    let targetDate: Date;
+
+    beforeAll(async () => {
+      beach = await prisma.beach.findFirstOrThrow({ where: { isActive: true } });
+      targetDate = addKstDays(kstToday(), -3);
+    });
+
+    afterEach(async () => {
+      await prisma.jellyfishOccurrence.deleteMany({ where: { externalId: { startsWith: 'smoke-' } } });
+    });
+
+    /** 그 해변·그 날짜의 정답 한 줄. */
+    async function actualFor(date: Date) {
+      const query = app.get<GroundtruthQueryPort>(GROUNDTRUTH_QUERY);
+      const rows = await query.collectDailyActuals(date, date);
+      return rows.find((r) => Number(r.beachId) === Number(beach.id));
+    }
+
+    it('나중에 알려진 출현은 정답이 된다', async () => {
+      await makeOccurrence({
+        beachLat: Number(beach.lat),
+        beachLng: Number(beach.lng),
+        offsetDeg: 0.01, // 약 1km
+        occurredAt: new Date(kstDayStart(targetDate).getTime() + 6 * 60 * 60 * 1000),
+        // 이틀 뒤에 수집됐다 = 그날 예측은 이 기록을 볼 수 없었다.
+        collectedAt: new Date(kstDayStart(targetDate).getTime() + 2 * DAY),
+        density: 'high',
+      });
+
+      const actual = await actualFor(targetDate);
+
+      expect(actual?.observed).toBe(true);
+      expect(actual?.maxDensity).toBe('high');
+    });
+
+    it('⚠️ 같은 날 알려진 출현은 정답이 아니다 — 엔진이 이미 썼을 수 있다', async () => {
+      // 이 테스트가 이 기능에서 가장 중요하다. 막지 않으면 자기가 올린 값으로 자기를 채점한다.
+      await makeOccurrence({
+        beachLat: Number(beach.lat),
+        beachLng: Number(beach.lng),
+        offsetDeg: 0.01,
+        occurredAt: new Date(kstDayStart(targetDate).getTime() + 6 * 60 * 60 * 1000),
+        // 같은 날 수집됐다 = 그날 위험도 산출이 이 기록을 이미 반영했을 수 있다.
+        collectedAt: new Date(kstDayStart(targetDate).getTime() + 8 * 60 * 60 * 1000),
+        density: 'high',
+      });
+
+      expect(await actualFor(targetDate)).toBeUndefined();
+    });
+
+    it('반경 밖의 출현은 그 해변의 정답이 아니다', async () => {
+      await makeOccurrence({
+        beachLat: Number(beach.lat),
+        beachLng: Number(beach.lng),
+        offsetDeg: 0.5, // 약 55km — 설정 반경(기본 10km)을 한참 넘는다
+        occurredAt: new Date(kstDayStart(targetDate).getTime() + 6 * 60 * 60 * 1000),
+        collectedAt: new Date(kstDayStart(targetDate).getTime() + 2 * DAY),
+        density: 'high',
+      });
+
+      expect(await actualFor(targetDate)).toBeUndefined();
+    });
+
+    it('좌표가 없는 출현은 버린다 — 행정구역명으로 붙이면 해변별 차이가 사라진다', async () => {
+      const source = await prisma.dataSource.findFirstOrThrow({ where: { sourceType: 'jellyfish' } });
+      await prisma.jellyfishOccurrence.create({
+        data: {
+          sourceId: source.id,
+          externalId: `smoke-nogeo-${Date.now()}`,
+          occurredAt: new Date(kstDayStart(targetDate).getTime() + 6 * 60 * 60 * 1000),
+          collectedAt: new Date(kstDayStart(targetDate).getTime() + 2 * DAY),
+          region: '제주시',
+          densityLevel: 'high',
+        },
+      });
+
+      expect(await actualFor(targetDate)).toBeUndefined();
+    });
+
+    it('저밀도 출현은 "위험했던 날" 로 세지 않는다 — 기존 판정 규칙 그대로다', async () => {
+      // 해파리는 연안에 상시 조금씩 있다. 저밀도를 위험으로 세면 거의 매일 위험이 된다.
+      await makeOccurrence({
+        beachLat: Number(beach.lat),
+        beachLng: Number(beach.lng),
+        offsetDeg: 0.01,
+        occurredAt: new Date(kstDayStart(targetDate).getTime() + 6 * 60 * 60 * 1000),
+        collectedAt: new Date(kstDayStart(targetDate).getTime() + 2 * DAY),
+        density: 'low',
+      });
+
+      const actual = await actualFor(targetDate);
+
+      expect(actual?.observed).toBe(true);
+      expect(actual?.maxDensity).toBe('low');
+      expect(wasDangerous({ ...actual!, incidentCount: 0 })).toBe(false);
+    });
+
+    it('현장 관측과 함께 있으면 더 높은 밀도가 남는다', async () => {
+      const observedAt = new Date(kstDayStart(targetDate).getTime() + 5 * 60 * 60 * 1000);
+
+      await app.get<RecordFieldObservationUseCase>(RECORD_FIELD_OBSERVATION_USE_CASE).recordObservation({
+        beachId: Number(beach.id),
+        observedAt,
+        source: 'lifeguard',
+        jellyfishPresent: true,
+        densityLevel: 'low',
+        observerName: '스모크-관측자',
+        observerId: null,
+      });
+      await makeOccurrence({
+        beachLat: Number(beach.lat),
+        beachLng: Number(beach.lng),
+        offsetDeg: 0.01,
+        occurredAt: observedAt,
+        collectedAt: new Date(kstDayStart(targetDate).getTime() + 2 * DAY),
+        density: 'high',
+      });
+
+      try {
+        expect((await actualFor(targetDate))?.maxDensity).toBe('high');
+      } finally {
+        await prisma.fieldObservation.deleteMany({ where: { observerName: '스모크-관측자' } });
+      }
     });
   });
 });

@@ -1,4 +1,5 @@
 import { Module } from '@nestjs/common';
+import { GroundtruthConfig } from './groundtruth.config';
 import { AdminGroundtruthController } from './adapter/in/web/admin-groundtruth.controller';
 import { SystemEvaluationController } from './adapter/in/web/system-evaluation.controller';
 import { EvaluationScheduler } from './adapter/in/schedule/evaluation.scheduler';
@@ -43,6 +44,8 @@ import {
 @Module({
   controllers: [AdminGroundtruthController, SystemEvaluationController],
   providers: [
+    // 정답으로 무엇을 인정할지 정하는 설정(출현 기록 사용 여부·반경).
+    GroundtruthConfig,
     // 정답 데이터 수집 체크리스트(운영 조회용 읽기 모델).
     { provide: OBSERVATION_COVERAGE_QUERY, useClass: ObservationCoverageKyselyQuery },
     // 인바운드 포트 → 유스케이스
