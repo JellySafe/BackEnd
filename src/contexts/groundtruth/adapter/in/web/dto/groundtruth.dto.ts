@@ -10,6 +10,7 @@ import {
   Max,
   MaxLength,
   Min,
+  MinLength,
 } from 'class-validator';
 import { DENSITY_LEVELS, DensityLevel } from '@contexts/observation/domain/observation-enums';
 import { RISK_LEVELS, RiskLevel } from '@shared/kernel/risk-level';
@@ -383,4 +384,127 @@ export class ObservationCoverageResponse {
     description: '해변별 현황. **기록이 없는 해변도 빠지지 않는다** — 그게 채워야 할 줄이다',
   })
   beaches!: BeachObservationCoverageResponse[];
+}
+
+/** 간편 기록 링크 한 줄. */
+export class QuickRecordLinkResponse {
+  @ApiProperty({ example: 3 }) beachId!: number;
+  @ApiProperty({ example: '함덕해수욕장' }) beachName!: string;
+
+  @ApiProperty({
+    example: 'q3.2026-09-13.Zm9vYmFyYmF6cXV4MTIzNA',
+    description: '해변·날짜에 묶인 서명 토큰. 이 토큰만 있으면 로그인 없이 그 해변·그날을 기록할 수 있다',
+  })
+  token!: string;
+
+  @ApiProperty({
+    example: 'https://admin.example.kr/quick-record?token=q3.2026-09-13.Zm9vYmFy',
+    nullable: true,
+    type: String,
+    description:
+      '문자로 보낼 링크. QUICK_RECORD_BASE_URL 이 설정돼 있을 때만 채워진다(없으면 token 으로 직접 만든다)',
+  })
+  url!: string | null;
+
+  @ApiProperty({ example: true, description: '그날 이미 기록이 있는가. 있으면 보낼 필요가 없다' })
+  alreadyRecorded!: boolean;
+}
+
+/** 간편 기록 링크 발급 응답. */
+export class QuickRecordLinksResponse {
+  @ApiProperty({ example: '2026-09-13', description: '링크가 유효한 날짜(KST)' })
+  date!: string;
+
+  @ApiProperty({ type: [QuickRecordLinkResponse] })
+  links!: QuickRecordLinkResponse[];
+}
+
+/** 간편 기록 요청(로그인 없이 호출된다). */
+export class QuickRecordRequest {
+  @ApiProperty({
+    example: 'q3.2026-09-13.Zm9vYmFyYmF6cXV4MTIzNA',
+    description: '발급받은 간편 기록 토큰. 해변과 날짜가 여기 박혀 있다',
+  })
+  @IsString()
+  token!: string;
+
+  @ApiProperty({
+    example: false,
+    description: [
+      '해파리를 봤는가. **`false`(못 봤다)가 특히 중요하다** — 그 기록이 없으면',
+      '오경보율과 정밀도를 잴 수 없다.',
+    ].join(' '),
+  })
+  @IsBoolean()
+  jellyfishPresent!: boolean;
+
+  @ApiPropertyOptional({
+    enum: DENSITY_LEVELS as readonly string[],
+    description: '봤다면 얼마나. **`jellyfishPresent: true` 면 필수다**(없으면 400)',
+  })
+  @IsOptional()
+  @IsIn(DENSITY_LEVELS as readonly string[])
+  densityLevel?: DensityLevel;
+
+  @ApiPropertyOptional({ example: '김안전', maxLength: 50, description: '기록한 사람(선택)' })
+  @IsOptional()
+  @IsString()
+  @MaxLength(50)
+  observerName?: string;
+
+  @ApiPropertyOptional({ example: '오전 순찰 중 확인', maxLength: 500 })
+  @IsOptional()
+  @IsString()
+  @MaxLength(500)
+  note?: string;
+}
+
+/** 쏘임 사고 일괄 등록 요청. */
+export class BulkStingIncidentRequest {
+  @ApiProperty({
+    example:
+      'beach_id,occurred_at,source,severity,patient_count,external_ref,note\n3,2026-08-01T14:30:00+09:00,emergency_call,moderate,2,F-2026-0801-3,오후 구조',
+    description: [
+      'CSV 원문. 첫 줄은 머리글이고 **열 순서는 상관없다**(이름으로 찾는다 — 엑셀에서 열이 밀리는 일이 흔하다).',
+      '',
+      '필수 열: `beach_id` `occurred_at` `source` `severity` `patient_count`',
+      '선택 열: `external_ref` `note`',
+    ].join('\n'),
+  })
+  @IsString()
+  @MinLength(1)
+  csv!: string;
+}
+
+/** 일괄 등록 중 실패한 줄. */
+export class BulkIncidentErrorResponse {
+  @ApiProperty({ example: 12, description: '머리글을 제외한 줄 번호(1부터). 0 이면 머리글 문제다' })
+  lineNumber!: number;
+
+  @ApiProperty({ example: '9,언제,emergency_call,mild,1', description: '그 줄 원문 — 파일에서 찾을 수 있어야 한다' })
+  raw!: string;
+
+  @ApiProperty({
+    example: 'occurred_at 을 날짜로 읽을 수 없습니다: "언제" (예: 2026-08-01T14:30:00+09:00)',
+    description: '사람이 고칠 수 있는 문장으로 준다',
+  })
+  reason!: string;
+}
+
+/** 일괄 등록 결과. */
+export class BulkStingIncidentResponse {
+  @ApiProperty({ example: 97, description: '저장된 사고 수' })
+  saved!: number;
+
+  @ApiProperty({
+    example: 3,
+    description: '같은 external_ref 가 이미 있던 건수. **저장은 된다**(기계가 병합하지 않는다)',
+  })
+  possibleDuplicates!: number;
+
+  @ApiProperty({
+    type: [BulkIncidentErrorResponse],
+    description: '실패한 줄. **한 줄이 틀려도 나머지는 저장된다** — 전부 거부하면 파일 전체를 다시 뒤져야 한다',
+  })
+  errors!: BulkIncidentErrorResponse[];
 }

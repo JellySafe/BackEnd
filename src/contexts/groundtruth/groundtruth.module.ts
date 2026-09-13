@@ -1,4 +1,8 @@
 import { Module } from '@nestjs/common';
+import { GroundtruthConfig } from './groundtruth.config';
+import { QuickRecordService } from './application/service/quick-record.service';
+import { ObservationReminderScheduler } from './adapter/in/schedule/observation-reminder.scheduler';
+import { PublicQuickRecordController } from './adapter/in/web/public-quick-record.controller';
 import { AdminGroundtruthController } from './adapter/in/web/admin-groundtruth.controller';
 import { SystemEvaluationController } from './adapter/in/web/system-evaluation.controller';
 import { EvaluationScheduler } from './adapter/in/schedule/evaluation.scheduler';
@@ -41,8 +45,14 @@ import {
  * 목적으로 함께 움직이고, 포트마다 파일을 쪼개면 얇은 래퍼만 늘어나기 때문이다.
  */
 @Module({
-  controllers: [AdminGroundtruthController, SystemEvaluationController],
+  controllers: [PublicQuickRecordController, AdminGroundtruthController, SystemEvaluationController],
   providers: [
+    // 정답으로 무엇을 인정할지 정하는 설정(출현 기록 사용 여부·반경).
+    GroundtruthConfig,
+    // 간편 기록 링크(발급·기록). 관리자 컨트롤러와 공개 컨트롤러가 함께 쓴다.
+    QuickRecordService,
+    // 하루 한 번 미기록 해변을 드러낸다(지금은 로그 — 받을 사람 명단은 운영 합의다).
+    ObservationReminderScheduler,
     // 정답 데이터 수집 체크리스트(운영 조회용 읽기 모델).
     { provide: OBSERVATION_COVERAGE_QUERY, useClass: ObservationCoverageKyselyQuery },
     // 인바운드 포트 → 유스케이스

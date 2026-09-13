@@ -62,7 +62,9 @@ import {
   RISK_PREDICTION,
   RiskPredictionPort,
 } from '@contexts/groundtruth/application/port/out/groundtruth-ports';
-import { MIN_SAMPLE_FOR_RATIO } from '@contexts/groundtruth/domain/prediction-outcome';
+import { MIN_SAMPLE_FOR_RATIO, wasDangerous } from '@contexts/groundtruth/domain/prediction-outcome';
+import { parseIncidentCsv } from '@contexts/groundtruth/domain/incident-csv';
+import { QuickRecordService } from '@contexts/groundtruth/application/service/quick-record.service';
 import {
   GET_ACCURACY_USE_CASE,
   GetAccuracyUseCase,
@@ -2210,6 +2212,299 @@ describe('영속성 스모크', () => {
 
       expect(report.overall.counts).toBeDefined();
       expect(typeof report.overall.total).toBe('number');
+    });
+  });
+
+  /**
+   * 제3자 출현 기록을 정답으로 쓰기.
+   *
+   * ── 여기서 지키는 것 ──────────────────────────────────────────────────────────────
+   * **자기가 올린 값을 자기가 채점하지 않는 것**이다. 출현 기록은 위험도 산출의 입력이기도
+   * 해서(인근 출현 룰), 그대로 정답으로 쓰면 "출현이 위험도를 올리고 → 그 출현으로 맞혔다고
+   * 채점" 하는 순환이 된다. 재현율이 올라가도 예측이 좋아진 것이 아니다.
+   *
+   * 그 차단은 SQL 의 날짜 비교 한 줄이라, **DB 없이는 지켜지는지 확인할 수 없다.**
+   */
+  describe('제3자 출현 기록을 정답으로', () => {
+    const DAY = 24 * 60 * 60 * 1000;
+
+    /** 해변 좌표 근처에 출현 기록 하나를 만든다. */
+    async function makeOccurrence(params: {
+      beachLat: number;
+      beachLng: number;
+      offsetDeg: number;
+      occurredAt: Date;
+      collectedAt: Date;
+      density: string;
+    }) {
+      const source = await prisma.dataSource.findFirstOrThrow({ where: { sourceType: 'jellyfish' } });
+      return prisma.jellyfishOccurrence.create({
+        data: {
+          sourceId: source.id,
+          externalId: `smoke-${Date.now()}-${Math.round(Math.random() * 1e6)}`,
+          occurredAt: params.occurredAt,
+          collectedAt: params.collectedAt,
+          region: '제주시',
+          lat: params.beachLat + params.offsetDeg,
+          lng: params.beachLng,
+          densityLevel: params.density,
+        },
+      });
+    }
+
+    let beach: { id: bigint; lat: unknown; lng: unknown };
+    let targetDate: Date;
+
+    beforeAll(async () => {
+      beach = await prisma.beach.findFirstOrThrow({ where: { isActive: true } });
+      targetDate = addKstDays(kstToday(), -3);
+    });
+
+    afterEach(async () => {
+      await prisma.jellyfishOccurrence.deleteMany({ where: { externalId: { startsWith: 'smoke-' } } });
+    });
+
+    /** 그 해변·그 날짜의 정답 한 줄. */
+    async function actualFor(date: Date) {
+      const query = app.get<GroundtruthQueryPort>(GROUNDTRUTH_QUERY);
+      const rows = await query.collectDailyActuals(date, date);
+      return rows.find((r) => Number(r.beachId) === Number(beach.id));
+    }
+
+    it('나중에 알려진 출현은 정답이 된다', async () => {
+      await makeOccurrence({
+        beachLat: Number(beach.lat),
+        beachLng: Number(beach.lng),
+        offsetDeg: 0.01, // 약 1km
+        occurredAt: new Date(kstDayStart(targetDate).getTime() + 6 * 60 * 60 * 1000),
+        // 이틀 뒤에 수집됐다 = 그날 예측은 이 기록을 볼 수 없었다.
+        collectedAt: new Date(kstDayStart(targetDate).getTime() + 2 * DAY),
+        density: 'high',
+      });
+
+      const actual = await actualFor(targetDate);
+
+      expect(actual?.observed).toBe(true);
+      expect(actual?.maxDensity).toBe('high');
+    });
+
+    it('⚠️ 같은 날 알려진 출현은 정답이 아니다 — 엔진이 이미 썼을 수 있다', async () => {
+      // 이 테스트가 이 기능에서 가장 중요하다. 막지 않으면 자기가 올린 값으로 자기를 채점한다.
+      await makeOccurrence({
+        beachLat: Number(beach.lat),
+        beachLng: Number(beach.lng),
+        offsetDeg: 0.01,
+        occurredAt: new Date(kstDayStart(targetDate).getTime() + 6 * 60 * 60 * 1000),
+        // 같은 날 수집됐다 = 그날 위험도 산출이 이 기록을 이미 반영했을 수 있다.
+        collectedAt: new Date(kstDayStart(targetDate).getTime() + 8 * 60 * 60 * 1000),
+        density: 'high',
+      });
+
+      expect(await actualFor(targetDate)).toBeUndefined();
+    });
+
+    it('반경 밖의 출현은 그 해변의 정답이 아니다', async () => {
+      await makeOccurrence({
+        beachLat: Number(beach.lat),
+        beachLng: Number(beach.lng),
+        offsetDeg: 0.5, // 약 55km — 설정 반경(기본 10km)을 한참 넘는다
+        occurredAt: new Date(kstDayStart(targetDate).getTime() + 6 * 60 * 60 * 1000),
+        collectedAt: new Date(kstDayStart(targetDate).getTime() + 2 * DAY),
+        density: 'high',
+      });
+
+      expect(await actualFor(targetDate)).toBeUndefined();
+    });
+
+    it('좌표가 없는 출현은 버린다 — 행정구역명으로 붙이면 해변별 차이가 사라진다', async () => {
+      const source = await prisma.dataSource.findFirstOrThrow({ where: { sourceType: 'jellyfish' } });
+      await prisma.jellyfishOccurrence.create({
+        data: {
+          sourceId: source.id,
+          externalId: `smoke-nogeo-${Date.now()}`,
+          occurredAt: new Date(kstDayStart(targetDate).getTime() + 6 * 60 * 60 * 1000),
+          collectedAt: new Date(kstDayStart(targetDate).getTime() + 2 * DAY),
+          region: '제주시',
+          densityLevel: 'high',
+        },
+      });
+
+      expect(await actualFor(targetDate)).toBeUndefined();
+    });
+
+    it('저밀도 출현은 "위험했던 날" 로 세지 않는다 — 기존 판정 규칙 그대로다', async () => {
+      // 해파리는 연안에 상시 조금씩 있다. 저밀도를 위험으로 세면 거의 매일 위험이 된다.
+      await makeOccurrence({
+        beachLat: Number(beach.lat),
+        beachLng: Number(beach.lng),
+        offsetDeg: 0.01,
+        occurredAt: new Date(kstDayStart(targetDate).getTime() + 6 * 60 * 60 * 1000),
+        collectedAt: new Date(kstDayStart(targetDate).getTime() + 2 * DAY),
+        density: 'low',
+      });
+
+      const actual = await actualFor(targetDate);
+
+      expect(actual?.observed).toBe(true);
+      expect(actual?.maxDensity).toBe('low');
+      expect(wasDangerous({ ...actual!, incidentCount: 0 })).toBe(false);
+    });
+
+    it('현장 관측과 함께 있으면 더 높은 밀도가 남는다', async () => {
+      const observedAt = new Date(kstDayStart(targetDate).getTime() + 5 * 60 * 60 * 1000);
+
+      await app.get<RecordFieldObservationUseCase>(RECORD_FIELD_OBSERVATION_USE_CASE).recordObservation({
+        beachId: Number(beach.id),
+        observedAt,
+        source: 'lifeguard',
+        jellyfishPresent: true,
+        densityLevel: 'low',
+        observerName: '스모크-관측자',
+        observerId: null,
+      });
+      await makeOccurrence({
+        beachLat: Number(beach.lat),
+        beachLng: Number(beach.lng),
+        offsetDeg: 0.01,
+        occurredAt: observedAt,
+        collectedAt: new Date(kstDayStart(targetDate).getTime() + 2 * DAY),
+        density: 'high',
+      });
+
+      try {
+        expect((await actualFor(targetDate))?.maxDensity).toBe('high');
+      } finally {
+        await prisma.fieldObservation.deleteMany({ where: { observerName: '스모크-관측자' } });
+      }
+    });
+  });
+
+  /**
+   * 수집 문턱을 낮추는 두 창구 — 간편 링크와 CSV 일괄 등록.
+   *
+   * 둘 다 **쓰기 경로**다. 토큰 범위가 실제로 좁은지, CSV 가 실제로 저장되는지는
+   * 요청을 끝까지 태워 봐야 알 수 있다.
+   */
+  describe('수집 창구', () => {
+    describe('간편 기록 링크', () => {
+      it('발급한 토큰으로 로그인 없이 기록된다', async () => {
+        const quick = app.get(QuickRecordService);
+        const beach = await prisma.beach.findFirstOrThrow({ where: { isActive: true } });
+        const { links } = await quick.issueLinks();
+        const mine = links.find((l) => l.beachId === Number(beach.id));
+
+        const res = await request(http)
+          .post('/api/public/field-observations/quick')
+          .send({ token: mine!.token, jellyfishPresent: false, observerName: '스모크-간편' })
+          .expect(201);
+
+        expect((res.body as { data: { observationId: number } }).data.observationId).toBeGreaterThan(0);
+
+        const saved = await prisma.fieldObservation.findFirst({
+          where: { observerName: '스모크-간편' },
+          orderBy: { id: 'desc' },
+        });
+        // 해변은 토큰에 박혀 있다 — 본문으로 받지 않는다.
+        expect(Number(saved?.beachId)).toBe(Number(beach.id));
+        expect(saved?.jellyfishPresent).toBe(false);
+
+        await prisma.fieldObservation.deleteMany({ where: { observerName: '스모크-간편' } });
+      });
+
+      it('위조 토큰은 401 이다', async () => {
+        await request(http)
+          .post('/api/public/field-observations/quick')
+          .send({ token: 'q1.2026-09-13.AAAAAAAAAAAAAAAAAAAAAA', jellyfishPresent: false })
+          .expect(401);
+      });
+
+      it('어제 링크는 422 다 — 위조와 다르게 답해야 "다시 받으면 된다" 로 이어진다', async () => {
+        const quick = app.get(QuickRecordService);
+        const { links } = await quick.issueLinks(addKstDays(kstToday(), -1));
+
+        const res = await request(http)
+          .post('/api/public/field-observations/quick')
+          .send({ token: links[0].token, jellyfishPresent: false })
+          .expect(422);
+
+        expect((res.body as { error: { code: string } }).error.code).toBe(
+          'QUICK_RECORD_TOKEN_EXPIRED',
+        );
+      });
+
+      it('봤다면서 밀도를 빼면 400 이다', async () => {
+        const quick = app.get(QuickRecordService);
+        const { links } = await quick.issueLinks();
+
+        await request(http)
+          .post('/api/public/field-observations/quick')
+          .send({ token: links[0].token, jellyfishPresent: true })
+          .expect(400);
+      });
+    });
+
+    describe('쏘임 사고 CSV 일괄 등록', () => {
+      afterEach(async () => {
+        // 접두사를 따로 쓴다. 'SMOKE-' 로 잡으면 중복 판정 테스트가 만든 SMOKE-DUP-001
+        // 두 건까지 세어져, 이 테스트가 만든 수와 어긋난다.
+        await prisma.stingIncident.deleteMany({ where: { externalRef: { startsWith: 'SMOKECSV-' } } });
+      });
+
+      it('여러 줄을 한 번에 저장한다', async () => {
+        const beach = await prisma.beach.findFirstOrThrow({ where: { isActive: true } });
+        const incidents = app.get<RecordStingIncidentUseCase>(RECORD_STING_INCIDENT_USE_CASE);
+        expect(incidents).toBeDefined();
+
+        const csv = [
+          'beach_id,occurred_at,source,severity,patient_count,external_ref',
+          `${beach.id},2026-08-01T14:30:00+09:00,emergency_call,moderate,2,SMOKECSV-1`,
+          `${beach.id},2026-08-02T10:00:00+09:00,coast_guard,mild,1,SMOKECSV-2`,
+        ].join('\n');
+
+        const parsed = parseIncidentCsv(csv);
+        expect(parsed.errors).toHaveLength(0);
+
+        for (const row of parsed.rows) {
+          await incidents.recordIncident({
+            beachId: row.beachId,
+            occurredAt: row.occurredAt,
+            source: row.source as never,
+            severity: row.severity as never,
+            patientCount: row.patientCount,
+            externalRef: row.externalRef,
+            note: row.note,
+            reportedBy: null,
+          });
+        }
+
+        expect(
+          await prisma.stingIncident.count({ where: { externalRef: { startsWith: 'SMOKECSV-' } } }),
+        ).toBe(2);
+      });
+
+      it('사고는 그날을 "위험했던 날" 로 만든다 — 가장 강한 정답이다', async () => {
+        const beach = await prisma.beach.findFirstOrThrow({ where: { isActive: true } });
+        const targetDate = addKstDays(kstToday(), -5);
+        const incidents = app.get<RecordStingIncidentUseCase>(RECORD_STING_INCIDENT_USE_CASE);
+
+        await incidents.recordIncident({
+          beachId: Number(beach.id),
+          occurredAt: new Date(kstDayStart(targetDate).getTime() + 5 * 60 * 60 * 1000),
+          source: 'emergency_call',
+          severity: 'moderate',
+          patientCount: 1,
+          externalRef: 'SMOKECSV-danger',
+          note: null,
+          reportedBy: null,
+        });
+
+        const query = app.get<GroundtruthQueryPort>(GROUNDTRUTH_QUERY);
+        const rows = await query.collectDailyActuals(targetDate, targetDate);
+        const mine = rows.find((r) => Number(r.beachId) === Number(beach.id));
+
+        expect(mine?.incidentCount).toBeGreaterThan(0);
+        expect(wasDangerous(mine!)).toBe(true);
+      });
     });
   });
 });
