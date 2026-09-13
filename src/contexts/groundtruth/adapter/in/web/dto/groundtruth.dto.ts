@@ -290,10 +290,28 @@ export class AccuracyReportResponse {
 
   @ApiProperty({
     type: [BeachAccuracyResponse],
-    description:
-      '해변별 요약. **해변 단위 변별력을 보는 유일한 창**이다 — 기존 백테스트는 정답이 시군구 단위라 협재와 함덕을 구분할 수 없었다(docs/backtest.md). 놓친 날이 많은 해변부터 나온다.',
+    description: [
+      '해변별 요약. **해변 단위 변별력을 보는 유일한 창**이다 — 기존 백테스트는 정답이 시군구',
+      '단위라 협재와 함덕을 구분할 수 없었다(docs/backtest.md). 놓친 날이 많은 해변부터 나온다.',
+      '',
+      '⚠️ **시군구 단위 정답은 여기 들어오지 않는다.** 국립수산과학원 주간보고는 좌표 없이',
+      '시군구 이름만 주는데, 그걸 넣으면 같은 시의 해변이 전부 같은 판정을 받아 이 목록의',
+      '존재 이유가 사라진다. 현장 관측이 쌓이기 전까지 이 목록은 대부분 비어 있고, 그게',
+      '정직한 상태다 — `regionLevelSamples` 를 함께 보면 왜 비어 있는지 알 수 있다.',
+    ].join(' '),
   })
   byBeach!: BeachAccuracyResponse[];
+
+  @ApiProperty({
+    example: 42,
+    description: [
+      '`overall` 에 섞인 **시군구 단위 정답**의 건수(좌표 없는 출현을 그 구역 해변에 붙인 것).',
+      '',
+      '⚠️ 이 값이 `overall.total` 과 같으면 **해변 단위 증거가 하나도 없다**는 뜻이다.',
+      '그때의 전체 정확도는 "제주시가 위험한 날을 맞혔는가" 이지 "이 해변을 맞혔는가" 가 아니다.',
+    ].join(' '),
+  })
+  regionLevelSamples!: number;
 
   @ApiProperty({
     enum: RISK_LEVELS,

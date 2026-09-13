@@ -2252,7 +2252,7 @@ describe('영속성 스모크', () => {
       });
     }
 
-    let beach: { id: bigint; lat: unknown; lng: unknown };
+    let beach: { id: bigint; lat: unknown; lng: unknown; region: string };
     let targetDate: Date;
 
     beforeAll(async () => {
@@ -2316,20 +2316,65 @@ describe('영속성 스모크', () => {
       expect(await actualFor(targetDate)).toBeUndefined();
     });
 
-    it('좌표가 없는 출현은 버린다 — 행정구역명으로 붙이면 해변별 차이가 사라진다', async () => {
+    /** 좌표 없는 출현 하나를 그 해변의 시군구에 만든다. NIFS 주간보고가 정확히 이 모양이다. */
+    async function makeRegionOccurrence(region: string) {
       const source = await prisma.dataSource.findFirstOrThrow({ where: { sourceType: 'jellyfish' } });
-      await prisma.jellyfishOccurrence.create({
+      return prisma.jellyfishOccurrence.create({
         data: {
           sourceId: source.id,
-          externalId: `smoke-nogeo-${Date.now()}`,
+          externalId: `smoke-nogeo-${Date.now()}-${region}`,
           occurredAt: new Date(kstDayStart(targetDate).getTime() + 6 * 60 * 60 * 1000),
           collectedAt: new Date(kstDayStart(targetDate).getTime() + 2 * DAY),
-          region: '제주시',
+          region,
           densityLevel: 'high',
         },
       });
+    }
+
+    /**
+     * ⚠️ 이 테스트가 **실제 배포를 잡지 못했던 자리**다.
+     *
+     * 처음에는 좌표 없는 출현을 버렸고, 그 동작을 확인하는 테스트가 통과하고 있었다.
+     * 테스트는 의도대로 돌았지만 **그 의도가 실데이터와 맞지 않았다** — NIFS 주간보고 PDF 에는
+     * 좌표가 아예 없어서(파서가 lat/lng 을 항상 null 로 둔다) 실데이터로는 정답이 0건이었다.
+     * 키를 넣고 수집기를 실제로 돌려 보고서야 드러났다.
+     */
+    it('좌표가 없어도 시군구가 같으면 정답이 된다 — NIFS 주간보고가 이 모양이다', async () => {
+      await makeRegionOccurrence(beach.region);
+
+      const actual = await actualFor(targetDate);
+
+      expect(actual?.observed).toBe(true);
+      expect(actual?.maxDensity).toBe('high');
+      // 다만 해변 단위 증거가 아니라는 표시가 반드시 붙어야 한다.
+      expect(actual?.granularity).toBe('region');
+    });
+
+    it('시군구가 다르면 붙지 않는다', async () => {
+      const other = beach.region === '제주시' ? '서귀포시' : '제주시';
+      await makeRegionOccurrence(other);
 
       expect(await actualFor(targetDate)).toBeUndefined();
+    });
+
+    it('⚠️ 현장 관측이 하나라도 있으면 그날은 해변 단위다 — 시군구 추정이 덮지 않는다', async () => {
+      await makeRegionOccurrence(beach.region);
+      await app.get<RecordFieldObservationUseCase>(RECORD_FIELD_OBSERVATION_USE_CASE).recordObservation({
+        beachId: Number(beach.id),
+        observedAt: new Date(kstDayStart(targetDate).getTime() + 5 * 60 * 60 * 1000),
+        source: 'lifeguard',
+        jellyfishPresent: true,
+        densityLevel: 'low',
+        observerName: '스모크-관측자',
+        observerId: null,
+      });
+
+      try {
+        // 그 해변을 직접 본 기록이 있는 날이다. 해변별 지표에서 빠지면 안 된다.
+        expect((await actualFor(targetDate))?.granularity).toBe('beach');
+      } finally {
+        await prisma.fieldObservation.deleteMany({ where: { observerName: '스모크-관측자' } });
+      }
     });
 
     it('저밀도 출현은 "위험했던 날" 로 세지 않는다 — 기존 판정 규칙 그대로다', async () => {

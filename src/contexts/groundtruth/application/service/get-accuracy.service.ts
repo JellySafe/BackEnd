@@ -22,9 +22,10 @@ export class GetAccuracyService implements GetAccuracyUseCase {
   ) {}
 
   async getReport(filter: { from?: Date; to?: Date; beachId?: Id }): Promise<AccuracyReport> {
-    const [overallCounts, byBeachCounts] = await Promise.all([
+    const [overallCounts, byBeachCounts, regionLevelSamples] = await Promise.all([
       this.evaluations.countOutcomes(filter),
       this.evaluations.countOutcomesByBeach(filter),
+      this.evaluations.countRegionLevelEvaluations(filter),
     ]);
 
     return {
@@ -38,6 +39,9 @@ export class GetAccuracyService implements GetAccuracyUseCase {
           correct_negative: row.correct_negative,
         }),
       })),
+      // 전체 정확도 중 몇 건이 시군구 단위 정답이었는지. 이 숫자가 없으면 전체 정확도가
+      // 해변 단위로 잰 값처럼 읽힌다 — 지금은 거의 전부가 시군구 단위다.
+      regionLevelSamples,
       // 어떤 임계선으로 판정한 값인지 함께 준다. 이게 다르면 다른 기간과 비교할 수 없다.
       alertThreshold: ALERT_THRESHOLD,
       from: filter.from ?? null,
