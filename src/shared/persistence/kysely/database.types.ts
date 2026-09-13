@@ -331,6 +331,11 @@ export type PredictionEvaluation = {
     observed: number;
     actual_density: string | null;
     incident_count: Generated<number>;
+    /**
+     * 정답의 해상도. beach=그 해변의 증거, region=시군구 단위 증거(좌표 없는 출현)를 붙인 것.
+     * 해변별 지표는 beach 만 센다 — region 을 넣으면 같은 시의 해변이 서로 구별되지 않는다.
+     */
+    actual_granularity: Generated<string>;
     outcome: string;
     /**
      * 판정에 쓴 경보 임계선. 정책이 바뀌면 과거 지표와 비교할 수 없으므로 행에 박아 둔다.

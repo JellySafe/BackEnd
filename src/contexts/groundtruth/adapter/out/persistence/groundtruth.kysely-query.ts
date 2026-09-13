@@ -187,6 +187,7 @@ export class GroundtruthKyselyQuery
       observed: number;
       maxDensity: string | null;
       incidentCount: number;
+      regionLevel: number;
     }>`
       SELECT
         beach_id AS beachId,
@@ -200,7 +201,10 @@ export class GroundtruthKyselyQuery
           WHEN 1 THEN 'low'
           ELSE NULL
         END AS maxDensity,
-        SUM(incident_count) AS incidentCount
+        SUM(incident_count) AS incidentCount,
+        -- 0 이 하나라도 있으면 0 이다. 즉 **그 해변에서 직접 나온 증거가 하나라도 있으면
+        -- 그날은 해변 단위**이고, 시군구 추정이 그것을 덮지 않는다.
+        MIN(region_level) AS regionLevel
       FROM (
         SELECT
           o.beach_id,
@@ -212,7 +216,8 @@ export class GroundtruthKyselyQuery
             WHEN 'low' THEN 1
             ELSE 0
           END AS density_rank,
-          0 AS incident_count
+          0 AS incident_count,
+          0 AS region_level
         FROM field_observations o
         WHERE DATE(CONVERT_TZ(o.observed_at, '+00:00', ${sql.lit(KST_OFFSET)}))
               BETWEEN ${from} AND ${to}
@@ -224,7 +229,8 @@ export class GroundtruthKyselyQuery
           DATE(CONVERT_TZ(i.occurred_at, '+00:00', ${sql.lit(KST_OFFSET)})) AS target_date,
           0 AS observed,
           0 AS density_rank,
-          1 AS incident_count
+          1 AS incident_count,
+          0 AS region_level
         FROM sting_incidents i
         WHERE DATE(CONVERT_TZ(i.occurred_at, '+00:00', ${sql.lit(KST_OFFSET)}))
               BETWEEN ${from} AND ${to}
@@ -240,6 +246,8 @@ export class GroundtruthKyselyQuery
       observed: Number(r.observed) === 1,
       maxDensity: (r.maxDensity as DensityLevel | null) ?? null,
       incidentCount: Number(r.incidentCount),
+      // MIN(region_level)=0 → 그 해변에서 직접 나온 증거가 하나라도 있었다.
+      granularity: Number(r.regionLevel) === 1 ? 'region' : 'beach',
     }));
   }
 
@@ -324,10 +332,41 @@ export class GroundtruthKyselyQuery
     return toCounts(await q.execute());
   }
 
+  /**
+   * 전체 정확도에 섞인 시군구 단위 정답의 건수.
+   *
+   * 정확도 옆에 이 숫자가 없으면 전체 정확도가 해변 단위로 잰 값처럼 읽힌다. 지금은 거의
+   * 전부가 시군구 단위이므로, 없는 편이 더 위험하다.
+   */
+  async countRegionLevelEvaluations(filter: AccuracyFilter): Promise<number> {
+    let q = this.db
+      .selectFrom('prediction_evaluations')
+      .select(({ fn }) => fn.countAll<number>().as('count'))
+      .where('actual_granularity', '=', 'region');
+
+    if (filter.beachId !== undefined) q = q.where('beach_id', '=', Number(filter.beachId));
+    if (filter.from !== undefined) q = q.where('target_date', '>=', filter.from);
+    if (filter.to !== undefined) q = q.where('target_date', '<=', filter.to);
+
+    const row = await q.executeTakeFirst();
+    return Number(row?.count ?? 0);
+  }
+
+  /**
+   * 해변별 정확도.
+   *
+   * ⚠️ **시군구 단위 정답(actual_granularity='region')은 빼고 센다.** 넣으면 같은 시의 해변이
+   * 전부 같은 정답을 받아 서로 구별되지 않는데, 이 집계의 존재 이유가 바로 그 구별이다
+   * (docs/backtest.md 의 미해결 과제). 숫자는 늘지만 **읽을 수 없는 숫자**가 된다.
+   *
+   * 그래서 지금 이 목록은 대부분 비어 있다 — 현장 관측(간편 링크)이 쌓이기 전까지는 그게
+   * 정직한 상태다. 전체 정확도는 countOutcomes 가 시군구 정답까지 세어 따로 낸다.
+   */
   async countOutcomesByBeach(filter: AccuracyFilter): Promise<BeachOutcomeCounts[]> {
     let q = this.db
       .selectFrom('prediction_evaluations as e')
       .innerJoin('beaches as b', 'b.id', 'e.beach_id')
+      .where('e.actual_granularity', '=', 'beach')
       .select(['e.beach_id as beachId', 'b.name as beachName', 'e.outcome as outcome'])
       .select(({ fn }) => fn.countAll<number>().as('count'))
       .groupBy(['e.beach_id', 'b.name', 'e.outcome']);
@@ -373,11 +412,26 @@ export class GroundtruthKyselyQuery
    * 주간보고는 지난 한 주를 나중에 싣기 때문에 대부분 이 조건을 자연스럽게 통과한다.
    * 반대로 실시간으로 들어오는 기록은 엔진이 이미 썼을 수 있으므로 제외된다 — 맞다.
    *
-   * ── 해변에 붙이는 방법 ────────────────────────────────────────────────────────────
-   * 좌표 거리다. 반경은 엔진의 30km 보다 **좁게** 쓴다(GroundtruthConfig 주석 참고) —
-   * 넓게 잡으면 보고 하나가 섬의 거의 모든 해변을 "위험했던 날" 로 만들어 해변별 차이가 사라진다.
+   * ── 해변에 붙이는 방법이 둘이다 ───────────────────────────────────────────────────
+   *   1. 좌표가 있으면 **거리**로 붙인다(region_level=0). 반경은 엔진의 30km 보다 좁게 쓴다
+   *      (GroundtruthConfig 주석) — 넓게 잡으면 보고 하나가 섬의 거의 모든 해변을
+   *      "위험했던 날" 로 만들어 해변별 차이가 사라진다.
    *
-   * 좌표가 없는 기록은 버린다. 행정구역명으로 붙이면 제주시 해변 8곳이 전부 같은 판정을 받는다.
+   *   2. 좌표가 없으면 **시군구 일치**로 붙인다(region_level=1).
+   *
+   * ⚠️ 2번은 처음에 일부러 뺐다가 되돌린 것이다. 뺀 이유는 지금도 유효하다 — 서귀포시 출현
+   *    한 줄을 서귀포시 해변 전체에 붙이면 그 해변들의 정답이 전부 같아진다.
+   *
+   *    하지만 **국립수산과학원 주간보고에는 좌표가 아예 없다**(PDF 에 시군구 이름만 있어
+   *    nifs-report.parser.ts 가 lat/lng 을 항상 null 로 둔다). 그래서 1번만 두면 실데이터로는
+   *    정답이 **0건**이고, 정확도를 아예 못 잰다. 실제로 그 상태로 배포됐었다.
+   *
+   *    엔진도 같은 처리를 이미 하고 있다(risk-input.kysely-query.ts 의
+   *    `j.lat IS NULL AND j.region = beach.region`). 엔진이 보는 증거와 채점에 쓰는 증거가
+   *    어긋나 있었던 셈이다.
+   *
+   *    버리는 대신 **표시한다** — region_level 이 그 표시이고, 해변별 지표는 이것을 뺀다
+   *    (countOutcomesByBeach). 전체 정확도는 거친 대로 오늘부터 잴 수 있다.
    */
   private occurrenceBranch(from: Date, to: Date) {
     if (!this.config.useOccurrencesAsActual) return sql``;
@@ -397,7 +451,8 @@ export class GroundtruthKyselyQuery
             WHEN 'low' THEN 1
             ELSE 0
           END AS density_rank,
-          0 AS incident_count
+          0 AS incident_count,
+          0 AS region_level
         FROM jellyfish_occurrences j
         JOIN beaches b
           ON b.is_active = 1
@@ -407,6 +462,48 @@ export class GroundtruthKyselyQuery
           AND DATE(CONVERT_TZ(j.occurred_at, '+00:00', ${sql.lit(KST_OFFSET)}))
               BETWEEN ${from} AND ${to}
           -- 순환 차단: 그날이 끝난 뒤에야 알려진 기록만 정답으로 쓴다(위 주석).
+          AND DATE(CONVERT_TZ(j.collected_at, '+00:00', ${sql.lit(KST_OFFSET)}))
+              > DATE(CONVERT_TZ(j.occurred_at, '+00:00', ${sql.lit(KST_OFFSET)}))
+        ${this.regionOccurrenceBranch(from, to)}`;
+  }
+
+  /**
+   * 좌표 없는 출현을 **시군구 일치**로 붙이는 갈래. region_level=1 로 표시된다.
+   *
+   * 별도 UNION 인 이유 — 하나의 WHERE 로 `(좌표 O AND 거리) OR (좌표 X AND 구역)` 을 쓰면
+   * region_level 을 CASE 로 계산해야 하고, 그 CASE 가 JOIN 조건과 어긋날 때 조용히 틀린다.
+   * 두 갈래로 나누면 각 갈래가 무엇을 붙이는지 SQL 만 읽어도 분명하다.
+   *
+   * `GROUNDTRUTH_USE_REGION_OCCURRENCES=false` 로 끌 수 있다. 끄면 해변 단위 증거만 남아
+   * **더 정확하지만 표본이 거의 없다** — 지금 실데이터로는 사실상 0건이 된다.
+   */
+  private regionOccurrenceBranch(from: Date, to: Date) {
+    if (!this.config.useRegionOccurrences) return sql``;
+
+    return sql`
+        UNION ALL
+
+        SELECT
+          b.id AS beach_id,
+          DATE(CONVERT_TZ(j.occurred_at, '+00:00', ${sql.lit(KST_OFFSET)})) AS target_date,
+          1 AS observed,
+          CASE j.density_level
+            WHEN 'high' THEN 3
+            WHEN 'medium' THEN 2
+            WHEN 'low' THEN 1
+            ELSE 0
+          END AS density_rank,
+          0 AS incident_count,
+          1 AS region_level
+        FROM jellyfish_occurrences j
+        JOIN beaches b
+          ON b.is_active = 1
+         AND b.region = j.region
+        WHERE j.lat IS NULL
+          AND j.region IS NOT NULL
+          AND DATE(CONVERT_TZ(j.occurred_at, '+00:00', ${sql.lit(KST_OFFSET)}))
+              BETWEEN ${from} AND ${to}
+          -- 순환 차단은 좌표 갈래와 똑같이 적용된다. 시군구로 붙인다고 느슨해질 이유가 없다.
           AND DATE(CONVERT_TZ(j.collected_at, '+00:00', ${sql.lit(KST_OFFSET)}))
               > DATE(CONVERT_TZ(j.occurred_at, '+00:00', ${sql.lit(KST_OFFSET)}))`;
   }

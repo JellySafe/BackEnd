@@ -109,8 +109,21 @@ export const EVALUATE_PREDICTIONS_USE_CASE = Symbol('EVALUATE_PREDICTIONS_USE_CA
 
 export interface AccuracyReport {
   overall: AccuracySummary;
-  /** 해변별 요약. **해변 단위 변별력을 보는 유일한 창**이다(docs/backtest.md 의 미해결 과제). */
+  /**
+   * 해변별 요약. **해변 단위 변별력을 보는 유일한 창**이다(docs/backtest.md 의 미해결 과제).
+   *
+   * ⚠️ 시군구 단위 정답(좌표 없는 출현)은 **여기 들어오지 않는다.** 넣으면 같은 시의 해변이
+   * 전부 같은 판정을 받아 변별력이라는 이 목록의 존재 이유가 사라진다. 그래서 현장 관측이
+   * 쌓이기 전까지 이 목록은 대부분 비어 있고, 그게 정직한 상태다.
+   */
   byBeach: (BeachOutcomeCounts & { summary: AccuracySummary })[];
+  /**
+   * `overall` 에 섞인 시군구 단위 정답 건수.
+   *
+   * 전체 정확도를 해변 단위로 잰 값으로 오해하지 않으려면 이 숫자를 함께 봐야 한다.
+   * `overall.total` 과 같다면 **해변 단위 증거는 하나도 없다는 뜻**이다.
+   */
+  regionLevelSamples: number;
   /** 판정에 쓴 경보 임계선. 이 값이 다르면 다른 기간과 비교할 수 없다. */
   alertThreshold: RiskLevel;
   from: Date | null;

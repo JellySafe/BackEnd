@@ -140,6 +140,9 @@ export class EvaluatePredictionsService implements EvaluatePredictionsUseCase {
       observed: actual.observed,
       actualDensity: actual.maxDensity,
       incidentCount: actual.incidentCount,
+      // 이 판정이 무슨 증거로 내려졌는지 행에 남는다. 나중에 해변별 지표에서 시군구 정답을
+      // 빼는 근거가 이 값이다.
+      actualGranularity: actual.granularity,
       outcome,
       // 판정 정책을 행에 박아 둔다. 나중에 임계선을 바꿔도 과거 판정을 해석할 수 있어야 한다.
       alertThreshold: ALERT_THRESHOLD,

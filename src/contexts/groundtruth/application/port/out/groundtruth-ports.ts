@@ -2,6 +2,7 @@ import { Id } from '@shared/kernel/id';
 import { Page, PageRequest } from '@shared/kernel/pagination';
 import { RiskLevel } from '@shared/kernel/risk-level';
 import { DensityLevel } from '@contexts/observation/domain/observation-enums';
+import { ActualGranularity } from '../../../domain/actual-granularity';
 import { FieldObservation } from '../../../domain/field-observation';
 import { StingIncident } from '../../../domain/sting-incident';
 import { EvaluationOutcome, ObservationSource, StingSeverity } from '../../../domain/groundtruth-enums';
@@ -83,6 +84,11 @@ export interface DailyActualRow {
   observed: boolean;
   maxDensity: DensityLevel | null;
   incidentCount: number;
+  /**
+   * 이 정답이 **그 해변의 증거**인가, **시군구 단위 증거를 붙인 것**인가.
+   * 해변별 지표는 'beach' 만 센다 — 이유는 domain/actual-granularity.ts 에 적어 두었다.
+   */
+  granularity: ActualGranularity;
 }
 
 export interface GroundtruthQueryPort {
@@ -137,6 +143,8 @@ export interface EvaluationRecord {
   observed: boolean;
   actualDensity: DensityLevel | null;
   incidentCount: number;
+  /** 정답의 해상도. 판정에 쓴 증거가 무엇이었는지 행에 박아 둔다. */
+  actualGranularity: ActualGranularity;
   outcome: EvaluationOutcome;
   alertThreshold: RiskLevel;
   ruleVersion: string;
@@ -173,7 +181,15 @@ export const EVALUATION_REPOSITORY = Symbol('EVALUATION_REPOSITORY');
  */
 export interface AccuracyQueryPort {
   countOutcomes(filter: AccuracyFilter): Promise<OutcomeCounts>;
+  /** ⚠️ 시군구 단위 정답은 제외하고 센다(해변별 변별력을 지키려고). 구현 주석 참고. */
   countOutcomesByBeach(filter: AccuracyFilter): Promise<BeachOutcomeCounts[]>;
+  /**
+   * 전체 정확도에 섞인 **시군구 단위 정답의 건수.**
+   *
+   * 이 숫자를 함께 내놓지 않으면 전체 정확도가 해변 단위로 잰 값처럼 읽힌다. 지금은 거의
+   * 전부가 시군구 단위라, 그 사실이 숫자 옆에 없으면 정확도를 과신하게 된다.
+   */
+  countRegionLevelEvaluations(filter: AccuracyFilter): Promise<number>;
 }
 export const ACCURACY_QUERY = Symbol('ACCURACY_QUERY');
 

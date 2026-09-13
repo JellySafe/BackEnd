@@ -84,6 +84,7 @@ export class GroundtruthPrismaRepository
           observed: r.observed,
           actualDensity: r.actualDensity,
           incidentCount: r.incidentCount,
+          actualGranularity: r.actualGranularity,
           outcome: r.outcome,
           alertThreshold: r.alertThreshold,
           ruleVersion: r.ruleVersion,

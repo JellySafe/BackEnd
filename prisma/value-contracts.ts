@@ -59,6 +59,7 @@ import {
   SUBSCRIBER_TYPES,
   SUBSCRIPTION_STATUSES,
 } from '@contexts/secondary/subscription/domain/subscription';
+import { ACTUAL_GRANULARITIES } from '@contexts/groundtruth/domain/actual-granularity';
 import {
   EVALUATION_OUTCOMES,
   INCIDENT_SOURCES,
@@ -357,6 +358,12 @@ export const CONTRACTS: readonly ValueContract[] = [
     column: 'outcome',
     values: EVALUATION_OUTCOMES,
     note: '혼동 행렬의 네 칸. 이 값이 어긋나면 정확도 지표가 통째로 거짓말을 한다.',
+  },
+  {
+    table: 'prediction_evaluations',
+    column: 'actual_granularity',
+    values: ACTUAL_GRANULARITIES,
+    note: '정답의 해상도. region 이 해변별 지표에 섞이면 같은 시의 해변이 서로 구별되지 않는다.',
   },
   {
     table: 'prediction_evaluations',

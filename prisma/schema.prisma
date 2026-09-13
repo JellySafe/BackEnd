@@ -47,25 +47,26 @@ model User {
   createdAt     DateTime  @default(now()) @map("created_at") @db.DateTime(0)
   updatedAt     DateTime  @updatedAt @map("updated_at") @db.DateTime(0)
 
-  consentLogs         ConsentLog[]
-  reportedJellyfish   JellyfishReport[]     @relation("ReportReporter")
-  reportReviews       ReportReview[]
-  updatedRuleConfigs  RiskRuleConfig[]
-  triggeredCalcs      RiskCalculation[]
-  operationActions    OperationAction[]
-  operationStatusLogs OperationStatusLog[]
-  dailyReports        DailyReport[]
-  favoriteBeaches     FavoriteBeach[]
-  auditLogs           AuditLog[]
-  notifications       Notification[]
-  notificationConsent NotificationConsent[]
+  consentLogs           ConsentLog[]
+  reportedJellyfish     JellyfishReport[]     @relation("ReportReporter")
+  reportReviews         ReportReview[]
+  updatedRuleConfigs    RiskRuleConfig[]
+  triggeredCalcs        RiskCalculation[]
+  operationActions      OperationAction[]
+  operationStatusLogs   OperationStatusLog[]
+  dailyReports          DailyReport[]
+  favoriteBeaches       FavoriteBeach[]
+  auditLogs             AuditLog[]
+  notifications         Notification[]
+  notificationConsent   NotificationConsent[]
   riskOverridesMade     RiskOverride[]        @relation("RiskOverrideCreatedBy")
   riskOverridesReleased RiskOverride[]        @relation("RiskOverrideReleasedBy")
-  subscriptions       Subscription[]
-  refreshTokens       RefreshToken[]
+  subscriptions         Subscription[]
+  refreshTokens         RefreshToken[]
 
   fieldObservations FieldObservation[]
   stingIncidents    StingIncident[]
+
   @@map("users")
 }
 
@@ -92,18 +93,18 @@ model RefreshToken {
 }
 
 model Beach {
-  id                 BigInt   @id @default(autoincrement())
-  name               String   @unique @db.VarChar(100)
-  region             String   @db.VarChar(50)
-  lat                Decimal  @db.Decimal(10, 7)
-  lng                Decimal  @db.Decimal(10, 7)
-  facingDirection    Int?     @map("facing_direction") @db.SmallInt
-  priority           Int      @default(99) @db.SmallInt
+  id              BigInt   @id @default(autoincrement())
+  name            String   @unique @db.VarChar(100)
+  region          String   @db.VarChar(50)
+  lat             Decimal  @db.Decimal(10, 7)
+  lng             Decimal  @db.Decimal(10, 7)
+  facingDirection Int?     @map("facing_direction") @db.SmallInt
+  priority        Int      @default(99) @db.SmallInt
   /// 해변 대표 사진 URL. 미등록이면 null → 프론트가 placeholder 로 대체한다.
-  imageUrl           String?  @map("image_url") @db.VarChar(500)
-  isActive           Boolean  @default(true) @map("is_active")
-  createdAt          DateTime @default(now()) @map("created_at") @db.DateTime(0)
-  updatedAt          DateTime @updatedAt @map("updated_at") @db.DateTime(0)
+  imageUrl        String?  @map("image_url") @db.VarChar(500)
+  isActive        Boolean  @default(true) @map("is_active")
+  createdAt       DateTime @default(now()) @map("created_at") @db.DateTime(0)
+  updatedAt       DateTime @updatedAt @map("updated_at") @db.DateTime(0)
 
   observationMappings ObservationMapping[]
   weatherForecasts    WeatherForecast[]
@@ -117,9 +118,10 @@ model Beach {
   favoriteBeaches     FavoriteBeach[]
   subscriptionAreas   SubscriptionArea[]
 
-  fieldObservations FieldObservation[]
-  stingIncidents    StingIncident[]
+  fieldObservations     FieldObservation[]
+  stingIncidents        StingIncident[]
   predictionEvaluations PredictionEvaluation[]
+
   @@map("beaches")
 }
 
@@ -163,27 +165,27 @@ model RiskRecommendation {
 /// 이미지는 원본(국립수산과학원) URL 을 링크만 한다. 복제·재호스팅하지 않고 출처를 함께 노출한다.
 /// ⛔ 종별 응급처치는 넣지 않는다(현행 통합 지침 static_guides.FIRST_AID 와 충돌). stingSymptom 은 '증상'이다.
 model JellyfishSpecies {
-  id               BigInt   @id @default(autoincrement())
-  koreanName       String   @unique @map("korean_name") @db.VarChar(100)
-  scientificName   String?  @map("scientific_name") @db.VarChar(100)
+  id                BigInt             @id @default(autoincrement())
+  koreanName        String             @unique @map("korean_name") @db.VarChar(100)
+  scientificName    String?            @map("scientific_name") @db.VarChar(100)
   /// strong(강독성)/mild(약독성)/harmless(무해성). 기관 미발표 종은 null — 추정 금지.
-  toxicity         String?  @db.VarChar(20)
-  features         String?  @db.VarChar(1000)
-  appearanceSeason String?  @map("appearance_season") @db.VarChar(300)
+  toxicity          String?            @db.VarChar(20)
+  features          String?            @db.VarChar(1000)
+  appearanceSeason  String?            @map("appearance_season") @db.VarChar(300)
   /// 쏘였을 때의 증상(원문). 처치법이 아니다.
-  stingSymptom     String?  @map("sting_symptom") @db.VarChar(300)
-  imageUrl         String?  @map("image_url") @db.VarChar(500)
+  stingSymptom      String?            @map("sting_symptom") @db.VarChar(300)
+  imageUrl          String?            @map("image_url") @db.VarChar(500)
   /// 이미지 출처 표기. 화면에 반드시 함께 노출한다(공공누리 필수 조건).
-  imageSource      String?  @map("image_source") @db.VarChar(200)
-  imageSourceUrl   String?  @map("image_source_url") @db.VarChar(500)
-  displayOrder     Int      @default(0) @map("display_order") @db.SmallInt
-  active           Boolean  @default(true)
-  createdAt        DateTime @default(now()) @map("created_at") @db.DateTime(0)
-  updatedAt        DateTime @updatedAt @map("updated_at") @db.DateTime(0)
-
-  @@index([active, displayOrder], name: "ix_jellyfish_species_active")
+  imageSource       String?            @map("image_source") @db.VarChar(200)
+  imageSourceUrl    String?            @map("image_source_url") @db.VarChar(500)
+  displayOrder      Int                @default(0) @map("display_order") @db.SmallInt
+  active            Boolean            @default(true)
+  createdAt         DateTime           @default(now()) @map("created_at") @db.DateTime(0)
+  updatedAt         DateTime           @updatedAt @map("updated_at") @db.DateTime(0)
   fieldObservations FieldObservation[]
   stingIncidents    StingIncident[]
+
+  @@index([active, displayOrder], name: "ix_jellyfish_species_active")
   @@map("jellyfish_species")
 }
 
@@ -912,20 +914,23 @@ model StingIncident {
 
 /// 예측 대조 결과(해변 × 하루). 같은 날을 다시 평가하면 덮어쓴다(UNIQUE).
 model PredictionEvaluation {
-  id             BigInt   @id @default(autoincrement())
-  beachId        BigInt   @map("beach_id")
+  id                BigInt   @id @default(autoincrement())
+  beachId           BigInt   @map("beach_id")
   /// KST 기준 날짜.
-  targetDate     DateTime @map("target_date") @db.Date
-  predictedLevel String   @map("predicted_level") @db.VarChar(20)
-  predictedScore Int      @map("predicted_score") @db.SmallInt
-  observed       Boolean
-  actualDensity  String?  @map("actual_density") @db.VarChar(20)
-  incidentCount  Int      @default(0) @map("incident_count")
-  outcome        String   @db.VarChar(20) // hit/miss/false_alarm/correct_negative
+  targetDate        DateTime @map("target_date") @db.Date
+  predictedLevel    String   @map("predicted_level") @db.VarChar(20)
+  predictedScore    Int      @map("predicted_score") @db.SmallInt
+  observed          Boolean
+  actualDensity     String?  @map("actual_density") @db.VarChar(20)
+  incidentCount     Int      @default(0) @map("incident_count")
+  /// 정답의 해상도. beach=그 해변의 증거, region=시군구 단위 증거(좌표 없는 출현)를 붙인 것.
+  /// 해변별 지표는 beach 만 센다 — region 을 넣으면 같은 시의 해변이 서로 구별되지 않는다.
+  actualGranularity String   @default("beach") @map("actual_granularity") @db.VarChar(20)
+  outcome           String   @db.VarChar(20) // hit/miss/false_alarm/correct_negative
   /// 판정에 쓴 경보 임계선. 정책이 바뀌면 과거 지표와 비교할 수 없으므로 행에 박아 둔다.
-  alertThreshold String   @map("alert_threshold") @db.VarChar(20)
-  ruleVersion    String   @map("rule_version") @db.VarChar(20)
-  evaluatedAt    DateTime @default(now()) @map("evaluated_at") @db.DateTime(0)
+  alertThreshold    String   @map("alert_threshold") @db.VarChar(20)
+  ruleVersion       String   @map("rule_version") @db.VarChar(20)
+  evaluatedAt       DateTime @default(now()) @map("evaluated_at") @db.DateTime(0)
 
   beach Beach @relation(fields: [beachId], references: [id], onDelete: Cascade)
 

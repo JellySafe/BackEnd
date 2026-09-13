@@ -58,6 +58,7 @@ describe('EvaluatePredictionsService', () => {
     observed: true,
     maxDensity: null,
     incidentCount: 0,
+    granularity: 'beach',
     ...over,
   });
 
