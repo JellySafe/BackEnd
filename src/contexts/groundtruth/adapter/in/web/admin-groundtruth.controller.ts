@@ -5,6 +5,7 @@ import { CurrentUser, Roles } from '@shared/auth/auth.decorators';
 import { AuthUser } from '@shared/auth/auth-user';
 import { Page, normalizePageRequest } from '@shared/kernel/pagination';
 import { QuickRecordService } from '../../../application/service/quick-record.service';
+import { parseIncidentCsv } from '../../../domain/incident-csv';
 import { kstToday, parseKstDateKey, toKstDateString } from '@shared/kernel/kst-date';
 import {
   AccuracyReport,
@@ -32,6 +33,8 @@ import {
   RecordStingIncidentRequest,
   ObservationCoverageResponse,
   QuickRecordLinksResponse,
+  BulkStingIncidentRequest,
+  BulkStingIncidentResponse,
   RecordStingIncidentResponse,
 } from './dto/groundtruth.dto';
 
@@ -115,6 +118,67 @@ export class AdminGroundtruthController {
       },
       normalizePageRequest(query.page, query.size),
     );
+  }
+
+  @ApiOperation({
+    summary: '[관리자] 쏘임 사고 일괄 등록 (CSV) — 119·해경 자료를 받는 창구',
+    description: [
+      '기관에서 받은 사고 표를 한 번에 올린다.',
+      '',
+      '**왜 CSV 인가**',
+      '119·해경 데이터를 실시간 API 로 받으려면 **기관 간 협약**이 필요하고 리드타임이 달 단위다.',
+      '그동안 정확도의 가장 강한 증거(실제 피해)가 통째로 빈다. 반면 **담당자가 월 1회 엑셀을',
+      '보내 주는 것**은 협약이 아니라 부탁이라 문턱이 완전히 다르다. 협약이 되면 API 로 바꾸면 되고,',
+      '그때까지 루프가 멎지 않는다.',
+      '',
+      '**한 줄이 틀려도 나머지는 저장한다.** 100줄 중 3줄이 틀렸다고 전부 거부하면 담당자는 파일',
+      '전체를 다시 뒤져야 한다. 실패한 줄은 **줄 번호·원문·이유**와 함께 돌려준다.',
+      '',
+      '⚠️ **틀린 줄을 고쳐 주지 않는다.** 날짜 형식이 이상하거나 해변 번호가 비면 그 줄은 실패다.',
+      '사고 기록은 정확도의 근거이고, 여기서 추측으로 채우면 **그 추측이 정답 데이터가 된다.**',
+      '',
+      '같은 `external_ref` 가 이미 있으면 `possibleDuplicates` 로 세되 **저장은 한다** — 기계가',
+      '병합하면 시각·인원이 조금씩 다른 두 기록이 합쳐지면서 사고 건수가 조용히 줄어든다.',
+    ].join('\n'),
+  })
+  @ApiOkData(BulkStingIncidentResponse)
+  @Post('sting-incidents/bulk')
+  async bulkIncidents(
+    @Body() body: BulkStingIncidentRequest,
+    @CurrentUser() user: AuthUser,
+  ): Promise<BulkStingIncidentResponse> {
+    const parsed = parseIncidentCsv(body.csv);
+
+    let saved = 0;
+    let possibleDuplicates = 0;
+    const errors = [...parsed.errors];
+
+    // 줄 단위로 저장한다. 한 트랜잭션으로 묶지 않는 이유 — 묶으면 한 줄의 실패가 나머지를
+    // 되돌리고, 그건 "한 줄이 틀려도 나머지는 저장한다" 는 이 API 의 약속과 반대다.
+    for (const row of parsed.rows) {
+      try {
+        const result = await this.recordIncident.recordIncident({
+          beachId: row.beachId,
+          occurredAt: row.occurredAt,
+          source: row.source as never,
+          severity: row.severity as never,
+          patientCount: row.patientCount,
+          externalRef: row.externalRef,
+          note: row.note,
+          reportedBy: user.userId,
+        });
+        saved += 1;
+        if (result.possibleDuplicate) possibleDuplicates += 1;
+      } catch (error) {
+        errors.push({
+          lineNumber: row.lineNumber,
+          raw: `beach_id=${row.beachId}, occurred_at=${row.occurredAt.toISOString()}`,
+          reason: error instanceof Error ? error.message : String(error),
+        });
+      }
+    }
+
+    return { saved, possibleDuplicates, errors };
   }
 
   @ApiOperation({

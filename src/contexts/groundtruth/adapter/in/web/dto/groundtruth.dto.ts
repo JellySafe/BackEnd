@@ -10,6 +10,7 @@ import {
   Max,
   MaxLength,
   Min,
+  MinLength,
 } from 'class-validator';
 import { DENSITY_LEVELS, DensityLevel } from '@contexts/observation/domain/observation-enums';
 import { RISK_LEVELS, RiskLevel } from '@shared/kernel/risk-level';
@@ -456,4 +457,54 @@ export class QuickRecordRequest {
   @IsString()
   @MaxLength(500)
   note?: string;
+}
+
+/** 쏘임 사고 일괄 등록 요청. */
+export class BulkStingIncidentRequest {
+  @ApiProperty({
+    example:
+      'beach_id,occurred_at,source,severity,patient_count,external_ref,note\n3,2026-08-01T14:30:00+09:00,emergency_call,moderate,2,F-2026-0801-3,오후 구조',
+    description: [
+      'CSV 원문. 첫 줄은 머리글이고 **열 순서는 상관없다**(이름으로 찾는다 — 엑셀에서 열이 밀리는 일이 흔하다).',
+      '',
+      '필수 열: `beach_id` `occurred_at` `source` `severity` `patient_count`',
+      '선택 열: `external_ref` `note`',
+    ].join('\n'),
+  })
+  @IsString()
+  @MinLength(1)
+  csv!: string;
+}
+
+/** 일괄 등록 중 실패한 줄. */
+export class BulkIncidentErrorResponse {
+  @ApiProperty({ example: 12, description: '머리글을 제외한 줄 번호(1부터). 0 이면 머리글 문제다' })
+  lineNumber!: number;
+
+  @ApiProperty({ example: '9,언제,emergency_call,mild,1', description: '그 줄 원문 — 파일에서 찾을 수 있어야 한다' })
+  raw!: string;
+
+  @ApiProperty({
+    example: 'occurred_at 을 날짜로 읽을 수 없습니다: "언제" (예: 2026-08-01T14:30:00+09:00)',
+    description: '사람이 고칠 수 있는 문장으로 준다',
+  })
+  reason!: string;
+}
+
+/** 일괄 등록 결과. */
+export class BulkStingIncidentResponse {
+  @ApiProperty({ example: 97, description: '저장된 사고 수' })
+  saved!: number;
+
+  @ApiProperty({
+    example: 3,
+    description: '같은 external_ref 가 이미 있던 건수. **저장은 된다**(기계가 병합하지 않는다)',
+  })
+  possibleDuplicates!: number;
+
+  @ApiProperty({
+    type: [BulkIncidentErrorResponse],
+    description: '실패한 줄. **한 줄이 틀려도 나머지는 저장된다** — 전부 거부하면 파일 전체를 다시 뒤져야 한다',
+  })
+  errors!: BulkIncidentErrorResponse[];
 }
