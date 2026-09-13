@@ -384,3 +384,76 @@ export class ObservationCoverageResponse {
   })
   beaches!: BeachObservationCoverageResponse[];
 }
+
+/** 간편 기록 링크 한 줄. */
+export class QuickRecordLinkResponse {
+  @ApiProperty({ example: 3 }) beachId!: number;
+  @ApiProperty({ example: '함덕해수욕장' }) beachName!: string;
+
+  @ApiProperty({
+    example: 'q3.2026-09-13.Zm9vYmFyYmF6cXV4MTIzNA',
+    description: '해변·날짜에 묶인 서명 토큰. 이 토큰만 있으면 로그인 없이 그 해변·그날을 기록할 수 있다',
+  })
+  token!: string;
+
+  @ApiProperty({
+    example: 'https://admin.example.kr/quick-record?token=q3.2026-09-13.Zm9vYmFy',
+    nullable: true,
+    type: String,
+    description:
+      '문자로 보낼 링크. QUICK_RECORD_BASE_URL 이 설정돼 있을 때만 채워진다(없으면 token 으로 직접 만든다)',
+  })
+  url!: string | null;
+
+  @ApiProperty({ example: true, description: '그날 이미 기록이 있는가. 있으면 보낼 필요가 없다' })
+  alreadyRecorded!: boolean;
+}
+
+/** 간편 기록 링크 발급 응답. */
+export class QuickRecordLinksResponse {
+  @ApiProperty({ example: '2026-09-13', description: '링크가 유효한 날짜(KST)' })
+  date!: string;
+
+  @ApiProperty({ type: [QuickRecordLinkResponse] })
+  links!: QuickRecordLinkResponse[];
+}
+
+/** 간편 기록 요청(로그인 없이 호출된다). */
+export class QuickRecordRequest {
+  @ApiProperty({
+    example: 'q3.2026-09-13.Zm9vYmFyYmF6cXV4MTIzNA',
+    description: '발급받은 간편 기록 토큰. 해변과 날짜가 여기 박혀 있다',
+  })
+  @IsString()
+  token!: string;
+
+  @ApiProperty({
+    example: false,
+    description: [
+      '해파리를 봤는가. **`false`(못 봤다)가 특히 중요하다** — 그 기록이 없으면',
+      '오경보율과 정밀도를 잴 수 없다.',
+    ].join(' '),
+  })
+  @IsBoolean()
+  jellyfishPresent!: boolean;
+
+  @ApiPropertyOptional({
+    enum: DENSITY_LEVELS as readonly string[],
+    description: '봤다면 얼마나. **`jellyfishPresent: true` 면 필수다**(없으면 400)',
+  })
+  @IsOptional()
+  @IsIn(DENSITY_LEVELS as readonly string[])
+  densityLevel?: DensityLevel;
+
+  @ApiPropertyOptional({ example: '김안전', maxLength: 50, description: '기록한 사람(선택)' })
+  @IsOptional()
+  @IsString()
+  @MaxLength(50)
+  observerName?: string;
+
+  @ApiPropertyOptional({ example: '오전 순찰 중 확인', maxLength: 500 })
+  @IsOptional()
+  @IsString()
+  @MaxLength(500)
+  note?: string;
+}

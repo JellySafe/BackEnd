@@ -4,6 +4,7 @@ import { ApiOkData } from '@shared/http/api-response.decorator';
 import { CurrentUser, Roles } from '@shared/auth/auth.decorators';
 import { AuthUser } from '@shared/auth/auth-user';
 import { Page, normalizePageRequest } from '@shared/kernel/pagination';
+import { QuickRecordService } from '../../../application/service/quick-record.service';
 import { kstToday, parseKstDateKey, toKstDateString } from '@shared/kernel/kst-date';
 import {
   AccuracyReport,
@@ -30,6 +31,7 @@ import {
   RecordFieldObservationResponse,
   RecordStingIncidentRequest,
   ObservationCoverageResponse,
+  QuickRecordLinksResponse,
   RecordStingIncidentResponse,
 } from './dto/groundtruth.dto';
 
@@ -58,6 +60,7 @@ export class AdminGroundtruthController {
     // 운영 조회라, 유스케이스를 만들어 그대로 통과시키면 계층만 늘어난다.
     @Inject(OBSERVATION_COVERAGE_QUERY)
     private readonly coverageQuery: ObservationCoverageQueryPort,
+    private readonly quickRecord: QuickRecordService,
   ) {}
 
   @ApiOperation({
@@ -112,6 +115,32 @@ export class AdminGroundtruthController {
       },
       normalizePageRequest(query.page, query.size),
     );
+  }
+
+  @ApiOperation({
+    summary: '[관리자] 간편 기록 링크 발급 — 안전요원에게 문자로 보낼 링크',
+    description: [
+      '해변별로 **로그인 없이 그날만 기록할 수 있는 링크**를 만든다. 문자로 보내면 된다.',
+      '',
+      '**왜 이런 걸 만드나**',
+      '정답 데이터가 안 쌓이는 이유는 API 가 없어서가 아니라 절차가 무겁기 때문이다. 안전요원에게',
+      '관리자 계정을 만들어 주고 매일 콘솔에 로그인시키는 일은 며칠 만에 멎는다.',
+      '',
+      '**권한은 아주 좁다** — 토큰 하나가 여는 것은 해변 하나·날짜 하루·기록 생성뿐이다.',
+      '어제 링크로 오늘을 기록할 수 없고, A 해변 링크로 B 해변을 기록할 수 없다.',
+      '',
+      '이미 기록된 해변도 목록에서 빼지 않는다(`alreadyRecorded: true` 로 표시). 보낼지 말지는',
+      '사람이 정할 일이고, 사라지면 "왜 이 해변은 안 나오지" 를 되묻게 된다.',
+      '',
+      '같은 해변·같은 날이면 **항상 같은 토큰**이다 — 문자를 다시 보내도 먼저 받은 링크가 살아 있다.',
+      '',
+      '`QUICK_RECORD_BASE_URL` 이 설정돼 있으면 `url` 이 함께 채워진다(없으면 `token` 으로 직접 만든다).',
+    ].join('\n'),
+  })
+  @ApiOkData(QuickRecordLinksResponse)
+  @Post('field-observations/quick-links')
+  issueQuickLinks() {
+    return this.quickRecord.issueLinks();
   }
 
   @ApiOperation({

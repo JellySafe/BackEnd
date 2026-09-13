@@ -51,4 +51,27 @@ export class GroundtruthConfig {
     // 넓어져, 엔진이 보지도 못한 출현으로 채점하는 셈이 된다.
     return Math.min(raw, 30);
   }
+
+  /**
+   * 간편 기록 링크의 앞부분(프론트 페이지 주소). 없으면 토큰만 돌려준다.
+   *
+   * 서버가 링크를 통째로 만들어 주는 이유 — 이 값은 **문자로 나가는 주소**다. 발급하는 쪽마다
+   * 다르게 조립하면 어떤 문자에는 안 열리는 링크가 섞인다. 한 곳에서 정한다.
+   */
+  get quickRecordBaseUrl(): string | null {
+    const raw = (this.config.get<string>('QUICK_RECORD_BASE_URL') ?? '').trim();
+    return raw.length > 0 ? raw.replace(/\/$/, '') : null;
+  }
+
+  /**
+   * 관측 미기록 알림 크론. `off` 면 비활성. 기본 오후 5시(현장 근무가 끝나가는 시각).
+   *
+   * 왜 이 시각인가 — 너무 이르면 아직 순찰 중이라 기록할 게 없고, 너무 늦으면 이미 퇴근해서
+   * 볼 사람이 없다. 하루가 끝나기 전, 아직 현장에 있을 때가 유일하게 의미 있는 순간이다.
+   *
+   * 서버 시각 기준이므로 운영 컨테이너의 TZ 를 확인하고 설정한다(UTC 면 08:00 이 KST 17:00).
+   */
+  get observationReminderCron(): string {
+    return this.config.get<string>('OBSERVATION_REMINDER_CRON') ?? '0 0 8 * * *';
+  }
 }
