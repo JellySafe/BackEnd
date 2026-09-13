@@ -217,6 +217,10 @@ ALTER TABLE prediction_evaluations
 ALTER TABLE prediction_evaluations
   ADD CONSTRAINT ck_prediction_evaluations_outcome CHECK (outcome IN ('hit', 'miss', 'false_alarm', 'correct_negative'));
 
+-- prediction_evaluations.actual_granularity — 정답의 해상도. region 이 해변별 지표에 섞이면 같은 시의 해변이 서로 구별되지 않는다.
+ALTER TABLE prediction_evaluations
+  ADD CONSTRAINT ck_prediction_evaluations_actual_granularity CHECK (actual_granularity IN ('beach', 'region'));
+
 -- prediction_evaluations.alert_threshold — 판정에 쓴 경보 임계선. 정책이 바뀌어도 과거 판정을 해석할 수 있어야 한다.
 ALTER TABLE prediction_evaluations
   ADD CONSTRAINT ck_prediction_evaluations_alert_threshold CHECK (alert_threshold IN ('safe', 'caution', 'danger', 'severe'));
