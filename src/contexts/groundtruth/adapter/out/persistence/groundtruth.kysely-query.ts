@@ -1,6 +1,7 @@
 import { Injectable } from '@nestjs/common';
 import { sql } from 'kysely';
 import { KyselyService } from '@shared/persistence/kysely/kysely.service';
+import { GroundtruthConfig } from '../../../groundtruth.config';
 import { Id, toId } from '@shared/kernel/id';
 import { Page, PageRequest, offsetOf, toPage } from '@shared/kernel/pagination';
 import { parseKstDateKey } from '@shared/kernel/kst-date';
@@ -53,7 +54,10 @@ function toDateKey(value: unknown): Date {
 export class GroundtruthKyselyQuery
   implements GroundtruthQueryPort, RiskPredictionPort, AccuracyQueryPort
 {
-  constructor(private readonly db: KyselyService) {}
+  constructor(
+    private readonly db: KyselyService,
+    private readonly config: GroundtruthConfig,
+  ) {}
 
   // ── 목록 ──────────────────────────────────────────────────────────────────────────
 
@@ -224,6 +228,8 @@ export class GroundtruthKyselyQuery
         FROM sting_incidents i
         WHERE DATE(CONVERT_TZ(i.occurred_at, '+00:00', ${sql.lit(KST_OFFSET)}))
               BETWEEN ${from} AND ${to}
+
+        ${this.occurrenceBranch(from, to)}
       ) merged
       GROUP BY beach_id, target_date
     `.execute(this.db);
@@ -349,6 +355,60 @@ export class GroundtruthKyselyQuery
 
     // 놓친 날이 많은 해변부터 보여준다 — 운영자가 가장 먼저 봐야 할 곳이다.
     return [...byBeach.values()].sort((a, b) => b.miss - a.miss || b.hit - a.hit);
+  }
+
+  /**
+   * 제3자 출현 기록(국립수산과학원 속보 등)을 정답 후보로 끌어온다.
+   *
+   * ── ⚠️ 자기가 올린 값을 자기가 채점하지 않기 ──────────────────────────────────────
+   * 이 기록은 **위험도 산출의 입력이기도 하다**(인근 출현 룰 NEARBY_ALERT_*). 그대로 정답으로
+   * 쓰면 "출현 기록이 위험도를 올리고 → 그 출현 기록으로 맞혔다고 채점" 하는 순환이 된다.
+   * 재현율이 올라가도 예측이 좋아진 것이 아니다.
+   *
+   * 그래서 **그 날이 끝난 뒤에야 알려진 기록만** 쓴다.
+   *
+   *     알려진 날(collected_at 의 KST 날짜) > 일어난 날(occurred_at 의 KST 날짜)
+   *
+   * 그날의 예측은 그날 산출되므로, 다음 날 이후에 수집된 기록은 그 예측이 볼 수 없었다.
+   * 주간보고는 지난 한 주를 나중에 싣기 때문에 대부분 이 조건을 자연스럽게 통과한다.
+   * 반대로 실시간으로 들어오는 기록은 엔진이 이미 썼을 수 있으므로 제외된다 — 맞다.
+   *
+   * ── 해변에 붙이는 방법 ────────────────────────────────────────────────────────────
+   * 좌표 거리다. 반경은 엔진의 30km 보다 **좁게** 쓴다(GroundtruthConfig 주석 참고) —
+   * 넓게 잡으면 보고 하나가 섬의 거의 모든 해변을 "위험했던 날" 로 만들어 해변별 차이가 사라진다.
+   *
+   * 좌표가 없는 기록은 버린다. 행정구역명으로 붙이면 제주시 해변 8곳이 전부 같은 판정을 받는다.
+   */
+  private occurrenceBranch(from: Date, to: Date) {
+    if (!this.config.useOccurrencesAsActual) return sql``;
+
+    const radiusMeters = this.config.occurrenceRadiusKm * 1000;
+
+    return sql`
+        UNION ALL
+
+        SELECT
+          b.id AS beach_id,
+          DATE(CONVERT_TZ(j.occurred_at, '+00:00', ${sql.lit(KST_OFFSET)})) AS target_date,
+          1 AS observed,
+          CASE j.density_level
+            WHEN 'high' THEN 3
+            WHEN 'medium' THEN 2
+            WHEN 'low' THEN 1
+            ELSE 0
+          END AS density_rank,
+          0 AS incident_count
+        FROM jellyfish_occurrences j
+        JOIN beaches b
+          ON b.is_active = 1
+         AND ST_Distance_Sphere(POINT(j.lng, j.lat), POINT(b.lng, b.lat)) <= ${sql.lit(radiusMeters)}
+        WHERE j.lat IS NOT NULL
+          AND j.lng IS NOT NULL
+          AND DATE(CONVERT_TZ(j.occurred_at, '+00:00', ${sql.lit(KST_OFFSET)}))
+              BETWEEN ${from} AND ${to}
+          -- 순환 차단: 그날이 끝난 뒤에야 알려진 기록만 정답으로 쓴다(위 주석).
+          AND DATE(CONVERT_TZ(j.collected_at, '+00:00', ${sql.lit(KST_OFFSET)}))
+              > DATE(CONVERT_TZ(j.occurred_at, '+00:00', ${sql.lit(KST_OFFSET)}))`;
   }
 }
 
