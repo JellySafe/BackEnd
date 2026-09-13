@@ -63,6 +63,8 @@ import {
   RiskPredictionPort,
 } from '@contexts/groundtruth/application/port/out/groundtruth-ports';
 import { MIN_SAMPLE_FOR_RATIO, wasDangerous } from '@contexts/groundtruth/domain/prediction-outcome';
+import { parseIncidentCsv } from '@contexts/groundtruth/domain/incident-csv';
+import { QuickRecordService } from '@contexts/groundtruth/application/service/quick-record.service';
 import {
   GET_ACCURACY_USE_CASE,
   GetAccuracyUseCase,
@@ -2374,6 +2376,135 @@ describe('영속성 스모크', () => {
       } finally {
         await prisma.fieldObservation.deleteMany({ where: { observerName: '스모크-관측자' } });
       }
+    });
+  });
+
+  /**
+   * 수집 문턱을 낮추는 두 창구 — 간편 링크와 CSV 일괄 등록.
+   *
+   * 둘 다 **쓰기 경로**다. 토큰 범위가 실제로 좁은지, CSV 가 실제로 저장되는지는
+   * 요청을 끝까지 태워 봐야 알 수 있다.
+   */
+  describe('수집 창구', () => {
+    describe('간편 기록 링크', () => {
+      it('발급한 토큰으로 로그인 없이 기록된다', async () => {
+        const quick = app.get(QuickRecordService);
+        const beach = await prisma.beach.findFirstOrThrow({ where: { isActive: true } });
+        const { links } = await quick.issueLinks();
+        const mine = links.find((l) => l.beachId === Number(beach.id));
+
+        const res = await request(http)
+          .post('/api/public/field-observations/quick')
+          .send({ token: mine!.token, jellyfishPresent: false, observerName: '스모크-간편' })
+          .expect(201);
+
+        expect((res.body as { data: { observationId: number } }).data.observationId).toBeGreaterThan(0);
+
+        const saved = await prisma.fieldObservation.findFirst({
+          where: { observerName: '스모크-간편' },
+          orderBy: { id: 'desc' },
+        });
+        // 해변은 토큰에 박혀 있다 — 본문으로 받지 않는다.
+        expect(Number(saved?.beachId)).toBe(Number(beach.id));
+        expect(saved?.jellyfishPresent).toBe(false);
+
+        await prisma.fieldObservation.deleteMany({ where: { observerName: '스모크-간편' } });
+      });
+
+      it('위조 토큰은 401 이다', async () => {
+        await request(http)
+          .post('/api/public/field-observations/quick')
+          .send({ token: 'q1.2026-09-13.AAAAAAAAAAAAAAAAAAAAAA', jellyfishPresent: false })
+          .expect(401);
+      });
+
+      it('어제 링크는 422 다 — 위조와 다르게 답해야 "다시 받으면 된다" 로 이어진다', async () => {
+        const quick = app.get(QuickRecordService);
+        const { links } = await quick.issueLinks(addKstDays(kstToday(), -1));
+
+        const res = await request(http)
+          .post('/api/public/field-observations/quick')
+          .send({ token: links[0].token, jellyfishPresent: false })
+          .expect(422);
+
+        expect((res.body as { error: { code: string } }).error.code).toBe(
+          'QUICK_RECORD_TOKEN_EXPIRED',
+        );
+      });
+
+      it('봤다면서 밀도를 빼면 400 이다', async () => {
+        const quick = app.get(QuickRecordService);
+        const { links } = await quick.issueLinks();
+
+        await request(http)
+          .post('/api/public/field-observations/quick')
+          .send({ token: links[0].token, jellyfishPresent: true })
+          .expect(400);
+      });
+    });
+
+    describe('쏘임 사고 CSV 일괄 등록', () => {
+      afterEach(async () => {
+        // 접두사를 따로 쓴다. 'SMOKE-' 로 잡으면 중복 판정 테스트가 만든 SMOKE-DUP-001
+        // 두 건까지 세어져, 이 테스트가 만든 수와 어긋난다.
+        await prisma.stingIncident.deleteMany({ where: { externalRef: { startsWith: 'SMOKECSV-' } } });
+      });
+
+      it('여러 줄을 한 번에 저장한다', async () => {
+        const beach = await prisma.beach.findFirstOrThrow({ where: { isActive: true } });
+        const incidents = app.get<RecordStingIncidentUseCase>(RECORD_STING_INCIDENT_USE_CASE);
+        expect(incidents).toBeDefined();
+
+        const csv = [
+          'beach_id,occurred_at,source,severity,patient_count,external_ref',
+          `${beach.id},2026-08-01T14:30:00+09:00,emergency_call,moderate,2,SMOKECSV-1`,
+          `${beach.id},2026-08-02T10:00:00+09:00,coast_guard,mild,1,SMOKECSV-2`,
+        ].join('\n');
+
+        const parsed = parseIncidentCsv(csv);
+        expect(parsed.errors).toHaveLength(0);
+
+        for (const row of parsed.rows) {
+          await incidents.recordIncident({
+            beachId: row.beachId,
+            occurredAt: row.occurredAt,
+            source: row.source as never,
+            severity: row.severity as never,
+            patientCount: row.patientCount,
+            externalRef: row.externalRef,
+            note: row.note,
+            reportedBy: null,
+          });
+        }
+
+        expect(
+          await prisma.stingIncident.count({ where: { externalRef: { startsWith: 'SMOKECSV-' } } }),
+        ).toBe(2);
+      });
+
+      it('사고는 그날을 "위험했던 날" 로 만든다 — 가장 강한 정답이다', async () => {
+        const beach = await prisma.beach.findFirstOrThrow({ where: { isActive: true } });
+        const targetDate = addKstDays(kstToday(), -5);
+        const incidents = app.get<RecordStingIncidentUseCase>(RECORD_STING_INCIDENT_USE_CASE);
+
+        await incidents.recordIncident({
+          beachId: Number(beach.id),
+          occurredAt: new Date(kstDayStart(targetDate).getTime() + 5 * 60 * 60 * 1000),
+          source: 'emergency_call',
+          severity: 'moderate',
+          patientCount: 1,
+          externalRef: 'SMOKECSV-danger',
+          note: null,
+          reportedBy: null,
+        });
+
+        const query = app.get<GroundtruthQueryPort>(GROUNDTRUTH_QUERY);
+        const rows = await query.collectDailyActuals(targetDate, targetDate);
+        const mine = rows.find((r) => Number(r.beachId) === Number(beach.id));
+
+        expect(mine?.incidentCount).toBeGreaterThan(0);
+        expect(wasDangerous(mine!)).toBe(true);
+      });
     });
   });
 });
