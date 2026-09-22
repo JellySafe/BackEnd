@@ -1,4 +1,5 @@
 import { Injectable } from '@nestjs/common';
+import { withDeadlockRetry } from '@shared/persistence/deadlock-retry';
 import { PrismaService } from '@shared/persistence/prisma/prisma.service';
 import { Id, toId } from '@shared/kernel/id';
 import { RiskHorizon, RiskLevel } from '@shared/kernel/risk-level';
@@ -32,7 +33,24 @@ export class RiskPrismaRepository implements RiskPersistencePort {
     return toId(row.id);
   }
 
+  /**
+   * 직전 최신을 내리고 새 최신을 넣는다.
+   *
+   * ⚠️ 데드락 재시도로 감싼다. UPDATE 가 **한 행도 맞히지 못하면**(그 해변·지평의 첫 산출)
+   * InnoDB 가 유니크 인덱스에 갭 락을 잡는데, 해변별 병렬 산출이 같은 빈 구간을 노리면서
+   * 서로를 기다린다. 실제로 신규 배포 첫 산출에서 12곳 중 7곳이 이렇게 실패했다.
+   *
+   * 트랜잭션이 통째로 되돌려지므로 재시도해도 중복이 남지 않는다 — 그게 여기서 재시도가
+   * 안전한 근거다(deadlock-retry.ts 주석).
+   */
   async saveScoreAsLatest(input: SaveRiskScoreInput): Promise<void> {
+    await withDeadlockRetry(
+      () => this.saveScoreAsLatestOnce(input),
+      { label: `위험도 저장(beach=${input.beachId}, horizon=${input.horizon})` },
+    );
+  }
+
+  private async saveScoreAsLatestOnce(input: SaveRiskScoreInput): Promise<void> {
     await this.prisma.$transaction(async (tx) => {
       await tx.riskScore.updateMany({
         where: { beachId: BigInt(input.beachId), horizon: input.horizon, isLatest: true },
