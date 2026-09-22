@@ -275,6 +275,9 @@ export class CalculateRiskService implements CalculateRiskUseCase {
           minLevelApplied: result.minLevelApplied,
           minLevelRuleCode: result.minLevelRuleCode,
           confidence: result.confidence,
+          // 왜 이 신뢰도인지를 행에 남긴다. 엔진은 알고 있는데 지금까지 개수만 넘기고
+          // 코드는 버렸다 — 그래서 'medium' 의 이유를 아무도 볼 수 없었다.
+          missingFactors: variables.missing,
           ruleVersion: ctx.version,
           factors: result.factors,
         });

@@ -23,6 +23,14 @@ export interface SaveRiskScoreInput {
   minLevelApplied: boolean;
   minLevelRuleCode: string | null;
   confidence: DataConfidence;
+  /**
+   * 이 산출에서 **평가하지 못한** 위험 요인 코드.
+   *
+   * 신뢰도는 이 개수로 정해지는데(deriveConfidence), 개수만 남으면 화면에 'medium' 이라고만
+   * 나오고 왜 medium 인지는 어디에도 없다. 운영자는 수집이 밀렸다고 판단하고 기다리게 되는데,
+   * 그 해변의 관측소가 그 값을 아예 안 주는 경우라면 **기다려도 오지 않는다.**
+   */
+  missingFactors: string[];
   ruleVersion: string;
   factors: RiskFactorResult[];
 }

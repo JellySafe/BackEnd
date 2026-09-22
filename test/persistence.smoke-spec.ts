@@ -1866,6 +1866,7 @@ describe('영속성 스모크', () => {
               minLevelApplied: false,
               minLevelRuleCode: null,
               confidence: 'medium',
+              missingFactors: [],
               ruleVersion: 'v3',
               // 요인을 함께 넣어 트랜잭션을 실제 산출만큼 길게 만든다. 트랜잭션이 짧으면
               // 락을 쥐고 있는 시간이 줄어 데드락 창이 좁아진다.
