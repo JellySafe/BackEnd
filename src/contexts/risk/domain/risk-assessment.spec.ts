@@ -43,6 +43,7 @@ function bundle(nearbyAlert: NearbyAlertInput | null): RiskInputBundle {
     pastOccurrenceCount: 0,
     verifiedReports: [],
     observationAgeMinutes: 10,
+    observationDistanceKm: 3,
     forecasts: [],
   };
 }
