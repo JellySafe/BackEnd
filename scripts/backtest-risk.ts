@@ -1444,6 +1444,10 @@ async function main(): Promise<void> {
 
   console.log('\n' + '='.repeat(110));
   console.log(`【과제 A】 고밀도 출현 탐지  (양성 ${nHigh} / 음성 ${units.length - nHigh})`);
+  console.log(
+    '  ⚠️ 이 절의 "룰" 은 DEFAULT_RULE_SCORES(v1 폴백)다 — **운영 점수표가 아니다.** ' +
+      '배포본(v3)의 성적은 과제 E 의 (b)/(i) 행에서 본다.',
+  );
   console.log('-'.repeat(110));
   console.log(metricsLine('룰: 위험(danger) 이상', binary(units.map((u) => LEVEL_RANK[u.level] >= 2), truthHigh)));
   console.log(metricsLine('룰: 주의(caution) 이상', binary(units.map((u) => LEVEL_RANK[u.level] >= 1), truthHigh)));
@@ -1456,6 +1460,10 @@ async function main(): Promise<void> {
   console.log(metricsLine('B6 직전주 NIFS **고밀도**만', binary(units.map((u) => u.nearbyDensity === 'high'), truthHigh)));
   console.log('  --- 순위 지표 (AUC: 0.5=동전던지기) ---');
   console.log(`  룰 점수 AUC                       ${fmt(auc(units.map((u) => u.score), truthHigh))}`);
+  // ⚠️ 위 '룰' 숫자는 DEFAULT_RULE_SCORES(= v1 폴백)로 낸 것이다. **운영 점수표가 아니다**
+  //    (risk-factors.ts 주석 참고 — 실제 점수는 RISK_RULE_VERSION 이 고른 DB 값에서 온다).
+  //    배포된 v3 의 성적은 과제 E 표의 (b)/(i) 행이다. 이 구분이 없으면 헤드라인만 읽은 사람이
+  //    v1 성적을 현행으로 오해한다.
   console.log(`  수온만 AUC                        ${fmt(auc(units.map((u) => u.waterTemp ?? -99), truthHigh))}`);
   console.log(`  7일 평균수온만 AUC                ${fmt(auc(units.map((u) => u.weekAvgTemp ?? -99), truthHigh))}`);
   console.log(`  파고만 AUC                        ${fmt(auc(units.map((u) => u.waveHeight ?? -99), truthHigh))}`);
@@ -1869,7 +1877,16 @@ async function main(): Promise<void> {
       console.log(`  ${c.id.padEnd(18)} 2026 AUC ${fmt(e.auc, 3)}  재현율 ${pct(e.d.recall).padStart(6)}  오경보율 ${pct(e.faNone).padStart(6)}  danger판정 ${pct(e.dangerRate).padStart(6)}`);
     }
     console.log(`  ${'(B) 베이스라인'.padEnd(18)} 2026 AUC ${fmt(auc(test.map((u) => u.nearbyAlertCount), tHigh), 3)}`);
-    console.log('  ⚠️ 표본 20개(고밀도 3개). 신뢰구간이 표 전체를 덮는다 — 순위를 논할 수준이 아니다.');
+    // ⚠️ 예전에는 이 문구가 '표본 20개(고밀도 3개)' 로 **하드코딩**돼 있었다. 데이터가 늘어도
+    //    경고는 그대로라, 표본이 두 배가 된 뒤에도 "논할 수준이 아니다" 라고 말했다.
+    //    주의 문구가 실제보다 세면 **맞는 결과까지 버리게 된다.** 실제 수를 센다.
+    const testHigh = test.filter((u) => u.density === 'high').length;
+    console.log(
+      `  ⚠️ 홀드아웃 표본 ${test.length}개(고밀도 ${testHigh}개). ` +
+        (testHigh < 15
+          ? '신뢰구간이 표 전체를 덮는다 — 순위를 논할 수준이 아니고, 방향만 본다.'
+          : '순위는 여전히 조심해서 읽되, 방향은 볼 만하다.'),
+    );
   } else {
     console.log('  홀드아웃에 양성/음성이 모두 있지 않다 — 결론 없음');
   }
