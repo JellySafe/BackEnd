@@ -445,6 +445,11 @@ export type RiskScore = {
     min_level_applied: Generated<number>;
     min_level_rule_code: string | null;
     data_confidence: Generated<string>;
+    /**
+     * 평가하지 못한 위험 요인 코드(쉼표 구분). NULL 이면 결측 없음 — 빈 문자열과 구분한다.
+     * 신뢰도가 왜 그 값인지는 여기에만 남는다(deriveConfidence 는 개수만 받는다).
+     */
+    missing_factors: string | null;
     rule_version: string;
     model_id: number | null;
     is_latest: number | null;

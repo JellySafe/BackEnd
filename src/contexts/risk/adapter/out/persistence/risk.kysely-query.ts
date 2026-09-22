@@ -125,6 +125,7 @@ export class RiskKyselyQuery implements RiskQueryPort {
         's.min_level_applied as minLevelApplied',
         's.min_level_rule_code as minLevelRuleCode',
         's.data_confidence as dataConfidence',
+        's.missing_factors as missingFactors',
         's.generated_at as generatedAt',
       ])
       .where('s.beach_id', '=', beachId)
@@ -140,6 +141,7 @@ export class RiskKyselyQuery implements RiskQueryPort {
       minLevelApplied: Number(r.minLevelApplied) === 1,
       minLevelRuleCode: r.minLevelRuleCode ?? null,
       confidence: r.dataConfidence as DataConfidence,
+      missingFactors: splitCodes(r.missingFactors),
       generatedAt: new Date(r.generatedAt),
     }));
   }
@@ -362,4 +364,18 @@ function toRiskPoint(riskScore: number, riskLevel: unknown, generatedAt: Date): 
     riskLevel: isRiskLevel(riskLevel) ? riskLevel : riskLevelFromScore(riskScore),
     generatedAt,
   };
+}
+
+/**
+ * 쉼표로 저장된 결측 코드를 배열로.
+ *
+ * ⚠️ 빈 문자열을 그대로 split 하면 [''] 가 되어 **결측 1건으로 보인다.** 저장 쪽에서 빈
+ * 배열을 NULL 로 두지만, 예전 행이나 손으로 넣은 값이 빈 문자열일 수 있어 여기서도 막는다.
+ */
+function splitCodes(raw: string | null): string[] {
+  if (raw === null) return [];
+  return raw
+    .split(',')
+    .map((code) => code.trim())
+    .filter((code) => code.length > 0);
 }

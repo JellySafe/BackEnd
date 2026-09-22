@@ -1866,6 +1866,7 @@ describe('영속성 스모크', () => {
               minLevelApplied: false,
               minLevelRuleCode: null,
               confidence: 'medium',
+              missingFactors: [],
               ruleVersion: 'v3',
               // 요인을 함께 넣어 트랜잭션을 실제 산출만큼 길게 만든다. 트랜잭션이 짧으면
               // 락을 쥐고 있는 시간이 줄어 데드락 창이 좁아진다.
@@ -1903,6 +1904,90 @@ describe('영속성 스모크', () => {
             expect(latest).toBe(1);
           }
         }
+      });
+    });
+
+    /**
+     * 신뢰도가 **왜** 그 값인지.
+     *
+     * 엔진은 결측 요인을 알고 있는데 deriveConfidence 가 개수만 받고 코드는 버렸다.
+     * 그래서 화면에는 'medium' 이라고만 나오고 이유는 아무 데도 없었다 — 운영자는 수집이
+     * 밀렸다고 판단하고 기다리게 되는데, 관측소가 그 값을 아예 안 주는 경우라면 오지 않는다.
+     */
+    describe('결측 요인 기록', () => {
+      it('결측 코드가 그대로 저장되고 읽힌다', async () => {
+        const persistence = app.get<RiskPersistencePort>(RISK_PERSISTENCE);
+        const query = app.get<RiskQueryPort>(RISK_QUERY);
+        const beach = await prisma.beach.findFirstOrThrow({ where: { isActive: true } });
+
+        const calculationId = await persistence.createCalculation({
+          calculationUid: `smoke-missing-${Date.now()}`,
+          triggerType: 'schedule',
+          triggerReportId: null,
+          triggeredBy: null,
+          ruleVersion: 'v3',
+        });
+        await persistence.saveScoreAsLatest({
+          calculationId,
+          beachId: Number(beach.id),
+          horizon: 'now',
+          score: 10,
+          level: 'safe',
+          baseLevel: 'safe',
+          minLevelApplied: false,
+          minLevelRuleCode: null,
+          confidence: 'medium',
+          missingFactors: ['CURRENT_INFLOW', 'WAVE_HIGH'],
+          ruleVersion: 'v3',
+          factors: [],
+        });
+
+        const card = (await query.getBeachRiskCards(Number(beach.id))).find(
+          (c) => c.horizon === 'now',
+        );
+
+        expect(card?.missingFactors).toEqual(['CURRENT_INFLOW', 'WAVE_HIGH']);
+      });
+
+      it('⚠️ 결측이 없으면 빈 배열이다 — 빈 문자열이 1건으로 세어지면 안 된다', async () => {
+        const persistence = app.get<RiskPersistencePort>(RISK_PERSISTENCE);
+        const query = app.get<RiskQueryPort>(RISK_QUERY);
+        const beach = await prisma.beach.findFirstOrThrow({ where: { isActive: true } });
+
+        const calculationId = await persistence.createCalculation({
+          calculationUid: `smoke-nomissing-${Date.now()}`,
+          triggerType: 'schedule',
+          triggerReportId: null,
+          triggeredBy: null,
+          ruleVersion: 'v3',
+        });
+        await persistence.saveScoreAsLatest({
+          calculationId,
+          beachId: Number(beach.id),
+          horizon: 'now',
+          score: 10,
+          level: 'safe',
+          baseLevel: 'safe',
+          minLevelApplied: false,
+          minLevelRuleCode: null,
+          confidence: 'high',
+          missingFactors: [],
+          ruleVersion: 'v3',
+          factors: [],
+        });
+
+        const card = (await query.getBeachRiskCards(Number(beach.id))).find(
+          (c) => c.horizon === 'now',
+        );
+
+        expect(card?.missingFactors).toEqual([]);
+
+        // NULL 로 저장돼야 한다. 빈 문자열이면 split 이 [''] 를 내놓아 결측 1건이 된다.
+        const row = await prisma.riskScore.findFirstOrThrow({
+          where: { beachId: beach.id, horizon: 'now', isLatest: true },
+          select: { missingFactors: true },
+        });
+        expect(row.missingFactors).toBeNull();
       });
     });
 

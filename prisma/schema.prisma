@@ -517,6 +517,9 @@ model RiskScore {
   minLevelApplied  Boolean  @default(false) @map("min_level_applied")
   minLevelRuleCode String?  @map("min_level_rule_code") @db.VarChar(50)
   dataConfidence   String   @default("medium") @map("data_confidence") @db.VarChar(10) // high/medium/low
+  /// 평가하지 못한 위험 요인 코드(쉼표 구분). NULL 이면 결측 없음 — 빈 문자열과 구분한다.
+  /// 신뢰도가 왜 그 값인지는 여기에만 남는다(deriveConfidence 는 개수만 받는다).
+  missingFactors   String?  @map("missing_factors") @db.VarChar(255)
   ruleVersion      String   @map("rule_version") @db.VarChar(20)
   modelId          BigInt?  @map("model_id")
   isLatest         Boolean? @map("is_latest")

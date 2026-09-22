@@ -47,6 +47,7 @@ export class GetBeachRiskDetailService implements GetBeachRiskDetailUseCase {
         minLevelApplied: card.minLevelApplied,
         minLevelRuleCode: card.minLevelRuleCode,
         confidence: card.confidence,
+        missingFactors: card.missingFactors,
         generatedAt: card.generatedAt,
         factors: factors.map((f) => ({
           code: f.code,

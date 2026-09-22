@@ -67,6 +67,9 @@ export class RiskPrismaRepository implements RiskPersistencePort {
           minLevelApplied: input.minLevelApplied,
           minLevelRuleCode: input.minLevelRuleCode,
           dataConfidence: input.confidence,
+          // 빈 배열은 NULL 로 둔다. 빈 문자열로 저장하면 "결측 없음" 과 "코드를 못 적었음" 이
+          // 같은 값이 되고, 나중에 split(',') 이 [''] 를 내놓아 결측 1건으로 세어진다.
+          missingFactors: input.missingFactors.length > 0 ? input.missingFactors.join(',') : null,
           ruleVersion: input.ruleVersion,
           isLatest: true,
         },
