@@ -28,6 +28,10 @@ import {
 } from '@contexts/risk/application/port/in/risk-use-cases';
 import { MANUAL_OVERRIDE_RULE_CODE } from '@contexts/risk/domain/risk-override';
 import {
+  RISK_PERSISTENCE,
+  RiskPersistencePort,
+} from '@contexts/risk/application/port/out/risk-persistence.port';
+import {
   MAPPING_DIAGNOSTICS_QUERY,
   MappingDiagnosticsQueryPort,
 } from '@contexts/observation/application/port/out/mapping-diagnostics-query.port';
@@ -1807,6 +1811,100 @@ describe('영속성 스모크', () => {
    */
   describe('운영 가시성', () => {
     const DAY = 24 * 60 * 60 * 1000;
+
+    /**
+     * ⚠️ **신규 배포 첫 산출에서만 나는 데드락.**
+     *
+     * saveScoreAsLatest 는 "직전 최신을 내리고 새 최신을 넣는" 트랜잭션인데, UPDATE 가
+     * 한 행도 맞히지 못하면(그 해변·지평의 첫 산출) InnoDB 가 유니크 인덱스
+     * (beach_id, horizon, is_latest) 에 **갭 락**을 잡는다. 해변별 병렬 산출이 같은 빈
+     * 구간을 노리면서 서로를 기다린다.
+     *
+     * 실제로 개발 DB 를 초기화한 직후 첫 산출에서 **12곳 중 7곳이 실패**했다. 두 번째
+     * 산출부터는 직전 최신 행이 있어 재현되지 않는다 — 그래서 개발 중에는 거의 안 보이고
+     * 하필 처음 띄우는 날에 나온다.
+     *
+     * 이 테스트는 **빈 상태에서 동시에** 저장해 그 조건을 그대로 만든다. DB 없이는 재현할
+     * 수 없다(락은 InnoDB 가 잡는다).
+     */
+    describe('첫 산출 동시 저장', () => {
+      it('⚠️ 비어 있는 상태에서 여러 해변을 동시에 저장해도 하나도 실패하지 않는다', async () => {
+        const persistence = app.get<RiskPersistencePort>(RISK_PERSISTENCE);
+        const beaches = await prisma.beach.findMany({ where: { isActive: true } });
+        if (beaches.length < 2) return; // 시드가 비어 있으면 볼 것이 없다
+
+        // 이 해변들의 'now' 최신 행을 지워 "첫 산출" 상태를 만든다. 갭 락은 맞는 행이
+        // 하나도 없을 때 잡히므로, 지우지 않으면 이 결함이 재현되지 않는다.
+        await prisma.riskScore.deleteMany({
+          where: { beachId: { in: beaches.map((b) => b.id) } },
+        });
+
+        const calculationId = await persistence.createCalculation({
+          calculationUid: `smoke-deadlock-${Date.now()}`,
+          triggerType: 'schedule',
+          triggerReportId: null,
+          triggeredBy: null,
+          ruleVersion: 'v3',
+        });
+
+        // 실제 산출 패턴 그대로 — **해변 4곳 동시, 지평 셋은 해변 안에서 순차**다
+        // (calculate-risk.service 의 BEACH_CONCURRENCY 와 HORIZONS 루프).
+        // 36개를 한꺼번에 던지면 실제보다 훨씬 가혹해서, 수정이 들어가 있어도 이따금
+        // 터지는 불안정한 테스트가 된다. 우리가 실제로 배포하는 모양을 재현해야 한다.
+        const HORIZONS = ['now', '24h', '72h'] as const;
+        const CONCURRENCY = 4;
+
+        const saveBeach = async (beach: { id: bigint }) => {
+          for (const horizon of HORIZONS) {
+            await persistence.saveScoreAsLatest({
+              calculationId,
+              beachId: Number(beach.id),
+              horizon,
+              score: 10,
+              level: 'safe',
+              baseLevel: 'safe',
+              minLevelApplied: false,
+              minLevelRuleCode: null,
+              confidence: 'medium',
+              ruleVersion: 'v3',
+              // 요인을 함께 넣어 트랜잭션을 실제 산출만큼 길게 만든다. 트랜잭션이 짧으면
+              // 락을 쥐고 있는 시간이 줄어 데드락 창이 좁아진다.
+              factors: [
+                {
+                  code: 'TEMP_UP',
+                  name: '수온 상승',
+                  detail: '스모크',
+                  delta: 10,
+                  sourceReportId: null,
+                  displayOrder: 1,
+                },
+              ],
+            });
+          }
+        };
+
+        const results: PromiseSettledResult<void>[] = [];
+        for (let i = 0; i < beaches.length; i += CONCURRENCY) {
+          results.push(
+            ...(await Promise.allSettled(beaches.slice(i, i + CONCURRENCY).map(saveBeach))),
+          );
+        }
+
+        const failed = results.filter((r) => r.status === 'rejected');
+        // 하나라도 실패하면 그 해변은 그 주기 동안 공개 화면에서 unknown 이 된다.
+        expect(failed).toHaveLength(0);
+
+        // 그리고 해변마다 최신이 정확히 하나여야 한다 — 재시도가 중복을 남기면 안 된다.
+        for (const beach of beaches) {
+          for (const horizon of HORIZONS) {
+            const latest = await prisma.riskScore.count({
+              where: { beachId: beach.id, horizon, isLatest: true },
+            });
+            expect(latest).toBe(1);
+          }
+        }
+      });
+    });
 
     describe('해변↔관측소 매핑 진단', () => {
       it('활성 해변을 하나도 빠뜨리지 않는다 — 매핑이 없는 해변이 가장 중요하다', async () => {
