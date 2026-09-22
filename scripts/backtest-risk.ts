@@ -830,6 +830,9 @@ async function predict(report: WeeklyReport, prev: WeeklyReport | null, priorYea
       observationAgeMinutes: latestObservation
         ? Math.max(0, Math.round((decisionAt.getTime() - latestObservation.observedAt.getTime()) / 60_000))
         : null,
+      // 백테스트에는 관측소 거리 기록이 없다. null 이면 거리 벌점이 붙지 않아
+      // **과거 신뢰도를 실제보다 후하게** 본다 — 지표를 비교할 때 이 차이를 기억한다.
+      observationDistanceKm: null,
     };
 
     // ===== 프로덕션 도메인 코드 (재구현 없음) =====
@@ -839,7 +842,11 @@ async function predict(report: WeeklyReport, prev: WeeklyReport | null, priorYea
     const variables = evaluateRiskVariables(bundle, ruleScore);
     const reportWeights = evaluateReportWeights(bundle.verifiedReports, ruleScore);
     const minLevelTriggers = deriveMinLevelTriggers(bundle.verifiedReports);
-    const confidence = deriveConfidence(variables.missing.length, bundle.observationAgeMinutes);
+    const confidence = deriveConfidence(
+      variables.missing,
+      bundle.observationAgeMinutes,
+      bundle.observationDistanceKm,
+    );
     const result = RiskEngine.calculate({
       variables: applyHorizon(variables.factors, 'now'),
       reportWeights: applyHorizon(reportWeights, 'now'),

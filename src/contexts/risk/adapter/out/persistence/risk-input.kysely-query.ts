@@ -153,6 +153,11 @@ export class RiskInputKyselyQuery implements RiskInputPort {
       ? Math.max(0, Math.round((now - latestObservation.observedAt.getTime()) / 60000))
       : null;
 
+    // 거리는 **해양** 관측소 것만 쓴다. 수온·파고·해류가 거기서 오고, 기상 관측소는 제주
+    // 전체에 둘뿐이라 거리로 벌점을 주면 모든 해변이 함께 내려갈 뿐이다(고칠 방법이 없다).
+    // 대표가 낡아 다른 해양관측소가 선택됐다면 **그 관측소의 거리**여야 한다.
+    const observationDistanceKm = marineRow?.distanceKm ?? null;
+
     // 7일 평균 수온
     const avgRow = await this.db
       .selectFrom('observations as o')
@@ -239,6 +244,7 @@ export class RiskInputKyselyQuery implements RiskInputPort {
       pastOccurrenceCount,
       verifiedReports,
       observationAgeMinutes,
+      observationDistanceKm,
       forecasts,
     };
   }
@@ -416,6 +422,7 @@ export class RiskInputKyselyQuery implements RiskInputPort {
       .where('m.beach_id', '=', beachId)
       .where('m.station_type', '=', stationType)
       .select([
+        'm.distance_km as distanceKm',
         'o.observed_at as observedAt',
         'o.water_temp as waterTemp',
         'o.wave_height as waveHeight',
@@ -438,6 +445,7 @@ export class RiskInputKyselyQuery implements RiskInputPort {
 
     return row
       ? {
+          distanceKm: numOrNull(row.distanceKm),
           observedAt: new Date(row.observedAt),
           waterTemp: numOrNull(row.waterTemp),
           waveHeight: numOrNull(row.waveHeight),
@@ -464,7 +472,13 @@ const STALE_OBSERVATION_HOURS = 24;
 type StationType = 'marine' | 'weather';
 
 /** 관측 한 행 (유형별 최신본). */
-type ObservationRow = ObservationInput;
+/**
+ * 관측 한 행 + **그 값을 준 관측소까지의 거리.**
+ *
+ * 거리는 도메인 입력(ObservationInput)에 넣지 않는다 — 위험 요인 평가는 거리를 쓰지 않고,
+ * 신뢰도 판정만 쓴다. 평가 입력에 섞으면 룰이 거리를 보는 것처럼 읽힌다.
+ */
+type ObservationRow = ObservationInput & { distanceKm: number | null };
 
 /** a ?? b — 유형별 담당 컬럼을 우선하되, 비면 다른 유형 행으로 보완한다. */
 function pick(primary: number | null, fallback: number | null): number | null {

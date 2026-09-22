@@ -99,6 +99,17 @@ export interface RiskInputBundle {
   verifiedReports: VerifiedReportInput[];
   observationAgeMinutes: number | null; // 최신 관측 경과(분), 없으면 null
   /**
+   * 값을 실제로 준 **해양 관측소**까지의 거리(km). 해양 관측이 없으면 null.
+   *
+   * 대표 관측소의 거리가 아니라 **이번에 선택된 관측소**의 거리다. 대표가 낡으면 더 먼
+   * 관측소가 선택되는데(findLatestObservation), 그때 값은 더 멀리서 온 것이다.
+   *
+   * 기상 관측소 거리는 쓰지 않는다. 제주 전체에 둘뿐이라(대표 평균 22.6km) 벌점을 주면
+   * 모든 해변이 함께 내려갈 뿐이고, **운영자가 고칠 방법이 없다.** 신뢰도는 고칠 수 있는
+   * 것을 가리켜야 한다.
+   */
+  observationDistanceKm: number | null;
+  /**
    * 이 해변의 향후 기상 예보(weather_forecasts). 24h/72h 지평의 WAVE_HIGH/WIND_INFLOW 를
    * **현재값 × 계수가 아니라 예보값으로** 재평가하는 데 쓴다. 비어 있으면 계수 폴백.
    */
@@ -117,6 +128,24 @@ export const THRESHOLDS = {
   toxicHighConfidence: 0.8, // MIN_TOXIC_HIGH 기준
   freshObservationMinutes: 180, // 신뢰도 high 기준
   staleObservationMinutes: 24 * 60, // 신뢰도 medium 상한
+  /**
+   * 관측값이 그 해변을 대표한다고 볼 수 있는 거리(km). 넘으면 신뢰도를 한 단계 내린다.
+   *
+   * 10km 는 이 저장소가 이미 같은 질문에 내놓은 답이다 — 정답 데이터에서 출현 기록을
+   * 해변에 붙일 때 쓰는 반경이 10km 이고, 그 근거는 "이보다 넓으면 해변별 차이가 사라진다"
+   * 였다(GroundtruthConfig). 관측값도 같은 질문을 받는다: **이 값이 이 해변의 것인가.**
+   *
+   * ⚠️ 지금 제주 해변 12곳의 대표 해양관측소는 1.1~10.1km 다. 곽지과물(10.1km)만 이 선을
+   *    넘는다 — 0.1km 차이로 내려간다. 선을 15km 로 옮기면 곽지가 안 걸리지만, 그건 숫자를
+   *    결과에 맞춘 것이지 근거가 아니다. 곽지의 최근접 해양관측소가 실제로 경계에 있다는
+   *    사실이 드러나는 편이 낫다.
+   */
+  representativeDistanceKm: 10,
+  /**
+   * 이 거리를 넘으면 두 단계 내린다. 30km 는 엔진이 "인근 출현" 으로 치는 반경이다 —
+   * 그보다 멀면 위험도 계산에서조차 같은 해역으로 보지 않는 거리다.
+   */
+  farDistanceKm: 30,
 } as const;
 
 function mkVariable(code: RiskFactorCode, ruleScore: RuleScoreLookup, detail: string | null): FactorContribution {
@@ -394,11 +423,94 @@ export function deriveNearbyMinTriggers(nearby: NearbyAlertInput | null): MinLev
 }
 
 /**
- * 데이터 신뢰도 판정 (RISK-005). 결측 요인 수와 관측 최신성으로 등급을 낮춘다.
+ * 결측 요인별 무게.
+ *
+ * ── 왜 개수로 세면 안 되나 ───────────────────────────────────────────────────────────
+ * 예전에는 결측 **개수**만 셌다. 그러면 수온을 못 보는 상태와 부차 요인 셋을 못 보는 상태가
+ * 같은 등급이 된다. 해파리 위험도에서 수온은 핵심 동인인데도 그렇다.
+ *
+ * ⚠️ 더 나빴던 것 — 수온이 없으면 TEMP_UP 과 TEMP_7D_AVG 가 함께 빠져 개수가 **2** 였다.
+ *    low 기준이 3이었으므로 **수온을 한 값도 못 받은 해변이 'medium' 으로 나왔다.**
+ *    입력의 절반이 없는데 "보통" 이라고 답한 셈이다.
+ *
+ * 그래서 수온 두 요인의 무게 합을 3으로 맞춘다 — 수온이 없으면 그 자체로 low 다.
+ * 나머지는 1이고, 셋이 겹쳐야 low 가 된다.
  */
-export function deriveConfidence(missingCount: number, observationAgeMinutes: number | null): DataConfidence {
-  if (observationAgeMinutes === null || missingCount >= 3) return 'low';
-  if (missingCount === 0 && observationAgeMinutes <= THRESHOLDS.freshObservationMinutes) return 'high';
-  if (observationAgeMinutes <= THRESHOLDS.staleObservationMinutes) return 'medium';
-  return 'low';
+const MISSING_FACTOR_WEIGHTS: Record<string, number> = {
+  TEMP_UP: 2,
+  TEMP_7D_AVG: 1,
+  WAVE_HIGH: 1,
+  WIND_INFLOW: 1,
+  CURRENT_INFLOW: 1,
+};
+
+/** 표에 없는 코드의 기본 무게. 룰이 늘어도 조용히 0점이 되지 않게 한다. */
+const DEFAULT_MISSING_WEIGHT = 1;
+
+/** low 로 떨어지는 결측 무게 합. */
+const LOW_CONFIDENCE_WEIGHT = 3;
+
+function missingWeight(codes: string[]): number {
+  return codes.reduce(
+    (sum, code) => sum + (MISSING_FACTOR_WEIGHTS[code] ?? DEFAULT_MISSING_WEIGHT),
+    0,
+  );
+}
+
+/**
+ * 관측소 거리로 내릴 단계 수.
+ *
+ * 값이 다 있고 신선해도 **40km 떨어진 관측소의 수온**이면 그건 이 해변의 값이 아니다.
+ * 예전 판정은 거리를 아예 보지 않아서, 그 경우에도 'high' 가 나왔다.
+ *
+ * 거리를 모르면(해양 관측이 없으면) 0 단계다 — 그 상황은 결측 무게가 이미 크게 잡는다.
+ */
+function distanceSteps(distanceKm: number | null): number {
+  if (distanceKm === null) return 0;
+  if (distanceKm > THRESHOLDS.farDistanceKm) return 2;
+  if (distanceKm > THRESHOLDS.representativeDistanceKm) return 1;
+  return 0;
+}
+
+const CONFIDENCE_LADDER: DataConfidence[] = ['high', 'medium', 'low'];
+
+function lower(level: DataConfidence, steps: number): DataConfidence {
+  const idx = Math.min(CONFIDENCE_LADDER.indexOf(level) + steps, CONFIDENCE_LADDER.length - 1);
+  return CONFIDENCE_LADDER[idx];
+}
+
+/**
+ * 데이터 신뢰도 판정 (RISK-005).
+ *
+ * ── ⚠️ 이 값이 답하지 않는 것 ────────────────────────────────────────────────────────
+ * **예측이 맞는지는 전혀 보지 않는다.** 입력이 완벽해도 룰이 틀렸으면 예측은 틀린다.
+ * 이 값이 답하는 질문은 하나다 — **"이 판정을 뒷받침할 관측 자료가 충분한가."**
+ *
+ * 그래서 시민 화면에서는 '신뢰도' 가 아니라 **'관측 자료 상태'** 로 부른다. "신뢰도 높음"
+ * 은 "이 예측을 믿어도 된다" 로 읽히는데, 그건 우리가 아직 측정한 적 없는 주장이다
+ * (해변별 정확도 표본은 현재 0건 — docs/backtest.md).
+ *
+ * ── 보는 것 셋 ───────────────────────────────────────────────────────────────────────
+ *   1. 무엇이 비었나  — 개수가 아니라 무게(수온이 무겁다)
+ *   2. 얼마나 오래됐나 — 3시간 넘으면 high 를 못 준다
+ *   3. 얼마나 먼가    — 10km 넘으면 한 단계, 30km 넘으면 두 단계
+ */
+export function deriveConfidence(
+  missingCodes: string[],
+  observationAgeMinutes: number | null,
+  observationDistanceKm: number | null = null,
+): DataConfidence {
+  // 관측이 아예 없으면 거리도 무게도 따질 것이 없다.
+  if (observationAgeMinutes === null) return 'low';
+
+  const weight = missingWeight(missingCodes);
+  if (weight >= LOW_CONFIDENCE_WEIGHT) return 'low';
+  if (observationAgeMinutes > THRESHOLDS.staleObservationMinutes) return 'low';
+
+  const base: DataConfidence =
+    weight === 0 && observationAgeMinutes <= THRESHOLDS.freshObservationMinutes
+      ? 'high'
+      : 'medium';
+
+  return lower(base, distanceSteps(observationDistanceKm));
 }

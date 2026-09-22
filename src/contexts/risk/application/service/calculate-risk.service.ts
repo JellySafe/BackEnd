@@ -220,8 +220,10 @@ export class CalculateRiskService implements CalculateRiskUseCase {
         ...deriveNearbyMinTriggers(bundle.nearbyAlert),
       ];
       const baseConfidence = deriveConfidence(
-        variables.missing.length,
+        // 개수가 아니라 **코드**를 넘긴다 — 수온 결측은 다른 것보다 무겁다.
+        variables.missing,
         bundle.observationAgeMinutes,
+        bundle.observationDistanceKm,
       );
 
       // 지평은 순차로 둔다. 같은 해변의 세 지평이 동시에 돌 이유가 없고(양이 적다),
