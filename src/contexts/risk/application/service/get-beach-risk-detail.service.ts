@@ -1,4 +1,5 @@
 import { Inject, Injectable } from '@nestjs/common';
+import { dataConfidenceLabelOf } from '../../domain/data-confidence-label';
 import { Id } from '@shared/kernel/id';
 import { NotFoundError } from '@shared/kernel/domain-error';
 import { RiskHorizon, riskLevelLabelOf } from '@shared/kernel/risk-level';
@@ -100,6 +101,7 @@ export class GetBeachRiskDetailService implements GetBeachRiskDetailUseCase {
         factors: [],
         guideText: buildSafetyGuide('safe', locale),
         dataConfidence: 'low',
+        dataConfidenceLabel: dataConfidenceLabelOf('low', locale),
         generatedAt: null,
         manuallyRaised: false,
         riskTimeline: [],
@@ -116,6 +118,7 @@ export class GetBeachRiskDetailService implements GetBeachRiskDetailUseCase {
       factors: primary.factors,
       guideText: buildSafetyGuide(primary.riskLevel, locale),
       dataConfidence: primary.dataConfidence,
+      dataConfidenceLabel: dataConfidenceLabelOf(primary.dataConfidence, locale),
       generatedAt: primary.generatedAt,
       // 최소 단계 보장이 걸렸고 그 근거가 **사람**일 때만 true. 제보·인근 출현 기반 보장
       // (RISK-002)은 여전히 시스템 판단이므로 여기서 구분한다.
@@ -160,6 +163,7 @@ export class GetBeachRiskDetailService implements GetBeachRiskDetailUseCase {
           scoreDelta: f.delta,
         })),
         dataConfidence: card.confidence,
+        dataConfidenceLabel: dataConfidenceLabelOf(card.confidence, locale),
         generatedAt: card.generatedAt,
         manuallyRaised: card.minLevelRuleCode === MANUAL_OVERRIDE_RULE_CODE,
       });

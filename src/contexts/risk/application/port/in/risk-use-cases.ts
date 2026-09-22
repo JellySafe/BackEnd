@@ -88,6 +88,14 @@ export interface PublicRiskPointView {
   riskScore: number;
   factors: PublicRiskFactorView[]; // 요약 원인 3~5개
   dataConfidence: DataConfidence;
+  /**
+   * 시민에게 보여줄 **관측 자료 상태** 문구.
+   *
+   * ⚠️ `dataConfidence` 를 "신뢰도 높음" 으로 옮기면 *"이 예측을 믿어도 된다"* 로 읽힌다.
+   * 그건 측정한 적 없는 주장이다(해변별 정확도 표본 0건). 이 값이 답하는 질문은
+   * **"이 판정을 뒷받침할 관측 자료가 충분한가"** 뿐이라, 라벨도 자료 이야기만 한다.
+   */
+  dataConfidenceLabel: string;
   generatedAt: Date;
   /**
    * 이 지평의 단계가 운영자 수동 상향으로 올라간 것인가.
@@ -121,6 +129,14 @@ export interface PublicBeachRiskView {
   factors: PublicRiskFactorView[]; // 요약 원인 3~5개
   guideText: string;
   dataConfidence: DataConfidence;
+  /**
+   * 시민에게 보여줄 **관측 자료 상태** 문구.
+   *
+   * ⚠️ `dataConfidence` 를 "신뢰도 높음" 으로 옮기면 *"이 예측을 믿어도 된다"* 로 읽힌다.
+   * 그건 측정한 적 없는 주장이다(해변별 정확도 표본 0건). 이 값이 답하는 질문은
+   * **"이 판정을 뒷받침할 관측 자료가 충분한가"** 뿐이라, 라벨도 자료 이야기만 한다.
+   */
+  dataConfidenceLabel: string;
   generatedAt: Date | null;
   /**
    * 이 단계가 **운영자가 손으로 올린 것**인가.

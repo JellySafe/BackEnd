@@ -169,10 +169,29 @@ export class PublicRiskPointResponse {
 
   @ApiProperty({
     example: 'medium',
-    description: '데이터 신뢰도. 먼 시점일수록 예측 불확실성으로 한 단계씩 낮아진다.',
+    description: [
+      '**관측 자료 상태**(예측 정확도가 아니다).',
+      '',
+      '⚠️ 이름이 confidence 라서 "이 예측을 믿어도 된다" 로 읽히기 쉬운데 **그런 뜻이 아니다.**',
+      '이 값이 답하는 질문은 하나다 — 이 판정을 뒷받침할 **관측 자료가 충분한가.** 입력이',
+      '완벽해도 룰이 틀렸으면 예측은 틀리고, 이 값은 그것을 보지 않는다.',
+      '',
+      '**무엇을 보나** — 무엇이 비었나(수온 결측이 가장 무겁다) · 얼마나 오래됐나(3시간) ·',
+      '관측소가 얼마나 먼가(10km 초과 한 단계, 30km 초과 두 단계).',
+      '먼 시점일수록 예측 불확실성으로 한 단계씩 더 낮아진다.',
+      '',
+      '시민 화면에는 `dataConfidenceLabel` 을 쓴다 — 자료 이야기만 하는 문구다.',
+    ].join(' '),
     enum: ['high', 'medium', 'low'],
   })
   dataConfidence!: string;
+
+  @ApiProperty({
+    example: '관측 자료 일부 없음',
+    description:
+      '시민에게 보여줄 관측 자료 상태 문구(요청 언어로). "신뢰도" 라는 말을 쓰지 않는 이유는 dataConfidence 설명 참고.',
+  })
+  dataConfidenceLabel!: string;
 
   @ApiProperty({ example: '2026-07-10T09:00:00.000Z', description: '산출 생성 일시' })
   generatedAt!: string;
@@ -231,10 +250,29 @@ export class PublicBeachRiskResponse {
 
   @ApiProperty({
     example: 'high',
-    description: '데이터 신뢰도 — 현재 시점',
+    description: [
+      '**관측 자료 상태**(예측 정확도가 아니다).',
+      '',
+      '⚠️ 이름이 confidence 라서 "이 예측을 믿어도 된다" 로 읽히기 쉬운데 **그런 뜻이 아니다.**',
+      '이 값이 답하는 질문은 하나다 — 이 판정을 뒷받침할 **관측 자료가 충분한가.** 입력이',
+      '완벽해도 룰이 틀렸으면 예측은 틀리고, 이 값은 그것을 보지 않는다.',
+      '',
+      '**무엇을 보나** — 무엇이 비었나(수온 결측이 가장 무겁다) · 얼마나 오래됐나(3시간) ·',
+      '관측소가 얼마나 먼가(10km 초과 한 단계, 30km 초과 두 단계).',
+      '먼 시점일수록 예측 불확실성으로 한 단계씩 더 낮아진다.',
+      '',
+      '시민 화면에는 `dataConfidenceLabel` 을 쓴다 — 자료 이야기만 하는 문구다.',
+    ].join(' '),
     enum: ['high', 'medium', 'low'],
   })
   dataConfidence!: string;
+
+  @ApiProperty({
+    example: '관측 자료 일부 없음',
+    description:
+      '시민에게 보여줄 관측 자료 상태 문구(요청 언어로). "신뢰도" 라는 말을 쓰지 않는 이유는 dataConfidence 설명 참고.',
+  })
+  dataConfidenceLabel!: string;
 
   @ApiProperty({
     example: '2026-07-10T09:00:00.000Z',
