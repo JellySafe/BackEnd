@@ -1,4 +1,7 @@
 import { INestApplication, ValidationPipe } from '@nestjs/common';
+import { existsSync } from 'node:fs';
+import { join } from 'node:path';
+import { SCHEMA_REQUIREMENTS } from '@shared/persistence/schema-requirements';
 import { GUIDE_QUERY, GuideQueryPort } from '@contexts/beach/application/port/out/guide-query.port';
 import { Test } from '@nestjs/testing';
 import request from 'supertest';
@@ -2341,6 +2344,43 @@ describe('영속성 스모크', () => {
    * DB 에 저장된 원문 해시와 현재 원문을 맞춰 보는 것이다. 단위 테스트는 해시 비교만
    * 확인할 뿐, 시드가 해시를 제대로 심었는지는 확인하지 못한다.
    */
+  /**
+   * 스키마 점검.
+   *
+   * ⚠️ DB 없이는 의미가 없는 테스트다 — 이 점검이 막으려는 것이 "코드는 배포됐는데 DDL 이
+   * 안 올라간 상태" 이고, 그건 실제 DB 를 봐야만 알 수 있다.
+   *
+   * 이 테스트가 깨지면 **prisma/sql 에 새 파일을 추가하고 적용하지 않았거나**, 요구 목록에
+   * 적지 않았다는 뜻이다. 둘 다 배포 사고로 이어진다.
+   */
+  describe('스키마 요구사항', () => {
+    it('코드가 가정하는 스키마가 실제 DB 에 전부 있다', async () => {
+      const rows = await prisma.$queryRawUnsafe<{ TABLE_NAME: string; COLUMN_NAME: string }[]>(
+        `SELECT TABLE_NAME, COLUMN_NAME FROM information_schema.COLUMNS WHERE TABLE_SCHEMA = DATABASE()`,
+      );
+      const tables = new Set(rows.map((r) => r.TABLE_NAME));
+      const columns = new Set(rows.map((r) => `${r.TABLE_NAME}.${r.COLUMN_NAME}`));
+
+      const missing = SCHEMA_REQUIREMENTS.filter((req) =>
+        req.column === undefined
+          ? !tables.has(req.table)
+          : !columns.has(`${req.table}.${req.column}`),
+      );
+
+      expect(missing.map((m) => `${m.table}${m.column ? '.' + m.column : ''} (${m.sqlFile})`)).toEqual(
+        [],
+      );
+    });
+
+    it('⚠️ 요구 목록이 가리키는 SQL 파일이 실제로 있다', () => {
+      // 파일명을 잘못 적으면 오류 메시지가 존재하지 않는 파일을 적용하라고 안내한다.
+      // 기동을 막을 때는 다음 행동이 분명해야 하므로, 그 안내가 틀리면 안 된다.
+      for (const req of SCHEMA_REQUIREMENTS) {
+        expect(existsSync(join(process.cwd(), 'prisma', 'sql', req.sqlFile))).toBe(true);
+      }
+    });
+  });
+
   describe('안내 문구 다국어', () => {
     let guides: GuideQueryPort;
 

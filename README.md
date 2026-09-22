@@ -346,6 +346,30 @@ mysql -h <host> -u <user> -p <db> < prisma/sql/001-index-cleanup.sql
 npx prisma db pull        # 적용 후 schema.prisma 와 대조
 ```
 
+### ⚠️ DDL 을 빠뜨리면 기동이 막힌다
+
+사람이 적용하는 방식이라 **코드만 배포되고 DDL 이 빠지는 일**이 구조적으로 가능하다.
+그때 앱은 **멀쩡히 뜨고 조용히 못 한다** — 예를 들어 `risk_scores.missing_factors` 가 없으면
+위험도 저장이 매번 실패해 시민 화면에 아무 단계도 안 나오는데, 기동 로그는 정상이고 실패는
+한 시간 뒤 배치에서 처음 드러난다. 그 한 시간은 하필 배포 직후다.
+
+그래서 기동 시 스키마를 점검하고, 없으면 **뜨지 않는다**(`shared/persistence/schema-guard.ts`).
+오류에 무엇이 없고 무엇이 안 되는지와 **적용할 SQL 파일**이 함께 나온다.
+
+```
+DB 스키마가 코드보다 뒤쳐져 있습니다 (1건).
+  · risk_scores.missing_factors 없음 → 위험도 저장이 매번 실패해 시민 화면에 아무 단계도 나오지 않는다
+    적용: mysql -u <user> -p <db> < prisma/sql/008-risk-missing-factors.sql
+```
+
+**`prisma/sql/` 에 파일을 추가하면 `schema-requirements.ts` 에도 함께 적는다.** 안 적으면
+다음 사람이 DDL 을 빠뜨려도 아무도 모른다 — 이 목록의 값은 빠짐없음에 있다. 인덱스처럼
+있으면 빠르고 없으면 느린 것은 적지 않는다(기동을 막을 근거가 아니다).
+
+⚠️ **점검 자체가 실패하면 경고만 남기고 통과시킨다.** 관리형 DB 에서 `information_schema`
+권한이 제한될 수 있는데, 점검기가 서비스 전면 중단의 원인이 되면 안 되기 때문이다
+(레이트 리밋이 Redis 장애 때 fail-open 하는 것과 같은 기준).
+
 ### 값 계약 CHECK 제약 (`prisma/sql/003`)
 
 상태값은 도메인에서 소문자 union 으로, DB 에서 `VARCHAR + CHECK` 로 **같은 목록을 두 번** 표현한다.
