@@ -1,4 +1,5 @@
 import { Id } from '@shared/kernel/id';
+import { MeasurementCoverage } from '../../../domain/observation-measurements';
 
 /** 해변 하나가 보고 있는 관측소 한 곳. */
 export interface BeachStationLink {
@@ -22,6 +23,16 @@ export interface BeachMappingDiagnostics {
   beachName: string;
   region: string;
   stations: BeachStationLink[];
+  /**
+   * 이 해변이 **실제로 받고 있는 관측 항목**.
+   *
+   * ⚠️ 관측소가 붙어 있고 신선해도 **그 관측소가 특정 값을 아예 주지 않을 수 있다.**
+   * 파고부이는 유향·유속을 관측하지 않으므로, 거기 붙은 해변은 CURRENT_INFLOW 가 영원히
+   * 결측이고 신뢰도가 구조적으로 'medium' 에서 멈춘다.
+   *
+   * 그 사실이 없으면 운영자는 "수집이 밀렸나 보다" 하고 기다린다. 기다려도 오지 않는다.
+   */
+  measurements: MeasurementCoverage[];
 }
 
 /**
