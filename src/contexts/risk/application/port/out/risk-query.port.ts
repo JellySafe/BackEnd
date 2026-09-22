@@ -34,6 +34,13 @@ export interface RiskCardRow {
   minLevelApplied: boolean;
   minLevelRuleCode: string | null;
   confidence: DataConfidence;
+  /**
+   * 이 산출에서 평가하지 못한 위험 요인 코드. 결측이 없으면 빈 배열.
+   *
+   * 신뢰도가 왜 그 값인지를 답한다. 값이 있는데도 매번 같은 코드가 반복된다면 수집이 밀린
+   * 것이 아니라 **그 해변의 관측소가 그 값을 아예 안 주는 것**이다(기다려도 오지 않는다).
+   */
+  missingFactors: string[];
   generatedAt: Date;
 }
 

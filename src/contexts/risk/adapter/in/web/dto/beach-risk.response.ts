@@ -77,6 +77,23 @@ export class RiskCardResponse {
   })
   confidence!: string;
 
+  @ApiProperty({
+    example: ['CURRENT_INFLOW'],
+    description: [
+      '이 산출에서 **평가하지 못한** 위험 요인 코드. 결측이 없으면 빈 배열이다.',
+      '',
+      '`confidence` 가 왜 그 값인지를 답한다 — 결측 하나마다 신뢰도가 내려가고 셋 이상이면',
+      '`low` 다. 지금까지는 개수만 신뢰도로 접히고 코드는 버려져서, 화면에 `medium` 이라고만',
+      '나오고 이유는 아무 데도 없었다.',
+      '',
+      '⚠️ 같은 코드가 **매 산출마다 반복되면** 수집이 밀린 것이 아니라 그 해변의 관측소가',
+      '그 값을 아예 안 주는 것이다. 기다려도 오지 않는다 — 실제로 제주 해변 10곳이',
+      '`CURRENT_INFLOW` 가 이 상태다(파고부이는 유향·유속을 관측하지 않는다).',
+      '그때는 `GET /admin/observation-mappings` 의 `measurements` 로 확인한다.',
+    ].join(' '),
+  })
+  missingFactors!: string[];
+
   @ApiProperty({ example: '2026-07-10T09:00:00.000Z', description: '산출 생성 일시' })
   generatedAt!: string;
 
