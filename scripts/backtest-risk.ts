@@ -127,8 +127,23 @@ const SAMPLE_HOUR_KST = 12;
 const DAY_MS = 86_400_000;
 const KST_OFFSET_MS = 9 * 3600_000;
 
-const LIST_SDATE = '20240101';
-const LIST_EDATE = '20260714';
+const LIST_SDATE = process.env.BACKTEST_FROM ?? '20240101';
+
+/**
+ * 정답(주간보고) 목록을 어디까지 볼 것인가.
+ *
+ * ⚠️ 예전에는 **'20260714' 가 하드코딩**돼 있었다. 그래서 몇 달 뒤에 다시 돌려도 같은 68주를
+ * 다시 읽었다 — 새 데이터가 쌓여도 백테스트는 그걸 보지 못했고, **다시 돌린다고 새로 아는
+ * 것이 없었다.**
+ *
+ * 이게 특히 나쁜 이유 — 지금 배포된 점수표(v3)는 **바로 그 68주에서 후보 10개를 비교해
+ * 고른 것**이다. 고른 데이터로 다시 재면 잘 나오는 게 당연하고, 고밀도 주가 26건뿐이라
+ * 과적합 위험이 실질적이다. 그걸 확인할 유일한 방법이 **선택에 쓰이지 않은 새 주간**인데,
+ * 종료일이 고정돼 있으면 그 데이터가 영영 들어오지 않는다.
+ *
+ * 기본을 오늘로 둔다. 특정 시점을 재현하려면 BACKTEST_TO 로 고정한다.
+ */
+const LIST_EDATE = process.env.BACKTEST_TO ?? kstDayKey(new Date()).replace(/-/g, '');
 
 const CACHE_DIR = process.env.BACKTEST_CACHE_DIR ?? path.join(os.tmpdir(), 'jellysafe-backtest');
 const OUT_PATH = process.env.BACKTEST_OUT ?? path.join(CACHE_DIR, 'backtest-result.json');
