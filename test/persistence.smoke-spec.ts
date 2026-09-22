@@ -1859,6 +1859,131 @@ describe('영속성 스모크', () => {
         }
       });
 
+      /**
+       * ⚠️ 이 블록이 **실제로 놓쳤던 것**을 잡는다.
+       *
+       * 제주 해변 11곳이 파고부이에 붙어 있는데 파고부이는 **유향·유속을 관측하지 않는다.**
+       * 관측소는 연결돼 있고 신선하므로 기존 진단은 전부 정상으로 보였고, 신뢰도만 조용히
+       * 'medium' 에서 멈췄다. 운영자 입장에서는 "수집이 밀렸나" 로 읽히는데, 기다려도
+       * 오지 않는다 — 그 값은 애초에 없다.
+       *
+       * mock 수집기가 모든 항목을 채워 주기 때문에 **개발 DB 에서는 이 공백이 보이지 않는다.**
+       * 그래서 여기서는 관측소를 따로 만들어 통제된 데이터로 확인한다.
+       */
+      describe('관측 항목 수급', () => {
+        async function makeStationWith(
+          fields: Record<string, number>,
+          suffix: string,
+        ): Promise<{ beachId: bigint; stationId: bigint; cleanup: () => Promise<void> }> {
+          const source = await prisma.dataSource.findFirstOrThrow({ where: { sourceType: 'marine' } });
+          const beach = await prisma.beach.create({
+            data: {
+              name: `측정진단-해변-${suffix}`,
+              region: '제주시',
+              lat: 33.5,
+              lng: 126.5,
+              isActive: true,
+            },
+          });
+          const station = await prisma.observationStation.create({
+            data: {
+              sourceId: source.id,
+              stationCode: `DIAG_${suffix}`,
+              name: `측정진단-관측소-${suffix}`,
+              stationType: 'marine',
+              lat: 33.5,
+              lng: 126.5,
+            },
+          });
+          await prisma.observationMapping.create({
+            data: {
+              beachId: beach.id,
+              stationId: station.id,
+              stationType: 'marine',
+              distanceKm: 1,
+              isPrimary: true,
+            },
+          });
+          await prisma.observation.create({
+            data: { stationId: station.id, observedAt: new Date(), collectedAt: new Date(), ...fields },
+          });
+
+          return {
+            beachId: beach.id,
+            stationId: station.id,
+            cleanup: async () => {
+              await prisma.observation.deleteMany({ where: { stationId: station.id } });
+              await prisma.observationMapping.deleteMany({ where: { stationId: station.id } });
+              await prisma.observationStation.delete({ where: { id: station.id } });
+              await prisma.beach.delete({ where: { id: beach.id } });
+            },
+          };
+        }
+
+        async function coverageOf(beachId: bigint) {
+          const query = app.get<MappingDiagnosticsQueryPort>(MAPPING_DIAGNOSTICS_QUERY);
+          const rows = await query.listByBeach(new Date());
+          return rows.find((r) => Number(r.beachId) === Number(beachId))?.measurements ?? [];
+        }
+
+        it('⚠️ 파고부이만 붙은 해변은 유향·유속이 "없음" 으로 드러난다', async () => {
+          // 실제 파고부이가 주는 것 그대로 — 수온과 파고뿐이다.
+          const made = await makeStationWith({ waterTemp: 25.1, waveHeight: 0.8 }, 'WAVE');
+
+          try {
+            const coverage = await coverageOf(made.beachId);
+            const current = coverage.find((m) => m.code === 'current');
+
+            expect(current?.available).toBe(false);
+            // 개수만 세면 "무엇이 막혔는지" 를 알 수 없다. 그게 이 공백이 안 보였던 이유다.
+            expect(current?.blockedFactors).toContain('CURRENT_INFLOW');
+            expect(coverage.find((m) => m.code === 'water_temp')?.available).toBe(true);
+          } finally {
+            await made.cleanup();
+          }
+        });
+
+        it('유향·유속을 주는 부이가 붙으면 "있음" 이고 막힌 룰이 없다', async () => {
+          const made = await makeStationWith(
+            { waterTemp: 25.9, waveHeight: 0.7, currentSpeed: 0.04, currentDirection: 26 },
+            'CUR',
+          );
+
+          try {
+            const current = (await coverageOf(made.beachId)).find((m) => m.code === 'current');
+
+            expect(current?.available).toBe(true);
+            expect(current?.blockedFactors).toEqual([]);
+            expect(current?.providedBy).toContain('DIAG_CUR');
+          } finally {
+            await made.cleanup();
+          }
+        });
+
+        it('⚠️ 어제까지만 오던 값은 "없음" 이다 — 센서가 멎은 것과 원래 없는 것은 다르다', async () => {
+          const made = await makeStationWith({ waterTemp: 25.1 }, 'STALE');
+
+          try {
+            // 25시간 전에 유속이 한 번 왔었다. 지금 받고 있다는 뜻이 아니다.
+            await prisma.observation.create({
+              data: {
+                stationId: made.stationId,
+                observedAt: new Date(Date.now() - 25 * 60 * 60 * 1000),
+                collectedAt: new Date(Date.now() - 25 * 60 * 60 * 1000),
+                currentSpeed: 0.3,
+                currentDirection: 90,
+              },
+            });
+
+            expect((await coverageOf(made.beachId)).find((m) => m.code === 'current')?.available).toBe(
+              false,
+            );
+          } finally {
+            await made.cleanup();
+          }
+        });
+      });
+
       it('대표 관측소를 먼저 보여준다 — 위험도가 실제로 읽는 곳이다', async () => {
         const query = app.get<MappingDiagnosticsQueryPort>(MAPPING_DIAGNOSTICS_QUERY);
         const rows = await query.listByBeach(new Date());

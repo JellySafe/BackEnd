@@ -1,4 +1,8 @@
 import { ApiProperty } from '@nestjs/swagger';
+import {
+  MEASUREMENT_CODES,
+  MeasurementCode,
+} from '../../../../domain/observation-measurements';
 
 /** 해변이 보고 있는 관측소 한 곳. */
 export class BeachStationLinkResponse {
@@ -47,6 +51,40 @@ export class BeachStationLinkResponse {
   ageMinutes!: number | null;
 }
 
+/** 관측 항목 한 가지의 수급 상태. */
+export class MeasurementCoverageResponse {
+  @ApiProperty({ enum: MEASUREMENT_CODES as readonly string[], example: 'current' })
+  code!: MeasurementCode;
+
+  @ApiProperty({ example: '유향·유속' }) label!: string;
+
+  @ApiProperty({
+    example: false,
+    description: '최근 24시간 안에 이 값을 준 관측소가 하나라도 있었는가.',
+  })
+  available!: boolean;
+
+  @ApiProperty({
+    example: ['TW_0075'],
+    description: '그 값을 준 관측소 코드. **빈 배열이면 아무도 주지 않는다.**',
+  })
+  providedBy!: string[];
+
+  @ApiProperty({ example: '2026-09-22T04:01:08.000Z', nullable: true, type: String })
+  lastValueAt!: Date | null;
+
+  @ApiProperty({
+    example: ['CURRENT_INFLOW'],
+    description: [
+      '이 항목이 없어서 **평가되지 못하는 위험 요인.**',
+      '',
+      '결측 요인 하나마다 신뢰도가 내려간다(셋 이상이면 `low`). 그래서 여기 값이 있으면',
+      '그 해변의 신뢰도는 **구조적으로 `high` 에 도달하지 못한다** — 기다려서 해결되지 않는다.',
+    ].join(' '),
+  })
+  blockedFactors!: string[];
+}
+
 /** 해변 하나의 관측 연결 상태. */
 export class BeachMappingDiagnosticsResponse {
   @ApiProperty({ example: 3 }) beachId!: number;
@@ -64,4 +102,20 @@ export class BeachMappingDiagnosticsResponse {
     ].join('\n'),
   })
   stations!: BeachStationLinkResponse[];
+
+  @ApiProperty({
+    type: [MeasurementCoverageResponse],
+    description: [
+      '이 해변이 **실제로 받고 있는 관측 항목.**',
+      '',
+      '⚠️ 관측소가 붙어 있고 `ageMinutes` 가 정상이어도 **그 관측소가 특정 값을 아예 주지',
+      '않을 수 있다.** 파고부이는 유향·유속을 관측하지 않는다 — 그래서 거기 붙은 해변은',
+      '`CURRENT_INFLOW` 가 영원히 결측이고 신뢰도가 `medium` 에서 멈춘다.',
+      '',
+      '그 사실이 없으면 운영자는 "수집이 밀렸나 보다" 하고 기다리게 된다. **기다려도 오지',
+      '않는다.** "지금 안 온다" 와 "여기서는 원래 안 온다" 는 해야 할 일이 완전히 다르다 —',
+      '앞은 수집을 고치는 일이고, 뒤는 관측소를 늘리거나 포기하는 일이다.',
+    ].join('\n'),
+  })
+  measurements!: MeasurementCoverageResponse[];
 }
