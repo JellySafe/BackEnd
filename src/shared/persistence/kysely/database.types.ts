@@ -467,6 +467,20 @@ export type StaticGuide = {
     created_at: Generated<Timestamp>;
     updated_at: Timestamp;
 };
+export type StaticGuideTranslation = {
+    id: Generated<number>;
+    guide_id: number;
+    locale: string;
+    title: string | null;
+    body: string;
+    /**
+     * 번역 시점의 원문(제목+본문) 해시. 원문이 바뀌면 달라져 **이 번역은 무시된다** —
+     * 한국어만 갱신된 상태에서 옛 응급처치를 외국인에게 내보내지 않기 위한 장치다.
+     */
+    source_hash: string;
+    created_at: Generated<Timestamp>;
+    updated_at: Timestamp;
+};
 export type StingIncident = {
     id: Generated<number>;
     beach_id: number;
@@ -580,6 +594,7 @@ export type DB = {
     risk_recommendations: RiskRecommendation;
     risk_rule_configs: RiskRuleConfig;
     risk_scores: RiskScore;
+    static_guide_translations: StaticGuideTranslation;
     static_guides: StaticGuide;
     sting_incidents: StingIncident;
     subscription_areas: SubscriptionArea;

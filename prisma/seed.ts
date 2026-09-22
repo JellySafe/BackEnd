@@ -1,4 +1,5 @@
 import { randomBytes, scryptSync } from 'node:crypto';
+import { guideSourceHash } from '../src/contexts/beach/domain/guide-translation';
 import { PrismaClient } from '@prisma/client';
 
 /**
@@ -465,6 +466,129 @@ const FIRST_AID_BODY = [
   '출처: 국립수산과학원 「해파리 응급대처법」 (2026-07-14 확인)',
 ].join('\n');
 
+/**
+ * 안내/고지 문구의 다국어 문안 (#94).
+ *
+ * ⚠️ **응급대처법은 안전 문서다.** 의역하지 않고 원문의 절차·금지사항을 그대로 옮긴다.
+ *    특히 "수돗물로 씻지 마세요" 와 "온찜질 45℃" 는 잘못 옮기면 피해가 커지는 항목이다.
+ *
+ * ⚠️ **원어민·의료 검토를 받지 않은 초안이다.** 배포 전 검토가 필요하다. 다만 검토를
+ *    기다리는 동안 외국인 방문객에게 한국어만 나가는 것보다는 낫다고 판단했다 —
+ *    원문이 바뀌면 자동으로 한국어로 떨어지는 안전장치(source_hash)가 있다.
+ *
+ * ko 는 여기 없다. 원문은 static_guides 에 있고, 여기 또 두면 둘이 갈라진다.
+ */
+const FIRST_AID_EN = [
+  'If you are stung by a jellyfish, get out of the water immediately.',
+  '',
+  '[Mild stings]',
+  '1. Quickly remove any remaining tentacles with seawater or sterile saline, and rinse the area thoroughly.',
+  '2. If pain persists, apply a warm compress (around 45°C / 113°F) to relieve it.',
+  '3. Check that the wound has settled.',
+  '',
+  '[If severe symptoms appear]',
+  'If there is difficulty breathing, loss of consciousness, or whole-body pain,',
+  'call 119 immediately and ask for medical help (perform CPR if needed).',
+  'The person must then be taken to a hospital for emergency treatment.',
+  '',
+  '[Must do]',
+  '· Do NOT rinse with tap water. It makes the stinging cells fire more and worsens the injury.',
+  '· Keep skin exposure to a minimum when entering the water.',
+  '',
+  'Source: National Institute of Fisheries Science, "Jellyfish First Aid" (checked 2026-07-14)',
+].join('\n');
+
+const FIRST_AID_ZH = [
+  '被水母蜇伤后，请立即离开水中。',
+  '',
+  '【轻度蜇伤】',
+  '1. 用海水或生理盐水迅速清除残留的触手，并充分冲洗伤口。',
+  '2. 如仍有疼痛，可用温热敷（约45℃）缓解疼痛。',
+  '3. 确认伤口已充分稳定。',
+  '',
+  '【出现严重症状时】',
+  '如出现呼吸困难、意识不清、全身疼痛等症状，',
+  '请立即拨打119并请求医疗救助（必要时进行心肺复苏）。',
+  '随后必须送往医院接受急救治疗。',
+  '',
+  '【务必遵守】',
+  '· 请勿用自来水冲洗。这会使刺细胞发射增加，加重伤害。',
+  '· 入水时请尽量减少皮肤暴露。',
+  '',
+  '来源：韩国国立水产科学院《水母应急处理方法》（2026-07-14 确认）',
+].join('\n');
+
+const FIRST_AID_JA = [
+  'クラゲに刺されたら、直ちに水から上がってください。',
+  '',
+  '【軽く刺された場合】',
+  '1. 刺された部位に残った触手を海水または生理食塩水で速やかに取り除き、十分に洗い流します。',
+  '2. 痛みが残る場合は、温罨法（45℃前後）で痛みを和らげます。',
+  '3. 傷の状態が落ち着いたか確認します。',
+  '',
+  '【重い症状が出た場合】',
+  '呼吸困難・意識不明・全身の痛みなどの症状が出た場合は、',
+  '直ちに119番に通報し、医療スタッフの助けを求めてください（必要に応じて心肺蘇生）。',
+  'その後、病院へ搬送して救急治療を受ける必要があります。',
+  '',
+  '【必ず守ること】',
+  '· 水道水で洗わないでください。クラゲの刺胞の発射が増え、被害が大きくなります。',
+  '· 入水の際は肌の露出を最小限にしてください。',
+  '',
+  '出典：国立水産科学院「クラゲ応急対処法」（2026-07-14 確認）',
+].join('\n');
+
+/** guideCode → 언어별 문안. 없는 언어는 한국어 원문으로 떨어진다. */
+const GUIDE_TRANSLATIONS: Record<string, Record<string, { title: string; body: string }>> = {
+  DISCLAIMER_PUBLIC: {
+    en: {
+      title: 'About JellySafe risk information',
+      body: 'JellySafe risk levels are reference information. Instructions from on-site lifeguards and the operating authority take precedence.',
+    },
+    zh: {
+      title: '关于风险信息的说明',
+      body: 'JellySafe 的风险等级仅供参考。现场救生员及运营机构的最终指示优先。',
+    },
+    ja: {
+      title: '危険度参考情報のご案内',
+      body: 'JellySafe の危険度は参考情報です。現場の安全要員および運営機関の最終案内が優先します。',
+    },
+  },
+  DISCLAIMER_ADMIN: {
+    en: {
+      title: 'Note for operational decisions',
+      body: 'AI classification results are not confirmed data until an administrator reviews them. Take final action according to your organization\u2019s criteria.',
+    },
+    zh: {
+      title: '运营判断说明',
+      body: 'AI 判别结果在管理员确认前不是确定数据。请按运营机构标准采取最终措施。',
+    },
+    ja: {
+      title: '運用判断のご案内',
+      body: 'AI 判別結果は管理者の確認前は確定データではありません。運営機関の基準に従って最終対応してください。',
+    },
+  },
+  SAFETY_SEVERE: {
+    en: {
+      title: 'Severe level safety notice',
+      body: 'Please refrain from entering the water and consider an alternative beach. If stung, notify a lifeguard immediately.',
+    },
+    zh: {
+      title: '严重等级安全提示',
+      body: '请避免入水，建议改用其他海水浴场。若被蜇伤，请立即告知救生员。',
+    },
+    ja: {
+      title: '「深刻」段階の安全案内',
+      body: '入水はお控えいただき、他の海水浴場のご利用をおすすめします。刺された場合はすぐに安全要員にお知らせください。',
+    },
+  },
+  FIRST_AID: {
+    en: { title: 'Jellyfish sting first aid', body: FIRST_AID_EN },
+    zh: { title: '水母蜇伤应急处理方法', body: FIRST_AID_ZH },
+    ja: { title: 'クラゲ接触被害の応急対処法', body: FIRST_AID_JA },
+  },
+};
+
 async function seedGuides() {
   const guides = [
     { guideCode: 'DISCLAIMER_PUBLIC', targetType: 'public', title: '위험도 참고 정보 안내', body: 'JellySafe 위험도는 참고 정보이며, 현장 안전요원 및 운영기관의 최종 안내가 우선합니다.', displayOrder: 1 },
@@ -472,13 +596,36 @@ async function seedGuides() {
     { guideCode: 'SAFETY_SEVERE', targetType: 'public', riskLevel: 'severe', title: '심각 단계 안전 안내', body: '입수를 자제하고 대체 해변 이용을 권장합니다. 쏘임 시 즉시 안전요원에게 알리세요.', displayOrder: 2 },
     { guideCode: 'FIRST_AID', targetType: 'public', title: '해파리 접촉피해 응급대처법', body: FIRST_AID_BODY, displayOrder: 3 },
   ];
+  let translationCount = 0;
   for (const g of guides) {
     // 응급처치 문구는 update 에도 넣는다. 지침이 바뀌었는데 재시드해도 옛 문구가 남아 있으면
     // 사람이 다칠 수 있다(다른 시드와 달리 update:{} 가 아니다).
     const update = g.guideCode === 'FIRST_AID' ? { title: g.title, body: g.body } : {};
-    await prisma.staticGuide.upsert({ where: { guideCode: g.guideCode }, update, create: g });
+    const saved = await prisma.staticGuide.upsert({
+      where: { guideCode: g.guideCode },
+      update,
+      create: g,
+    });
+
+    // 번역은 **원문 해시와 함께** 저장한다. 원문이 바뀌면 해시가 달라져 그 번역은 무시되고
+    // 한국어로 떨어진다 — 한국어만 갱신된 상태에서 옛 응급처치를 외국인에게 내보내지
+    // 않기 위한 장치다(domain/guide-translation.ts).
+    const sourceHash = guideSourceHash(saved.title, saved.body);
+    for (const [locale, text] of Object.entries(GUIDE_TRANSLATIONS[g.guideCode] ?? {})) {
+      await prisma.staticGuideTranslation.upsert({
+        where: {
+          uk_static_guide_translations_guide_locale: { guideId: saved.id, locale },
+        },
+        update: { title: text.title, body: text.body, sourceHash },
+        create: { guideId: saved.id, locale, title: text.title, body: text.body, sourceHash },
+      });
+      translationCount += 1;
+    }
   }
-  console.log(`  ✓ 안내/고지 문구 ${guides.length}건 (응급대처법 포함 — 출처: 국립수산과학원)`);
+  console.log(
+    `  ✓ 안내/고지 문구 ${guides.length}건 (응급대처법 포함 — 출처: 국립수산과학원)` +
+      `, 번역 ${translationCount}건 (en/zh/ja — 원어민 검토 전 초안)`,
+  );
 }
 
 /**

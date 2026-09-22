@@ -137,7 +137,28 @@ model StaticGuide {
   createdAt    DateTime @default(now()) @map("created_at") @db.DateTime(0)
   updatedAt    DateTime @updatedAt @map("updated_at") @db.DateTime(0)
 
+  translations StaticGuideTranslation[]
+
   @@map("static_guides")
+}
+
+/// 안내/고지 문구의 다국어 문안. ko 는 여기 두지 않는다 — 원문은 StaticGuide 에 있다.
+model StaticGuideTranslation {
+  id         BigInt   @id @default(autoincrement())
+  guideId    BigInt   @map("guide_id")
+  locale     String   @db.VarChar(10)
+  title      String?  @db.VarChar(200)
+  body       String   @db.Text
+  /// 번역 시점의 원문(제목+본문) 해시. 원문이 바뀌면 달라져 **이 번역은 무시된다** —
+  /// 한국어만 갱신된 상태에서 옛 응급처치를 외국인에게 내보내지 않기 위한 장치다.
+  sourceHash String   @map("source_hash") @db.Char(64)
+  createdAt  DateTime @default(now()) @map("created_at") @db.DateTime(0)
+  updatedAt  DateTime @updatedAt @map("updated_at") @db.DateTime(0)
+
+  guide StaticGuide @relation(fields: [guideId], references: [id], onDelete: Cascade)
+
+  @@unique([guideId, locale], name: "uk_static_guide_translations_guide_locale")
+  @@map("static_guide_translations")
 }
 
 model RiskRecommendation {

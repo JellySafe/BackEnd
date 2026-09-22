@@ -1,4 +1,5 @@
 import { INestApplication, ValidationPipe } from '@nestjs/common';
+import { GUIDE_QUERY, GuideQueryPort } from '@contexts/beach/application/port/out/guide-query.port';
 import { Test } from '@nestjs/testing';
 import request from 'supertest';
 import { App } from 'supertest/types';
@@ -2333,6 +2334,70 @@ describe('영속성 스모크', () => {
    * 저녁에 남긴 기록이 내일 것으로 잡혀, 운영자는 채웠는데 목록이 비지 않는다.
    * 그 어긋남은 DB 의 시각 비교에서만 드러난다.
    */
+  /**
+   * 안내/고지 문구의 언어 (#94).
+   *
+   * ⚠️ 실 DB 로 봐야 하는 이유 — 이 기능의 핵심은 **번역을 버리는 조건**이고, 그 판단은
+   * DB 에 저장된 원문 해시와 현재 원문을 맞춰 보는 것이다. 단위 테스트는 해시 비교만
+   * 확인할 뿐, 시드가 해시를 제대로 심었는지는 확인하지 못한다.
+   */
+  describe('안내 문구 다국어', () => {
+    let guides: GuideQueryPort;
+
+    beforeAll(() => {
+      guides = app.get<GuideQueryPort>(GUIDE_QUERY);
+    });
+
+    it('요청 언어의 번역을 준다', async () => {
+      const rows = await guides.list({ targetType: 'public', locale: 'en' });
+      const firstAid = rows.find((g) => g.guideCode === 'FIRST_AID');
+
+      expect(firstAid?.locale).toBe('en');
+      // 응급처치의 핵심 금지사항이 번역에 남아 있어야 한다.
+      expect(firstAid?.body).toContain('tap water');
+    });
+
+    it('한국어 요청은 원문을 준다', async () => {
+      const rows = await guides.list({ targetType: 'public', locale: 'ko' });
+
+      expect(rows.find((g) => g.guideCode === 'FIRST_AID')?.locale).toBe('ko');
+    });
+
+    it('빈 값을 내보내지 않는다 — 안내가 사라지면 번역이 없는 것보다 나쁘다', async () => {
+      for (const locale of ['ko', 'en', 'zh', 'ja'] as const) {
+        const rows = await guides.list({ targetType: 'public', locale });
+
+        expect(rows.length).toBeGreaterThan(0);
+        for (const row of rows) expect(row.body.length).toBeGreaterThan(0);
+      }
+    });
+
+    it('⚠️ 원문이 바뀌면 옛 번역을 버리고 한국어(현행)를 준다', async () => {
+      const before = await prisma.staticGuide.findFirstOrThrow({
+        where: { guideCode: 'FIRST_AID' },
+        select: { id: true, body: true },
+      });
+
+      // 지침 개정을 흉내 낸다. 번역은 옛 원문에 대응한 채 남아 있다.
+      await prisma.staticGuide.update({
+        where: { id: before.id },
+        data: { body: `${before.body}
+(지침 개정 스모크)` },
+      });
+
+      try {
+        const rows = await guides.list({ targetType: 'public', locale: 'en' });
+        const firstAid = rows.find((g) => g.guideCode === 'FIRST_AID');
+
+        expect(firstAid?.locale).toBe('ko');
+        // 그리고 **갱신된** 원문이어야 한다. 옛 한국어로 떨어지면 그것도 낡은 안내다.
+        expect(firstAid?.body).toContain('지침 개정 스모크');
+      } finally {
+        await prisma.staticGuide.update({ where: { id: before.id }, data: { body: before.body } });
+      }
+    });
+  });
+
   describe('정답 데이터 수집 체크리스트', () => {
     let coverage: ObservationCoverageQueryPort;
     let recordObservation: RecordFieldObservationUseCase;
